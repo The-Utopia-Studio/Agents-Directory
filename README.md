@@ -18,17 +18,31 @@ An internal tool for the Studio team to catalog, evaluate, and manage AI agents.
 
 All forms validate required fields, show a toast on success, and update the UI immediately.
 
+The agent record is organised around the four pillars an agent is only ever as
+good as — **goals, skills, tools, context** — plus an append-only eval history
+and a human-in-the-loop `proposedImprovement`. See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+and the strategy note [docs/strategy.html](docs/strategy.html).
+
 ## Stack
 
-Vanilla HTML/CSS/JS. No dependencies. No build step. Static deployment.
+Front-end: vanilla HTML/CSS/JS. No dependencies, no build step, static deploy.
+An **optional** zero-dependency Node service (`server/`) adds the observability +
+self-improvement loop; the front-end degrades gracefully to local-only when it
+isn't running.
 
 ```
 ├── index.html    ← HTML shell
 ├── styles.css    ← ceramic design tokens + component styles
-├── app.js        ← state, rendering, modals, form handlers
+├── app.js        ← state, rendering, modals, form handlers, the loop UI
+├── api.js        ← optional bridge to the loop service (auto-detected)
 ├── fonts/        ← TWK Lausanne (internal use)
-└── vercel.json   ← static config
+├── vercel.json   ← static config
+├── docs/         ← ARCHITECTURE.md, strategy.html
+└── server/       ← loop service (traces · eval · GEPA/optimizer) — see server/README.md
 ```
+
+Data persists to `localStorage` (nothing resets on reload). Run the loop service
+with `cd server && npm start`.
 
 ## Design system
 

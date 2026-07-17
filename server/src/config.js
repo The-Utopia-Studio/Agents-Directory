@@ -1,0 +1,49 @@
+// Central, env-driven configuration. Reads a .env file if present (no
+// dependency — a tiny parser), then process.env overrides. Every provider
+// is selected here by name so the rest of the code never hard-codes one.
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
+function loadDotEnv() {
+  try {
+    const path = fileURLToPath(new URL("../.env", import.meta.url));
+    for (const line of readFileSync(path, "utf8").split("\n")) {
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
+      if (m && process.env[m[1]] === undefined) {
+        process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
+      }
+    }
+  } catch { /* no .env — defaults apply */ }
+}
+loadDotEnv();
+
+const env = process.env;
+const dataDir = env.DATA_DIR
+  ? env.DATA_DIR
+  : fileURLToPath(new URL("../data/", import.meta.url));
+
+export const config = {
+  port: Number(env.PORT || 8790),
+  dataDir,
+  corsOrigin: env.CORS_ORIGIN || "*",
+
+  observability: {
+    provider: env.OBS_PROVIDER || "local",
+    lowScoreThreshold: Number(env.OBS_LOW_SCORE || 70),
+    langfuse: {
+      host: env.LANGFUSE_HOST || "https://cloud.langfuse.com",
+      publicKey: env.LANGFUSE_PUBLIC_KEY || "",
+      secretKey: env.LANGFUSE_SECRET_KEY || "",
+    },
+  },
+
+  optimizer: {
+    provider: env.OPTIMIZER || "heuristic",
+    gepa: {
+      endpoint: env.GEPA_ENDPOINT || "",
+      cmd: env.GEPA_CMD || "",
+      model: env.GEPA_MODEL || "claude-opus-4-8",
+      budget: Number(env.GEPA_BUDGET || 10),
+    },
+  },
+};

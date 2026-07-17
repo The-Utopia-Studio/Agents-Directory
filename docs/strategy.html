@@ -1,0 +1,341 @@
+<title>Agents Directory &mdash; From Shelf to Loop</title>
+<style>
+  :root{
+    --ground:#241d20; --surface:#3c3235; --surface-2:#463b3e;
+    --ink:#f5f1ee; --muted:#c3b9b5; --subtle:#9b908c;
+    --line:rgba(245,241,238,.14); --line-2:rgba(245,241,238,.08);
+    --accent:#cc5536; --accent-2:#d77a59; --accent-tint:rgba(204,85,54,.14);
+    --gold:#d9a441; --gold-tint:rgba(217,164,65,.13);
+    --good:#8ba36f; --warn:#d9a441;
+    --shadow:0 1px 0 rgba(245,241,238,.04) inset;
+    color-scheme:dark;
+  }
+  @media (prefers-color-scheme:light){
+    :root{
+      --ground:#f3eee9; --surface:#fbf8f5; --surface-2:#f6f0eb;
+      --ink:#2c2427; --muted:#5f5457; --subtle:#8a7d80;
+      --line:rgba(44,36,39,.16); --line-2:rgba(44,36,39,.08);
+      --accent:#b8472c; --accent-2:#a9442a; --accent-tint:rgba(184,71,44,.10);
+      --gold:#b5822a; --gold-tint:rgba(181,130,42,.12);
+      --good:#6b8352; --warn:#b5822a;
+      color-scheme:light;
+    }
+  }
+  :root[data-theme="dark"]{
+    --ground:#241d20; --surface:#3c3235; --surface-2:#463b3e;
+    --ink:#f5f1ee; --muted:#c3b9b5; --subtle:#9b908c;
+    --line:rgba(245,241,238,.14); --line-2:rgba(245,241,238,.08);
+    --accent:#cc5536; --accent-2:#d77a59; --accent-tint:rgba(204,85,54,.14);
+    --gold:#d9a441; --gold-tint:rgba(217,164,65,.13); --good:#8ba36f; --warn:#d9a441;
+    color-scheme:dark;
+  }
+  :root[data-theme="light"]{
+    --ground:#f3eee9; --surface:#fbf8f5; --surface-2:#f6f0eb;
+    --ink:#2c2427; --muted:#5f5457; --subtle:#8a7d80;
+    --line:rgba(44,36,39,.16); --line-2:rgba(44,36,39,.08);
+    --accent:#b8472c; --accent-2:#a9442a; --accent-tint:rgba(184,71,44,.10);
+    --gold:#b5822a; --gold-tint:rgba(181,130,42,.12); --good:#6b8352; --warn:#b5822a;
+    color-scheme:light;
+  }
+
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--ground);color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.65;-webkit-font-smoothing:antialiased;}
+  .wrap{max-width:1120px;margin:0 auto;padding:0 28px}
+  .prose{max-width:70ch}
+  a{color:var(--accent);text-decoration:none;border-bottom:1px solid var(--accent-tint)}
+  a:hover{border-bottom-color:var(--accent)}
+  h1,h2,h3{font-family:"Helvetica Neue",Helvetica,Arial,sans-serif;text-wrap:balance;margin:0}
+  .mono{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace}
+
+  /* ── Hero ── */
+  header.hero{border-bottom:1px solid var(--line);padding:72px 0 40px;position:relative;overflow:hidden}
+  .hero .wrap{position:relative;z-index:1}
+  .eyebrow{font-family:ui-monospace,monospace;font-size:12px;letter-spacing:.22em;text-transform:uppercase;color:var(--accent);margin-bottom:22px}
+  h1{font-size:clamp(38px,6.4vw,76px);font-weight:800;letter-spacing:-.03em;line-height:.98;text-transform:uppercase}
+  h1 .thin{color:var(--subtle);font-weight:300}
+  .dek{font-size:clamp(17px,2vw,21px);color:var(--muted);max-width:58ch;margin-top:26px}
+  .hero-meta{display:flex;flex-wrap:wrap;gap:10px 22px;margin-top:34px;font-family:ui-monospace,monospace;font-size:12.5px;letter-spacing:.04em;color:var(--subtle)}
+  .hero-meta b{color:var(--ink);font-weight:600}
+  .glow{position:absolute;inset:auto -10% -60% auto;width:70%;height:180%;
+    background:radial-gradient(closest-side,var(--accent-tint),transparent 70%);z-index:0;pointer-events:none}
+
+  /* ── Sections ── */
+  section{padding:56px 0;border-bottom:1px solid var(--line-2)}
+  .sec-eyebrow{display:flex;align-items:baseline;gap:14px;margin-bottom:24px}
+  .sec-num{font-family:ui-monospace,monospace;font-size:13px;color:var(--accent);letter-spacing:.1em}
+  .sec-eyebrow h2{font-size:clamp(22px,3vw,30px);font-weight:700;letter-spacing:-.015em}
+  p{margin:0 0 18px}
+  .lead{font-size:18px;color:var(--ink)}
+  .muted{color:var(--muted)}
+  strong{color:var(--ink);font-weight:650}
+
+  .pull{border-left:2px solid var(--accent);padding:4px 0 4px 20px;margin:26px 0;font-size:19px;color:var(--ink);max-width:60ch}
+
+  /* ── Metric cards ── */
+  .grid{display:grid;gap:14px}
+  .metrics{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:760px){.metrics{grid-template-columns:repeat(2,1fr)}}
+  .card{background:var(--surface);border:1px solid var(--line-2);border-radius:14px;padding:18px 18px 20px;box-shadow:var(--shadow)}
+  .metric .k{font-size:12px;font-family:ui-monospace,monospace;letter-spacing:.05em;color:var(--subtle);text-transform:uppercase}
+  .metric .v{font-size:15px;margin-top:8px;color:var(--ink)}
+  .metric .v b{color:var(--accent);font-weight:700}
+
+  /* ── Compare (shelf vs loop) ── */
+  .compare{grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.compare{grid-template-columns:1fr}}
+  .compare .card h3{font-size:15px;text-transform:uppercase;letter-spacing:.08em;font-family:ui-monospace,monospace;margin-bottom:12px}
+  .compare .now h3{color:var(--subtle)} .compare .to h3{color:var(--accent)}
+  .compare ul{margin:0;padding:0;list-style:none}
+  .compare li{padding:8px 0;border-top:1px solid var(--line-2);font-size:14.5px;color:var(--muted);display:flex;gap:10px}
+  .compare li:first-child{border-top:0}
+  .compare .to li{color:var(--ink)}
+  .tick{color:var(--accent);flex:0 0 auto}
+
+  /* ── Objectives table ── */
+  .otable{width:100%;border-collapse:collapse;font-size:14.5px}
+  .otable th,.otable td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line-2);vertical-align:top}
+  .otable th{font-family:ui-monospace,monospace;font-size:11.5px;letter-spacing:.08em;text-transform:uppercase;color:var(--subtle);font-weight:600}
+  .otable td:first-child{color:var(--accent);font-weight:600;white-space:nowrap}
+  .otable td:last-child{color:var(--subtle);font-family:ui-monospace,monospace;font-size:12.5px}
+  .scroll{overflow-x:auto}
+
+  /* ── Four pillars ── */
+  .pillars{grid-template-columns:repeat(4,1fr)}
+  @media(max-width:860px){.pillars{grid-template-columns:repeat(2,1fr)}}
+  @media(max-width:480px){.pillars{grid-template-columns:1fr}}
+  .pillar{background:var(--surface);border:1px solid var(--line-2);border-radius:14px;padding:20px;position:relative}
+  .pillar .n{font-family:ui-monospace,monospace;font-size:12px;color:var(--accent);letter-spacing:.1em}
+  .pillar h3{font-size:19px;margin:10px 0 8px;letter-spacing:-.01em}
+  .pillar p{font-size:13.5px;color:var(--muted);margin:0 0 12px}
+  .pillar .field{font-family:ui-monospace,monospace;font-size:11.5px;color:var(--subtle);border-top:1px dashed var(--line);padding-top:10px}
+  .pillar .field b{color:var(--accent-2)}
+
+  /* ── Schema block ── */
+  pre.schema{background:var(--surface);border:1px solid var(--line-2);border-radius:14px;padding:20px 22px;overflow-x:auto;
+    font-family:ui-monospace,monospace;font-size:13px;line-height:1.75;color:var(--muted);margin:0}
+  pre.schema .k{color:var(--accent)} pre.schema .c{color:var(--subtle);font-style:italic} pre.schema .p{color:var(--gold)}
+
+  /* ── Loop diagram ── */
+  .loop{background:var(--surface);border:1px solid var(--line-2);border-radius:16px;padding:26px 22px;margin-top:6px}
+  .loop-row{display:flex;align-items:stretch;gap:10px;flex-wrap:wrap;justify-content:center}
+  .node{flex:1 1 150px;min-width:130px;background:var(--surface-2);border:1px solid var(--line);border-radius:11px;padding:13px 14px}
+  .node .t{font-family:ui-monospace,monospace;font-size:11px;letter-spacing:.06em;text-transform:uppercase;color:var(--subtle)}
+  .node .d{font-size:13px;color:var(--ink);margin-top:5px;font-weight:600}
+  .node small{display:block;color:var(--muted);font-weight:400;font-size:11.5px;margin-top:3px}
+  .node.spec{border-color:var(--accent);background:var(--accent-tint)}
+  .node.human{border-color:var(--gold);background:var(--gold-tint)}
+  .node.improve{border-color:var(--gold)}
+  .arrow{align-self:center;color:var(--subtle);font-size:18px;flex:0 0 auto}
+  .return{text-align:center;margin-top:16px;font-family:ui-monospace,monospace;font-size:11.5px;color:var(--gold);letter-spacing:.04em}
+  .return .line{height:1px;background:linear-gradient(90deg,transparent,var(--gold),transparent);margin:8px auto 0;max-width:80%}
+
+  /* ── Stack table ── */
+  .stack{width:100%;border-collapse:collapse;font-size:14px}
+  .stack th{text-align:left;padding:10px 14px;font-family:ui-monospace,monospace;font-size:11.5px;letter-spacing:.07em;text-transform:uppercase;color:var(--subtle);border-bottom:1px solid var(--line)}
+  .stack td{padding:13px 14px;border-bottom:1px solid var(--line-2);vertical-align:top}
+  .stack td.layer{color:var(--accent);font-weight:600;font-family:ui-monospace,monospace;font-size:12.5px;white-space:nowrap}
+  .stack td.own{font-family:ui-monospace,monospace;font-size:12px}
+  .stack .yes{color:var(--gold)} .stack .no{color:var(--subtle)}
+  .tools span{display:inline-block;background:var(--surface-2);border:1px solid var(--line-2);border-radius:999px;padding:2px 9px;margin:2px 3px 2px 0;font-size:12px;color:var(--ink)}
+
+  /* ── Roadmap ── */
+  .road{position:relative;padding-left:26px}
+  .road::before{content:"";position:absolute;left:6px;top:6px;bottom:6px;width:2px;background:linear-gradient(var(--accent),var(--gold))}
+  .step{position:relative;padding:0 0 26px 8px}
+  .step::before{content:"";position:absolute;left:-26px;top:4px;width:14px;height:14px;border-radius:50%;background:var(--ground);border:2px solid var(--accent)}
+  .step.now::before{background:var(--accent)}
+  .step h3{font-size:16px;display:flex;gap:10px;align-items:baseline}
+  .step .tag{font-family:ui-monospace,monospace;font-size:11px;color:var(--ground);background:var(--accent);padding:1px 7px;border-radius:5px;letter-spacing:.04em}
+  .step .tag.soon{background:transparent;color:var(--subtle);border:1px solid var(--line)}
+  .step p{font-size:14px;color:var(--muted);margin:7px 0 0}
+
+  footer{padding:40px 0 70px;color:var(--subtle);font-size:13px}
+  footer .wrap{display:flex;justify-content:space-between;flex-wrap:wrap;gap:12px;align-items:center}
+  .brand{font-family:ui-monospace,monospace;letter-spacing:.1em;text-transform:uppercase;font-size:12px;color:var(--accent)}
+
+  @media(prefers-reduced-motion:no-preference){
+    section,.card{animation:rise .6s cubic-bezier(.2,.7,.2,1) both}
+  }
+  @keyframes rise{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+</style>
+
+<header class="hero">
+  <div class="glow"></div>
+  <div class="wrap">
+    <div class="eyebrow">Utopia Studio &middot; Studio OS &middot; Agents Directory</div>
+    <h1>From a shelf<br><span class="thin">to</span> the loop</h1>
+    <p class="dek">A control plane that gives every agent in the fleet a common language for its <strong>goals, skills, tools, and context</strong> &mdash; and closes the loop from usage to evaluation to iteration, with a human in the loop.</p>
+    <div class="hero-meta">
+      <span>Prepared for <b>the Studio team</b></span>
+      <span>Frames onto <b>ai-native</b> &middot; model &rarr; harness &rarr; scaffolding &rarr; agents</span>
+      <span><b>v0.3</b> prototype &rarr; target architecture</span>
+    </div>
+  </div>
+</header>
+
+<section>
+  <div class="wrap prose">
+    <div class="sec-eyebrow"><span class="sec-num">01</span><h2>The reframe</h2></div>
+    <p class="lead">Today the directory is a <strong>catalog</strong> &mdash; a well-built card wall over a list of agents. That's the right v1. But the thing it's cataloguing is a <em>fleet that should be getting better over time</em>, and a catalog can't make that happen on its own.</p>
+    <p class="muted">Your own ai-native thesis says the moat is <strong>&ldquo;the loop, not the tool&rdquo;</strong> &mdash; the compounding system that turns work into better memory and sharper signal. A shelf lists agents; it closes no loop. Nothing an agent <em>does</em> flows back into the directory, and nothing in the directory flows back into an agent to make it better. That gap is the same one you named: the builds are one-shot.</p>
+    <div class="pull">The objective isn't to list agents. It's to become the control plane where the fleet compounds &mdash; where goals, skills, tools and context are shared, and eval feeds iteration.</div>
+    <div class="grid compare" style="margin-top:8px">
+      <div class="card now">
+        <h3>Shelf (today)</h3>
+        <ul>
+          <li><span class="tick">&middot;</span> Hardcoded list, resets on reload</li>
+          <li><span class="tick">&middot;</span> Eval is a free-text note</li>
+          <li><span class="tick">&middot;</span> Requests &amp; agents disconnected</li>
+          <li><span class="tick">&middot;</span> Skills &amp; tools are loose strings</li>
+          <li><span class="tick">&middot;</span> Builds are one-shot</li>
+        </ul>
+      </div>
+      <div class="card to">
+        <h3>Loop (target)</h3>
+        <ul>
+          <li><span class="tick">&rarr;</span> Persistent source of truth</li>
+          <li><span class="tick">&rarr;</span> Structured, trended eval history</li>
+          <li><span class="tick">&rarr;</span> Request &rarr; ship &rarr; catalogue lifecycle</li>
+          <li><span class="tick">&rarr;</span> Skills/tools reusable &amp; countable</li>
+          <li><span class="tick">&rarr;</span> Eval &rarr; propose &rarr; human approves &rarr; new version</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="prose">
+      <div class="sec-eyebrow"><span class="sec-num">02</span><h2>Objectives &amp; success criteria</h2></div>
+      <p class="muted">One job: <strong>be the studio's control plane</strong> &mdash; the shared single source of truth for what every agent is and how well it works. Everything below maps your words onto the ai-native stack.</p>
+    </div>
+    <div class="scroll" style="margin:22px 0 30px">
+      <table class="otable">
+        <thead><tr><th>Objective</th><th>What it means here</th><th>ai-native layer</th></tr></thead>
+        <tbody>
+          <tr><td>Common language</td><td>One schema for what an agent <em>is</em> &mdash; goals / skills / tools / context</td><td>Scaffolding</td></tr>
+          <tr><td>Interoperability</td><td>Agents, skills, tools discoverable &amp; composable across Claude / Cursor / Manus</td><td>Utilities + Harness</td></tr>
+          <tr><td>Usage</td><td>A fellow can find, understand, and actually run an agent</td><td>Agents</td></tr>
+          <tr><td>Evaluation</td><td>Structured, trended metrics &mdash; not vibes in a text box</td><td>The Moat / signal</td></tr>
+          <tr><td>Iteration</td><td>Evals feed a build loop; builds aren't one-shot</td><td>The Loop</td></tr>
+          <tr><td>Transparency</td><td>Provenance, ownership, change history, run traces</td><td>Memory</td></tr>
+          <tr><td>Control</td><td>Permissions, guardrails, lifecycle governance</td><td>Scaffolding</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="prose"><p class="muted" style="margin-bottom:16px">Measurable success criteria &mdash; so you can tell it's working:</p></div>
+    <div class="grid metrics">
+      <div class="card metric"><div class="k">Coverage</div><div class="v"><b>%</b> of agents with a defined success criterion <b>+</b> an eval in the last 30 days</div></div>
+      <div class="card metric"><div class="k">Time-to-use</div><div class="v">Median <b>&ldquo;I need X&rdquo;</b> &rarr; running the right agent</div></div>
+      <div class="card metric"><div class="k">Fleet health</div><div class="v">Roll-up score that trends <b>up</b> quarter over quarter</div></div>
+      <div class="card metric"><div class="k">Reuse</div><div class="v">Skills / tools shared across <b>&ge;2</b> agents</div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="prose">
+      <div class="sec-eyebrow"><span class="sec-num">03</span><h2>The schema is the product</h2></div>
+      <p class="muted">An agent is only ever as good as four things. The record should be built around them explicitly &mdash; so an agent's page becomes a <strong>spec you could hand to a builder or a build-agent to regenerate it</strong>, and skills &amp; tools become first-class and countable.</p>
+    </div>
+    <div class="grid pillars" style="margin:24px 0 26px">
+      <div class="pillar"><div class="n">① GOALS</div><h3>What good looks like</h3><p>The single outcome, the measurable signals of success, and the must-nots.</p><div class="field"><b>objective</b> &middot; successCriteria[] &middot; guardrails[]</div></div>
+      <div class="pillar"><div class="n">② SKILLS</div><h3>Repeatable procedures</h3><p>References into a shared skills library &mdash; assembled, not written from scratch each time.</p><div class="field"><b>skills[]</b> &rarr; SKILL.md refs</div></div>
+      <div class="pillar"><div class="n">③ TOOLS</div><h3>What it can act on</h3><p>MCPs, integrations, APIs &mdash; with identity and permissions, not a loose string.</p><div class="field"><b>tools[]</b> &middot; type &middot; permissions</div></div>
+      <div class="pillar"><div class="n">④ CONTEXT</div><h3>What it draws on</h3><p>Memory, knowledge, data sources &mdash; the most proprietary part per your framing.</p><div class="field"><b>context[]</b> &middot; source &middot; refresh</div></div>
+    </div>
+    <div class="prose"><p class="muted" style="margin-bottom:14px">Plus the machinery that makes the loop possible &mdash; versioned eval history and a human-approvable improvement:</p></div>
+    <pre class="schema"><span class="c">// an agent record, organised around the four pillars</span>
+<span class="k">goals</span>:    { objective, successCriteria[], guardrails[] }
+<span class="k">skills</span>:   [ { id, source: SKILL.md ref } ]
+<span class="k">tools</span>:    [ { id, type: mcp|api|integration, permissions } ]
+<span class="k">context</span>:  [ { source, type: memory|doc|dataset, refresh } ]
+<span class="k">runtime</span>:  { platform, model, version, changelog[] }
+<span class="k">eval</span>:     [ { date, score, status, notes, by, traceUrl } ]  <span class="c">// append-only history</span>
+<span class="p">proposedImprovement</span>: { source: "GEPA"|"human", summary, status }  <span class="c">// the loop hook</span></pre>
+    <p class="muted prose" style="margin-top:16px">This is already live in the prototype &mdash; the record, the forms, the detail view, the fleet-health strip, and eval-as-history are all rebuilt around these pillars.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="prose">
+      <div class="sec-eyebrow"><span class="sec-num">04</span><h2>The loop &mdash; killing the one-shot build</h2></div>
+      <p class="muted">The fix for one-shot builds is to make the directory the substrate for a closed loop. 2026 shipped the missing piece: reflective optimisers (<a href="https://github.com/gepa-ai/gepa">GEPA</a>, <a href="https://the-agent-report.com/2026/06/hermes-agent-self-evolution-dspy-gepa-june2026/">Hermes self-evolution</a>) that read failing traces and propose targeted prompt / skill / tool-description fixes for ~$2&ndash;10 a run. The human stays in the loop as the <strong>approver of each version</strong>, not the author of each prompt.</p>
+    </div>
+    <div class="loop">
+      <div class="loop-row">
+        <div class="node spec"><div class="t">Directory</div><div class="d">Agent spec<small>goals &middot; skills &middot; tools &middot; context</small></div></div>
+        <div class="arrow">&rarr;</div>
+        <div class="node"><div class="t">Run</div><div class="d">Executes<small>Claude &middot; Cursor &middot; Manus</small></div></div>
+        <div class="arrow">&rarr;</div>
+        <div class="node"><div class="t">Observe</div><div class="d">Traces + cost<small>Langfuse</small></div></div>
+        <div class="arrow">&rarr;</div>
+        <div class="node"><div class="t">Score</div><div class="d">vs success criteria<small>eval history</small></div></div>
+      </div>
+      <div class="loop-row" style="margin-top:12px">
+        <div class="node human"><div class="t">Human in the loop</div><div class="d">Review &amp; approve<small>owner accepts / rejects</small></div></div>
+        <div class="arrow">&larr;</div>
+        <div class="node improve"><div class="t">Improve</div><div class="d">Propose fix<small>GEPA / DSPy reads traces</small></div></div>
+        <div class="arrow">&larr;</div>
+        <div class="node"><div class="t">Signal</div><div class="d">Failing patterns<small>what to fix</small></div></div>
+        <div class="arrow" style="visibility:hidden">&larr;</div>
+        <div class="node" style="visibility:hidden"></div>
+      </div>
+      <div class="return">approved improvement &rarr; new version &rarr; back to the spec, versioned
+        <div class="line"></div>
+      </div>
+    </div>
+    <p class="muted prose" style="margin-top:18px">The prototype already exercises the human end of this: an agent can carry a <strong>proposed improvement</strong>; the owner approves it to cut a new version (logged to changelog) or rejects it. In production, that proposal is written by a GEPA job reading Langfuse traces &mdash; first target: <em>Bio Generator</em>, already flagged for inconsistent voice-matching.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="prose">
+      <div class="sec-eyebrow"><span class="sec-num">05</span><h2>What to append &mdash; don't build it</h2></div>
+      <p class="muted">Wire in existing open standards and tools rather than reinventing them. Only the scaffolding layer is truly yours; everything else is rented and shouldn't be hand-rolled.</p>
+    </div>
+    <div class="scroll" style="margin-top:22px">
+      <table class="stack">
+        <thead><tr><th>ai-native layer</th><th>Append</th><th>Why</th><th>Yours?</th></tr></thead>
+        <tbody>
+          <tr><td class="layer">Common language</td><td class="own"><a href="https://agentskills.io/home">Agent Skills / SKILL.md</a>, <a href="https://github.com/prassanna-ravishankar/a2a-registry">A2A Agent Cards</a></td><td>Cross-vendor open standards (~40 products); your agent record &asymp; a private Agent Card</td><td class="no">rent</td></tr>
+          <tr><td class="layer">Tools</td><td class="own">MCP</td><td>18k+ servers, Linux Foundation governed &mdash; model integrations as MCPs with permissions</td><td class="no">rent</td></tr>
+          <tr><td class="layer">Eval &amp; signal</td><td class="own">Langfuse &middot; MLflow 3 &middot; Phoenix</td><td>Open-source tracing + eval; the write-back arrow's data source</td><td class="no">rent</td></tr>
+          <tr><td class="layer">The loop</td><td class="own">GEPA / DSPy</td><td>Reflective prompt/skill optimisation from traces &mdash; ends one-shot builds</td><td class="no">rent</td></tr>
+          <tr><td class="layer">Store</td><td class="own">Supabase / Postgres</td><td>Persistence + an API; keep the vanilla front-end</td><td class="no">rent</td></tr>
+          <tr><td class="layer">Scaffolding</td><td class="own tools"><span>schema</span><span>skills library</span><span>eval criteria</span><span>context / memory</span></td><td>The directory itself &mdash; the one layer that compounds into a moat</td><td class="yes">own</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="muted prose" style="margin-top:20px">Your curated <strong>skills</strong> plug in here: stored as portable <span class="mono" style="font-size:12.5px">SKILL.md</span> folders, referenced by each agent's <span class="mono" style="font-size:12.5px">skills[]</span>. The Skills tab then shows which agents use each skill &mdash; and <em>reuse count</em> becomes a headline metric. A skill used by five agents is leverage; one used by zero is dead weight to prune.</p>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="prose">
+      <div class="sec-eyebrow"><span class="sec-num">06</span><h2>Sequence</h2></div>
+      <p class="muted">Each step self-justifies and sets up the next &mdash; the same &ldquo;incremental, each self-justifying&rdquo; move from your ai-native start section.</p>
+    </div>
+    <div class="road prose" style="margin-top:26px">
+      <div class="step now"><h3>Schema around the four pillars <span class="tag">done in prototype</span></h3><p>Goals / skills / tools / context + versioned eval history, live in the app. Highest-leverage, self-contained.</p></div>
+      <div class="step now"><h3>Persistence + lifecycle <span class="tag">done in prototype</span></h3><p>Local store so nothing resets; Requests &rarr; Agents wired so a shipped request becomes a catalogued agent.</p></div>
+      <div class="step"><h3>Wire observability <span class="tag soon">next</span></h3><p>Langfuse tracing behind the agents; eval rows link to real traces. Move the store to Supabase for multi-user.</p></div>
+      <div class="step"><h3>Turn on the loop <span class="tag soon">next</span></h3><p>A GEPA job reads traces for one weak agent and writes a real <span class="mono" style="font-size:12px">proposedImprovement</span>. Human approves. Watch fleet health move.</p></div>
+      <div class="step"><h3>Two-sided directory + factory <span class="tag soon">v2 &middot; v3</span></h3><p>Fellows-facing provisioning, then build-and-deploy from within the OS &mdash; assembled from existing skills, tools, and context, not blank-page prompts.</p></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span class="brand">Utopia Studio &middot; Agents Directory</span>
+    <span>Agents are only as good as their goals, skills, tools, and context &mdash; so make those the product.</span>
+  </div>
+</footer>

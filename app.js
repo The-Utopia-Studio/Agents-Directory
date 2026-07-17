@@ -389,8 +389,10 @@ function saveEval(id){
   const notes=document.getElementById("e-notes").value.trim();
   if(!notes){toast("Add eval notes");return}
   let score=parseInt(document.getElementById("e-score").value,10);if(isNaN(score))score=null;else score=Math.max(0,Math.min(100,score));
-  a.evalHistory.push({date:document.getElementById("e-date")?document.getElementById("e-date").value:new Date().toISOString().split("T")[0],status:document.getElementById("e-status").value,score,notes,knownIssues:document.getElementById("e-issues").value.trim(),by:document.getElementById("e-by").value.trim(),traceUrl:document.getElementById("e-trace").value.trim()});
-  if(!a.evalHistory[a.evalHistory.length-1].date)a.evalHistory[a.evalHistory.length-1].date=new Date().toISOString().split("T")[0];
+  const entry={date:document.getElementById("e-date")?document.getElementById("e-date").value:new Date().toISOString().split("T")[0],status:document.getElementById("e-status").value,score,notes,knownIssues:document.getElementById("e-issues").value.trim(),by:document.getElementById("e-by").value.trim(),traceUrl:document.getElementById("e-trace").value.trim()};
+  if(!entry.date)entry.date=new Date().toISOString().split("T")[0];
+  a.evalHistory.push(entry);
+  if(window.DirectoryAPI&&DirectoryAPI.enabled){DirectoryAPI.logEval(id,entry).catch(()=>{})}
   persist();closeModal();toast("Evaluation logged");state.agent=a;render();
 }
 
@@ -414,24 +416,41 @@ function shipRequestAsAgent(id){
 // In production, proposedImprovement is written by a GEPA/DSPy job that reads
 // failing traces from Langfuse. Here it's synthesised from the latest eval so
 // the human-in-the-loop review flow is exercisable end-to-end.
-function proposeImprovement(id){
+async function proposeImprovement(id){
   const a=agents.find(x=>x.id===id);if(!a)return;
+  // Live path: the loop service runs the real optimizer against real traces.
+  if(window.DirectoryAPI&&DirectoryAPI.enabled){
+    try{
+      const p=await DirectoryAPI.runImprovement(id);
+      a.proposedImprovement={source:p.source,date:p.date,status:p.status,summary:p.summary,detail:p.detail};
+      persist();state.agent=a;render();toast("Improvement proposed by "+p.source+" — awaiting review");return;
+    }catch(e){toast("Optimizer unreachable — using local stub")}
+  }
+  // Offline fallback (static deploy): synthesise from the latest eval.
   const e=latestEval(a);
   const issue=(e&&e.knownIssues)||"the most frequent failure in recent traces";
-  a.proposedImprovement={source:"GEPA (stub)",date:new Date().toISOString().split("T")[0],status:"proposed",
+  a.proposedImprovement={source:"heuristic (offline)",date:new Date().toISOString().split("T")[0],status:"proposed",
     summary:"Prompt/skill revision targeting: "+issue,
-    detail:"Reflective optimiser read the recent eval traces and proposes a revised prompt + tool-description addressing \""+issue+"\". Review the diff, then approve to cut a new version or reject to discard."};
+    detail:"Reflective optimiser read the recent eval notes and proposes a revised prompt + tool-description addressing \""+issue+"\". Review, then approve to cut a new version or reject to discard."};
   persist();state.agent=a;render();toast("Improvement proposed — awaiting review");
 }
-function approveImprovement(id){
+async function approveImprovement(id){
   const a=agents.find(x=>x.id===id);if(!a||!a.proposedImprovement)return;
+  if(window.DirectoryAPI&&DirectoryAPI.enabled){
+    try{
+      const r=await DirectoryAPI.approve(id);
+      a.version=r.version;if(r.agent&&r.agent.changelog)a.changelog=r.agent.changelog;a.proposedImprovement=null;
+      persist();state.agent=a;render();toast("Approved → shipped v"+r.version);return;
+    }catch(e){toast("Service unreachable — approving locally")}
+  }
   const nv=bumpVersion(a.version);
   a.changelog.push({version:nv,date:new Date().toISOString().split("T")[0],note:"Approved improvement: "+a.proposedImprovement.summary});
   a.version=nv;a.proposedImprovement=null;
   persist();state.agent=a;render();toast("Approved → shipped v"+nv);
 }
-function rejectImprovement(id){
+async function rejectImprovement(id){
   const a=agents.find(x=>x.id===id);if(!a||!a.proposedImprovement)return;
+  if(window.DirectoryAPI&&DirectoryAPI.enabled){try{await DirectoryAPI.reject(id)}catch(e){}}
   a.proposedImprovement=null;persist();state.agent=a;render();toast("Improvement rejected");
 }
 

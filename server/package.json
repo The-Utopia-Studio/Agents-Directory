@@ -1,0 +1,14 @@
+{
+  "name": "agents-directory-loop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Observability + self-improvement loop service for the Utopia Studio Agents Directory. Zero runtime dependencies; providers are swappable by config.",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "start": "node src/http/server.js",
+    "dev": "node --watch src/http/server.js",
+    "seed": "node src/scripts/seed.js",
+    "test": "node --test"
+  }
+}
