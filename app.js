@@ -1,23 +1,141 @@
-// ── DATA ──
-let agents=[
-  {id:"A1",name:"LinkedIn Auditor",tagline:"Scrapes and analyzes LinkedIn profiles, then suggests prioritized fixes with suggested rewrites.",platform:"Claude",status:"Active",category:"Personal Branding",owner:"Sarah",initials:"SA",when:"When onboarding a new fellow or when a fellow asks for LinkedIn help.",sop:"1. Copy the fellow's LinkedIn profile URL\n2. Open the LinkedIn Auditor project in Claude\n3. Paste the URL and say \"audit this profile\"\n4. Review suggestions before sharing with the fellow",inputs:["LinkedIn profile URL"],outputs:["Prioritized list of fixes","Suggested rewrites for each section"],evalStatus:"Performing well",evalNotes:"Headline suggestions are strong. About section rewrites sometimes lose the fellow's voice — needs more few-shot examples.",knownIssues:"Struggles with non-English profiles.",lastReviewed:"2026-07-10",integrations:["LinkedIn"],accessUrl:"",repoUrl:""},
-  {id:"A2",name:"Bio Generator",tagline:"Creates SEO-optimized LinkedIn bios with CTA language. Tries to learn the fellow's voice over time.",platform:"Claude",status:"Active",category:"Personal Branding",owner:"Sarah",initials:"SA",when:"When a fellow needs a new or refreshed LinkedIn bio.",sop:"1. Gather the fellow's current bio, role, and goals\n2. Open Bio Generator project in Claude\n3. Provide context and ask for bio options\n4. Iterate on tone and voice match",inputs:["Fellow's current bio","Role description","Target audience"],outputs:["3 bio variations","SEO keyword suggestions"],evalStatus:"Needs improvement",evalNotes:"CTAs are sometimes too aggressive. Voice matching is inconsistent without enough examples.",knownIssues:"Tends toward generic corporate language without strong examples.",lastReviewed:"2026-07-08",integrations:[],accessUrl:"",repoUrl:""},
-  {id:"A3",name:"Post Suggester",tagline:"Scrapes trending topics in a fellow's field and generates draft LinkedIn posts with hooks and CTAs.",platform:"Manus",status:"Active",category:"Marketing & Content",owner:"James",initials:"JA",when:"Weekly content planning for fellows, or when a fellow needs post ideas fast.",sop:"1. Provide the fellow's industry and recent topics\n2. Run the agent in Manus\n3. Review generated drafts\n4. Edit for voice and accuracy before sharing",inputs:["Fellow's industry","Recent topics or news"],outputs:["5-10 draft post ideas","Hook + CTA for each"],evalStatus:"Performing well",evalNotes:"Good at identifying trending angles. Hooks are strong. Some posts need fact-checking.",knownIssues:"Occasionally surfaces outdated trends.",lastReviewed:"2026-07-12",integrations:["LinkedIn"],accessUrl:"",repoUrl:""},
-  {id:"A4",name:"Marketing Scout",tagline:"Scrapes Slack channels and suggests marketing tasks, topics, and content opportunities for the team.",platform:"Claude",status:"Experimental",category:"Marketing & Content",owner:"Mo",initials:"MO",when:"When planning weekly marketing sprints or looking for content inspiration from internal conversations.",sop:"1. Agent runs on a schedule (or manually triggered)\n2. Reviews recent Slack activity\n3. Outputs a list of suggested tasks and topics\n4. Team reviews and picks what to action",inputs:["Slack channel access"],outputs:["Weekly task suggestions","Topic ideas with source threads"],evalStatus:"Not evaluated",evalNotes:"",knownIssues:"Still in early testing. Signal-to-noise ratio needs tuning.",lastReviewed:"",integrations:["Slack"],accessUrl:"",repoUrl:""},
-  {id:"A5",name:"Design Agent",tagline:"Claude + MCP integrations for design-system work — component generation, asset management, and design QA.",platform:"Claude",status:"Experimental",category:"Design & Product",owner:"Aiden",initials:"AI",when:"When building or updating design system components, or doing design QA on new pages.",sop:"1. Open the Design Agent project in Claude\n2. Describe the component or design task\n3. Agent uses MCP to interact with Figma/code\n4. Review output and iterate",inputs:["Component description","Design system context"],outputs:["Component code","Figma updates","QA checklist"],evalStatus:"Not evaluated",evalNotes:"",knownIssues:"MCP integrations are still being configured.",lastReviewed:"",integrations:["Figma","GitHub"],accessUrl:"",repoUrl:""},
-  {id:"A6",name:"Research Assistant",tagline:"Cursor-based agent for deep research tasks — market analysis, competitive intel, and posting reminders.",platform:"Cursor",status:"Active",category:"Research & Analysis",owner:"Hager",initials:"HA",when:"When preparing for investment calls, doing market research, or needing competitive analysis.",sop:"1. Open Cursor workspace with research agent config\n2. Provide research brief or question\n3. Agent searches, synthesizes, and outputs structured findings\n4. Review and refine",inputs:["Research question or brief"],outputs:["Structured research doc","Key findings summary"],evalStatus:"Performing well",evalNotes:"Strong on synthesis. Sometimes misses niche sources.",knownIssues:"Cursor context window can limit very large research scopes.",lastReviewed:"2026-07-05",integrations:[],accessUrl:"",repoUrl:""}
+// ═══════════════════════════════════════════════════════════════════
+//  Agents Inventory — Utopia Studio
+//  Schema is organised around the four pillars an agent is only ever as
+//  good as: GOALS · SKILLS · TOOLS · CONTEXT  (see ai-native framing).
+//  Eval is an append-only HISTORY (not a single field) so fleet health
+//  can be trended, and each agent carries a versioned changelog plus an
+//  optional proposedImprovement — the human-in-the-loop hook that turns
+//  one-shot builds into an eval → improve → approve loop.
+// ═══════════════════════════════════════════════════════════════════
+
+// ── SEED DATA ──
+const SEED_AGENTS=[
+  {id:"A1",name:"LinkedIn Auditor",tagline:"Scrapes and analyzes LinkedIn profiles, then suggests prioritized fixes with suggested rewrites.",description:"",platform:"Claude",status:"Active",category:"Personal Branding",owner:"Sarah",initials:"SA",model:"Claude Opus 4.x",version:"1.2",
+    objective:"Every audited profile leaves with a prioritized, voice-preserving set of fixes the fellow can action same-day.",
+    successCriteria:["Fellow applies ≥3 of the suggested fixes","Headline rewrite accepted without edits","Turnaround under 10 minutes"],
+    guardrails:["Never rewrite in a voice the fellow hasn't approved","Flag non-English profiles for human review — do not guess"],
+    when:"When onboarding a new fellow or when a fellow asks for LinkedIn help.",
+    sop:"1. Copy the fellow's LinkedIn profile URL\n2. Open the LinkedIn Auditor project in Claude\n3. Paste the URL and say \"audit this profile\"\n4. Review suggestions before sharing with the fellow",
+    inputs:["LinkedIn profile URL"],outputs:["Prioritized list of fixes","Suggested rewrites for each section"],
+    skills:["personal-branding","copywriting","writing-revision"],
+    tools:["LinkedIn (scrape)"],
+    context:["Fellow's existing profile","Studio personal-branding playbook"],
+    accessUrl:"",repoUrl:"",
+    evalHistory:[
+      {date:"2026-06-18",status:"Needs improvement",score:64,notes:"Headlines strong; About-section rewrites drift from the fellow's voice.",knownIssues:"Loses voice without few-shot examples.",by:"Sarah",traceUrl:""},
+      {date:"2026-07-10",status:"Performing well",score:81,notes:"Added 3 few-shot voice examples — About rewrites much closer.",knownIssues:"Struggles with non-English profiles.",by:"Sarah",traceUrl:""}
+    ],
+    changelog:[{version:"1.2",date:"2026-07-10",note:"Added few-shot voice examples to the prompt."}],
+    proposedImprovement:null},
+
+  {id:"A2",name:"Bio Generator",tagline:"Creates SEO-optimized LinkedIn bios with CTA language. Tries to learn the fellow's voice over time.",description:"",platform:"Claude",status:"Active",category:"Personal Branding",owner:"Sarah",initials:"SA",model:"Claude Sonnet 4.x",version:"1.0",
+    objective:"Produce three on-voice bio options a fellow would ship with light edits, not a rewrite.",
+    successCriteria:["Fellow ships one of the three variants","CTA judged 'on-brand, not pushy'","Voice-match rated ≥4/5 by owner"],
+    guardrails:["No aggressive/salesy CTAs","Match the fellow's register — never default to corporate boilerplate"],
+    when:"When a fellow needs a new or refreshed LinkedIn bio.",
+    sop:"1. Gather the fellow's current bio, role, and goals\n2. Open Bio Generator project in Claude\n3. Provide context and ask for bio options\n4. Iterate on tone and voice match",
+    inputs:["Fellow's current bio","Role description","Target audience"],outputs:["3 bio variations","SEO keyword suggestions"],
+    skills:["copywriting","seo-writing","value-prop-statements"],
+    tools:[],
+    context:["Fellow's current bio","Studio voice glossary"],
+    accessUrl:"",repoUrl:"",
+    evalHistory:[
+      {date:"2026-07-08",status:"Needs improvement",score:58,notes:"CTAs sometimes too aggressive. Voice matching inconsistent without enough examples.",knownIssues:"Tends toward generic corporate language without strong examples.",by:"Sarah",traceUrl:""}
+    ],
+    changelog:[{version:"1.0",date:"2026-06-30",note:"Initial build."}],
+    proposedImprovement:{source:"GEPA (stub)",date:"2026-07-15",status:"proposed",
+      summary:"Add a voice-anchoring step + a CTA-tone rubric to the prompt.",
+      detail:"Traces show failures cluster when no example bio is supplied. Proposed: (1) require ≥2 of the fellow's own sentences as voice anchors before generating; (2) score each CTA against a 'confident-not-pushy' rubric and regenerate any that fail. Est. +18 pts on voice-match in offline eval."}},
+
+  {id:"A3",name:"Post Suggester",tagline:"Scrapes trending topics in a fellow's field and generates draft LinkedIn posts with hooks and CTAs.",description:"",platform:"Manus",status:"Active",category:"Marketing & Content",owner:"James",initials:"JA",model:"—",version:"1.1",
+    objective:"Give a fellow 5–10 credible, on-trend post drafts they can edit and publish in one sitting.",
+    successCriteria:["≥2 drafts published per batch","Zero factual corrections needed on published posts","Hook rated strong by owner"],
+    guardrails:["Fact-check any claim before it reaches a fellow","Never surface a trend older than 14 days as 'trending'"],
+    when:"Weekly content planning for fellows, or when a fellow needs post ideas fast.",
+    sop:"1. Provide the fellow's industry and recent topics\n2. Run the agent in Manus\n3. Review generated drafts\n4. Edit for voice and accuracy before sharing",
+    inputs:["Fellow's industry","Recent topics or news"],outputs:["5-10 draft post ideas","Hook + CTA for each"],
+    skills:["social-content","copywriting","trend-research"],
+    tools:["LinkedIn (scrape)","Web search"],
+    context:["Fellow's industry","Recent news feed"],
+    accessUrl:"",repoUrl:"",
+    evalHistory:[
+      {date:"2026-07-12",status:"Performing well",score:78,notes:"Good at identifying trending angles. Hooks are strong. Some posts need fact-checking.",knownIssues:"Occasionally surfaces outdated trends.",by:"James",traceUrl:""}
+    ],
+    changelog:[{version:"1.1",date:"2026-07-01",note:"Tightened the trend-recency window."}],
+    proposedImprovement:null},
+
+  {id:"A4",name:"Marketing Scout",tagline:"Scrapes Slack channels and suggests marketing tasks, topics, and content opportunities for the team.",description:"",platform:"Claude",status:"Experimental",category:"Marketing & Content",owner:"Mo",initials:"MO",model:"Claude Sonnet 4.x",version:"0.3",
+    objective:"Surface a weekly shortlist of high-signal marketing tasks mined from internal conversation.",
+    successCriteria:["≥3 suggestions actioned per week","Signal-to-noise judged acceptable by the team","No duplicate/stale suggestions"],
+    guardrails:["Never surface content from private/DM channels","Cite the source thread for every suggestion"],
+    when:"When planning weekly marketing sprints or looking for content inspiration from internal conversations.",
+    sop:"1. Agent runs on a schedule (or manually triggered)\n2. Reviews recent Slack activity\n3. Outputs a list of suggested tasks and topics\n4. Team reviews and picks what to action",
+    inputs:["Slack channel access"],outputs:["Weekly task suggestions","Topic ideas with source threads"],
+    skills:["insight-synthesis","content-strategy"],
+    tools:["Slack (MCP)"],
+    context:["Approved Slack channels","Marketing sprint board"],
+    accessUrl:"",repoUrl:"",
+    evalHistory:[],
+    changelog:[{version:"0.3",date:"2026-07-09",note:"Early testing build."}],
+    proposedImprovement:null},
+
+  {id:"A5",name:"Design Agent",tagline:"Claude + MCP integrations for design-system work — component generation, asset management, and design QA.",description:"",platform:"Claude",status:"Experimental",category:"Design & Product",owner:"Aiden",initials:"AI",model:"Claude Opus 4.x",version:"0.2",
+    objective:"Ship design-system components and QA that match the ceramic system without a designer in the loop for the first pass.",
+    successCriteria:["Generated component passes design QA checklist","Figma + code stay in sync","Designer edits < 20% of output"],
+    guardrails:["Only touch approved design-system tokens","Human sign-off required before merge to main"],
+    when:"When building or updating design system components, or doing design QA on new pages.",
+    sop:"1. Open the Design Agent project in Claude\n2. Describe the component or design task\n3. Agent uses MCP to interact with Figma/code\n4. Review output and iterate",
+    inputs:["Component description","Design system context"],outputs:["Component code","Figma updates","QA checklist"],
+    skills:["design-review","design-system-design-spec","interface-craft"],
+    tools:["Figma (MCP)","GitHub (MCP)"],
+    context:["Ceramic design tokens","Component library"],
+    accessUrl:"",repoUrl:"",
+    evalHistory:[],
+    changelog:[{version:"0.2",date:"2026-07-06",note:"Wiring up Figma + GitHub MCP."}],
+    proposedImprovement:null},
+
+  {id:"A6",name:"Research Assistant",tagline:"Cursor-based agent for deep research tasks — market analysis, competitive intel, and posting reminders.",description:"",platform:"Cursor",status:"Active",category:"Research & Analysis",owner:"Hager",initials:"HA",model:"—",version:"1.0",
+    objective:"Turn a research brief into a structured, well-sourced findings doc a partner can walk into a call with.",
+    successCriteria:["Findings doc used in the call it was made for","≥5 credible sources cited","No major source gaps flagged in review"],
+    guardrails:["Cite every claim","Flag when scope exceeds the context window rather than truncating silently"],
+    when:"When preparing for investment calls, doing market research, or needing competitive analysis.",
+    sop:"1. Open Cursor workspace with research agent config\n2. Provide research brief or question\n3. Agent searches, synthesizes, and outputs structured findings\n4. Review and refine",
+    inputs:["Research question or brief"],outputs:["Structured research doc","Key findings summary"],
+    skills:["company-research","competitive-analysis","insight-synthesis"],
+    tools:["Web search"],
+    context:["Research brief","Prior market notes"],
+    accessUrl:"",repoUrl:"",
+    evalHistory:[
+      {date:"2026-07-05",status:"Performing well",score:84,notes:"Strong on synthesis. Sometimes misses niche sources.",knownIssues:"Cursor context window can limit very large research scopes.",by:"Hager",traceUrl:""}
+    ],
+    changelog:[{version:"1.0",date:"2026-06-28",note:"Initial build."}],
+    proposedImprovement:null}
 ];
 
-let requests=[
-  {id:"R1",title:"Pitch Deck Agent",desc:"Help fellows build investor-ready pitch decks from meeting notes and strategy docs.",requestedBy:"Ollie",date:"Jul 15, 2026",priority:"Important",status:"Approved",notes:""},
-  {id:"R2",title:"Onboarding Agent",desc:"Guide new fellows through their first 2 weeks — checklist, introductions, setup tasks.",requestedBy:"Sarah",date:"Jul 14, 2026",priority:"Urgent",status:"In Progress",assignee:"Haia",notes:"Deciding whether this is a workflow or an agent."},
-  {id:"R3",title:"Competitive Intel Agent",desc:"Automated competitor tracking — pull updates from news, LinkedIn, and filings.",requestedBy:"Hager",date:"Jul 12, 2026",priority:"Nice to have",status:"Requested",notes:""},
-  {id:"R4",title:"Email Drafter",desc:"Draft outreach emails for fellows based on their ICP and messaging framework.",requestedBy:"James",date:"Jul 10, 2026",priority:"Important",status:"Requested",notes:""},
-  {id:"R5",title:"Meeting Notes Agent",desc:"Summarize Granola meeting notes into structured action items and follow-ups.",requestedBy:"Mo",date:"Jul 8, 2026",priority:"Nice to have",status:"Declined",notes:"Granola already handles this well. Revisit if quality drops."},
+const SEED_REQUESTS=[
+  {id:"R1",title:"Pitch Deck Agent",desc:"Help fellows build investor-ready pitch decks from meeting notes and strategy docs.",requestedBy:"Ollie",date:"Jul 15, 2026",priority:"Important",status:"Approved",assignee:"",notes:"",shippedAgentId:null},
+  {id:"R2",title:"Onboarding Agent",desc:"Guide new fellows through their first 2 weeks — checklist, introductions, setup tasks.",requestedBy:"Sarah",date:"Jul 14, 2026",priority:"Urgent",status:"In Progress",assignee:"Haia",notes:"Deciding whether this is a workflow or an agent.",shippedAgentId:null},
+  {id:"R3",title:"Competitive Intel Agent",desc:"Automated competitor tracking — pull updates from news, LinkedIn, and filings.",requestedBy:"Hager",date:"Jul 12, 2026",priority:"Nice to have",status:"Requested",assignee:"",notes:"",shippedAgentId:null},
+  {id:"R4",title:"Email Drafter",desc:"Draft outreach emails for fellows based on their ICP and messaging framework.",requestedBy:"James",date:"Jul 10, 2026",priority:"Important",status:"Requested",assignee:"",notes:"",shippedAgentId:null},
+  {id:"R5",title:"Meeting Notes Agent",desc:"Summarize Granola meeting notes into structured action items and follow-ups.",requestedBy:"Mo",date:"Jul 8, 2026",priority:"Nice to have",status:"Declined",assignee:"",notes:"Granola already handles this well. Revisit if quality drops.",shippedAgentId:null}
 ];
 
-let nextAgentNum=agents.length+1;
-let nextReqNum=requests.length+1;
+// ── STATE (hydrated from localStorage) ──
+let agents=[],requests=[],nextAgentNum=1,nextReqNum=1;
+const STORE_KEY="utopia_agents_dir_v2";
+
+function persist(){try{localStorage.setItem(STORE_KEY,JSON.stringify({agents,requests,nextAgentNum,nextReqNum}))}catch(e){}}
+function hydrate(){
+  try{const s=JSON.parse(localStorage.getItem(STORE_KEY));
+    if(s&&Array.isArray(s.agents)){agents=s.agents;requests=s.requests;nextAgentNum=s.nextAgentNum;nextReqNum=s.nextReqNum;return}
+  }catch(e){}
+  agents=JSON.parse(JSON.stringify(SEED_AGENTS));
+  requests=JSON.parse(JSON.stringify(SEED_REQUESTS));
+  nextAgentNum=agents.length+1;nextReqNum=requests.length+1;
+  persist();
+}
+function resetData(){if(!confirm("Reset the directory to seed data? Local changes will be lost."))return;localStorage.removeItem(STORE_KEY);hydrate();state.view="list";render();toast("Reset to seed data")}
+
 const CATEGORIES=["Personal Branding","Marketing & Content","Design & Product","Research & Analysis","Operations & Workflow","Investment & DD","Other"];
 const PLATFORMS=["Claude","Cursor","Manus","ChatGPT","n8n","Custom","Other"];
 const STATUS_OPTIONS=["Experimental","Active","Under Review","Deprecated"];
@@ -36,15 +154,35 @@ function priorityClass(p){return{Urgent:"pill-amber",Important:"pill-neutral","N
 function getInitials(name){return name.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2)}
 function escHtml(s){return s?String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}
 function toast(msg){const t=document.createElement("div");t.className="toast";t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),2500)}
-function formatDate(d){if(!d)return"";const dt=new Date(d);return dt.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+function formatDate(d){if(!d)return"";const dt=new Date(d);return isNaN(dt)?escHtml(d):dt.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
+function parseCSV(s){return s?s.split(",").map(x=>x.trim()).filter(Boolean):[]}
+function parseLines(s){return s?s.split("\n").map(x=>x.replace(/^\s*[-•\d.]+\s*/,"").trim()).filter(Boolean):[]}
+
+// eval helpers (history is the source of truth)
+function latestEval(a){return a.evalHistory&&a.evalHistory.length?a.evalHistory[a.evalHistory.length-1]:null}
+function agentEvalStatus(a){const e=latestEval(a);return e?e.status:"Not evaluated"}
+function daysSince(d){if(!d)return Infinity;const dt=new Date(d);if(isNaN(dt))return Infinity;return Math.floor((Date.now()-dt.getTime())/86400000)}
+function bumpVersion(v){const m=String(v||"0.0").match(/^(\d+)\.(\d+)/);if(!m)return"1.0";return m[1]+"."+(parseInt(m[2],10)+1)}
+
+// fleet health — powers the top-of-list health strip (a success-criteria metric)
+function fleetHealth(){
+  const evaluated=agents.filter(a=>latestEval(a));
+  const scores=evaluated.map(a=>latestEval(a).score).filter(n=>typeof n==="number");
+  const avg=scores.length?Math.round(scores.reduce((x,y)=>x+y,0)/scores.length):0;
+  const coverage=agents.length?Math.round(evaluated.length/agents.length*100):0;
+  const needsReview=agents.filter(a=>{const e=latestEval(a);if(!e)return true;return e.status==="Needs improvement"||e.score<70||daysSince(e.date)>30}).length;
+  const proposals=agents.filter(a=>a.proposedImprovement&&a.proposedImprovement.status==="proposed").length;
+  return{avg,coverage,needsReview,proposals,evaluated:evaluated.length,total:agents.length};
+}
 
 // ── MODAL FORMS ──
 function agentFormHtml(agent){
   const isEdit=!!agent;
-  const a=agent||{name:"",tagline:"",description:"",platform:"Claude",status:"Experimental",category:"",owner:"",when:"",sop:"",inputs:[],outputs:[],integrations:[],accessUrl:"",repoUrl:"",evalStatus:"Not evaluated",evalNotes:"",knownIssues:"",lastReviewed:""};
+  const a=agent||{name:"",tagline:"",description:"",platform:"Claude",status:"Experimental",category:"",owner:"",model:"",version:"",objective:"",successCriteria:[],guardrails:[],when:"",sop:"",inputs:[],outputs:[],skills:[],tools:[],context:[],accessUrl:"",repoUrl:""};
+  const cur=latestEval(a)||{};
   return `
   <div class="modal-header">
-    <div><h2>${isEdit?"Edit Agent":"Add Agent"}</h2><p>${isEdit?"Update this agent's details":"Register a new agent in the directory"}</p></div>
+    <div><h2>${isEdit?"Edit Agent":"Add Agent"}</h2><p>${isEdit?"Update this agent's spec":"Register a new agent — think in goals, skills, tools, context"}</p></div>
     <button class="modal-close" onclick="closeModal()">&times;</button>
   </div>
   <div class="modal-body">
@@ -52,17 +190,35 @@ function agentFormHtml(agent){
       <div class="form-section-title">Identity</div>
       <div class="form-group"><label>Name<span class="req">*</span></label><input type="text" id="f-name" value="${escHtml(a.name)}" placeholder="e.g. LinkedIn Auditor" maxlength="40"><div class="hint">Short, memorable. Max 40 characters.</div></div>
       <div class="form-group"><label>Tagline<span class="req">*</span></label><input type="text" id="f-tagline" value="${escHtml(a.tagline)}" placeholder="One sentence: what it does and for whom" maxlength="120"><div class="hint">Max 120 characters.</div></div>
-      <div class="form-group"><label>Description</label><textarea id="f-desc" rows="3" placeholder="What it does, how it works, why it exists">${escHtml(a.description||"")}</textarea></div>
+      <div class="form-group"><label>Description</label><textarea id="f-desc" rows="2" placeholder="What it does, how it works, why it exists">${escHtml(a.description||"")}</textarea></div>
     </div>
-    <div class="form-section">
-      <div class="form-section-title">SOP &amp; Usage</div>
-      <div class="form-group"><label>When to use<span class="req">*</span></label><textarea id="f-when" rows="2" placeholder="What situation triggers using this agent?">${escHtml(a.when)}</textarea></div>
-      <div class="form-group"><label>SOP — Step by step<span class="req">*</span></label><textarea id="f-sop" rows="4" placeholder="1. Open the project in Claude\n2. Paste the input\n3. Review the output">${escHtml(a.sop)}</textarea><div class="hint">Numbered steps. One per line.</div></div>
+
+    <div class="form-section pillar-goals">
+      <div class="form-section-title">① Goals — what good looks like</div>
+      <div class="form-group"><label>Objective<span class="req">*</span></label><textarea id="f-objective" rows="2" placeholder="The single outcome this agent exists to produce">${escHtml(a.objective||"")}</textarea></div>
       <div class="form-row">
-        <div class="form-group"><label>Inputs</label><input type="text" id="f-inputs" value="${escHtml(a.inputs.join(", "))}" placeholder="e.g. LinkedIn URL, bio text"><div class="hint">Comma-separated</div></div>
-        <div class="form-group"><label>Outputs</label><input type="text" id="f-outputs" value="${escHtml(a.outputs.join(", "))}" placeholder="e.g. List of fixes, rewritten bio"><div class="hint">Comma-separated</div></div>
+        <div class="form-group"><label>Success criteria</label><textarea id="f-success" rows="3" placeholder="One measurable signal per line">${escHtml((a.successCriteria||[]).join("\n"))}</textarea><div class="hint">One per line. How you'll know it worked.</div></div>
+        <div class="form-group"><label>Guardrails</label><textarea id="f-guardrails" rows="3" placeholder="One constraint per line">${escHtml((a.guardrails||[]).join("\n"))}</textarea><div class="hint">One per line. Must-nots and limits.</div></div>
       </div>
     </div>
+
+    <div class="form-section">
+      <div class="form-section-title">Usage — when &amp; how</div>
+      <div class="form-group"><label>When to use<span class="req">*</span></label><textarea id="f-when" rows="2" placeholder="What situation triggers using this agent?">${escHtml(a.when)}</textarea></div>
+      <div class="form-group"><label>SOP — Step by step<span class="req">*</span></label><textarea id="f-sop" rows="4" placeholder="1. Open the project in Claude&#10;2. Paste the input&#10;3. Review the output">${escHtml(a.sop)}</textarea><div class="hint">Numbered steps. One per line.</div></div>
+      <div class="form-row">
+        <div class="form-group"><label>Inputs</label><input type="text" id="f-inputs" value="${escHtml((a.inputs||[]).join(", "))}" placeholder="e.g. LinkedIn URL, bio text"><div class="hint">Comma-separated</div></div>
+        <div class="form-group"><label>Outputs</label><input type="text" id="f-outputs" value="${escHtml((a.outputs||[]).join(", "))}" placeholder="e.g. List of fixes, rewritten bio"><div class="hint">Comma-separated</div></div>
+      </div>
+    </div>
+
+    <div class="form-section pillar-scc">
+      <div class="form-section-title">② Skills · ③ Tools · ④ Context</div>
+      <div class="form-group"><label>Skills</label><input type="text" id="f-skills" value="${escHtml((a.skills||[]).join(", "))}" placeholder="e.g. copywriting, seo-writing"><div class="hint">Reusable procedures from the Skills library. Comma-separated.</div></div>
+      <div class="form-group"><label>Tools</label><input type="text" id="f-tools" value="${escHtml((a.tools||[]).join(", "))}" placeholder="e.g. Slack (MCP), Figma (MCP), Web search"><div class="hint">MCPs / integrations / APIs it can call. Comma-separated.</div></div>
+      <div class="form-group"><label>Context</label><input type="text" id="f-context" value="${escHtml((a.context||[]).join(", "))}" placeholder="e.g. Fellow's profile, Studio playbook"><div class="hint">Memory / knowledge / data it draws on. Comma-separated.</div></div>
+    </div>
+
     <div class="form-section">
       <div class="form-section-title">Platform &amp; Classification</div>
       <div class="form-row">
@@ -73,21 +229,15 @@ function agentFormHtml(agent){
         <div class="form-group"><label>Status<span class="req">*</span></label><select id="f-status">${STATUS_OPTIONS.map(s=>`<option${a.status===s?" selected":""}>${s}</option>`).join("")}</select></div>
         <div class="form-group"><label>Owner<span class="req">*</span></label><input type="text" id="f-owner" value="${escHtml(a.owner)}" placeholder="e.g. Sarah"></div>
       </div>
-      <div class="form-group"><label>Integrations</label><input type="text" id="f-integrations" value="${escHtml((a.integrations||[]).join(", "))}" placeholder="e.g. Slack, LinkedIn, Figma"><div class="hint">Comma-separated</div></div>
+      <div class="form-row">
+        <div class="form-group"><label>Model</label><input type="text" id="f-model" value="${escHtml(a.model||"")}" placeholder="e.g. Claude Opus 4.x"></div>
+        <div class="form-group"><label>Version</label><input type="text" id="f-version" value="${escHtml(a.version||"")}" placeholder="e.g. 1.0"></div>
+      </div>
       <div class="form-row">
         <div class="form-group"><label>Access URL</label><input type="url" id="f-access" value="${escHtml(a.accessUrl||"")}" placeholder="https://..."></div>
         <div class="form-group"><label>Repo URL</label><input type="url" id="f-repo" value="${escHtml(a.repoUrl||"")}" placeholder="https://github.com/..."></div>
       </div>
     </div>
-    ${isEdit?`<div class="form-section">
-      <div class="form-section-title">Eval &amp; Observability</div>
-      <div class="form-row">
-        <div class="form-group"><label>Eval Status</label><select id="f-eval">${EVAL_OPTIONS.map(e=>`<option${a.evalStatus===e?" selected":""}>${e}</option>`).join("")}</select></div>
-        <div class="form-group"><label>Last Reviewed</label><input type="date" id="f-reviewed" value="${a.lastReviewed||""}"></div>
-      </div>
-      <div class="form-group"><label>Eval Notes</label><textarea id="f-evalnotes" rows="2" placeholder="What's working? What needs improvement?">${escHtml(a.evalNotes||"")}</textarea></div>
-      <div class="form-group"><label>Known Issues</label><textarea id="f-issues" rows="2" placeholder="Failure modes, limitations, edge cases">${escHtml(a.knownIssues||"")}</textarea></div>
-    </div>`:""}
   </div>
   <div class="modal-footer">
     <button class="btn" onclick="closeModal()">Cancel</button>
@@ -118,33 +268,37 @@ function requestFormHtml(){
 function evalFormHtml(agent){
   return `
   <div class="modal-header">
-    <div><h2>Update Evaluation</h2><p>${agent.name}</p></div>
+    <div><h2>Log an Evaluation</h2><p>${escHtml(agent.name)} — appends to eval history</p></div>
     <button class="modal-close" onclick="closeModal()">&times;</button>
   </div>
   <div class="modal-body">
     <div class="form-row">
-      <div class="form-group"><label>Eval Status</label><select id="e-status">${EVAL_OPTIONS.map(e=>`<option${agent.evalStatus===e?" selected":""}>${e}</option>`).join("")}</select></div>
-      <div class="form-group"><label>Reviewed Date</label><input type="date" id="e-date" value="${new Date().toISOString().split('T')[0]}"></div>
+      <div class="form-group"><label>Eval Status</label><select id="e-status">${EVAL_OPTIONS.filter(o=>o!=="Not evaluated").map(e=>`<option>${e}</option>`).join("")}</select></div>
+      <div class="form-group"><label>Score (0–100)</label><input type="number" id="e-score" min="0" max="100" value="75"></div>
     </div>
-    <div class="form-group"><label>Notes</label><textarea id="e-notes" rows="3" placeholder="What's working? What's not?">${escHtml(agent.evalNotes||"")}</textarea></div>
-    <div class="form-group"><label>Known Issues</label><textarea id="e-issues" rows="2" placeholder="Failure modes, limitations">${escHtml(agent.knownIssues||"")}</textarea></div>
+    <div class="form-row">
+      <div class="form-group"><label>Reviewed by</label><input type="text" id="e-by" placeholder="e.g. Sarah"></div>
+      <div class="form-group"><label>Trace URL</label><input type="url" id="e-trace" placeholder="Langfuse / trace link (optional)"></div>
+    </div>
+    <div class="form-group"><label>Notes<span class="req">*</span></label><textarea id="e-notes" rows="3" placeholder="Measured against the success criteria — what's working, what's not?"></textarea></div>
+    <div class="form-group"><label>Known Issues</label><textarea id="e-issues" rows="2" placeholder="Failure modes, limitations"></textarea></div>
   </div>
   <div class="modal-footer">
     <button class="btn" onclick="closeModal()">Cancel</button>
-    <button class="btn btn-primary" onclick="saveEval('${agent.id}')">Save evaluation</button>
+    <button class="btn btn-primary" onclick="saveEval('${agent.id}')">Log evaluation</button>
   </div>`;
 }
 
 function triageFormHtml(req){
   return `
   <div class="modal-header">
-    <div><h2>Triage Request</h2><p>${req.title}</p></div>
+    <div><h2>Triage Request</h2><p>${escHtml(req.title)}</p></div>
     <button class="modal-close" onclick="closeModal()">&times;</button>
   </div>
   <div class="modal-body">
     <div class="triage-context">
       <div class="desc">${escHtml(req.desc)}</div>
-      <div class="meta">Requested by ${escHtml(req.requestedBy)} &middot; ${req.date}</div>
+      <div class="meta">Requested by ${escHtml(req.requestedBy)} &middot; ${escHtml(req.date)}</div>
     </div>
     <div class="form-row">
       <div class="form-group"><label>Status</label><select id="t-status">${REQ_STATUSES.map(s=>`<option${req.status===s?" selected":""}>${s}</option>`).join("")}</select></div>
@@ -152,18 +306,20 @@ function triageFormHtml(req){
     </div>
     <div class="form-group"><label>Assign to</label><input type="text" id="t-assignee" value="${escHtml(req.assignee||"")}" placeholder="e.g. Haia"></div>
     <div class="form-group"><label>Notes</label><textarea id="t-notes" rows="2" placeholder="Triage notes, decline reason, etc.">${escHtml(req.notes||"")}</textarea></div>
+    ${req.shippedAgentId?`<div class="hint">Shipped as agent ${escHtml(req.shippedAgentId)}.</div>`:""}
   </div>
   <div class="modal-footer">
     <button class="btn" onclick="closeModal()">Cancel</button>
+    ${req.shippedAgentId?"":`<button class="btn" onclick="shipRequestAsAgent('${req.id}')">Ship as agent &rarr;</button>`}
     <button class="btn btn-primary" onclick="saveTriage('${req.id}')">Save changes</button>
   </div>`;
 }
 
 // ── MODAL MANAGEMENT ──
-function openModal(type, data){
+function openModal(type,data){
   const root=document.getElementById("modal-root");
   let html="";
-  if(type==="addAgent") html=agentFormHtml(null);
+  if(type==="addAgent") html=agentFormHtml(data||null);
   else if(type==="editAgent") html=agentFormHtml(data);
   else if(type==="request") html=requestFormHtml();
   else if(type==="eval") html=evalFormHtml(data);
@@ -173,44 +329,50 @@ function openModal(type, data){
 function closeModal(){document.getElementById("modal-root").innerHTML=""}
 
 // ── SAVE HANDLERS ──
-function parseCSV(s){return s?s.split(",").map(x=>x.trim()).filter(Boolean):[]}
-
-function saveNewAgent(){
-  const name=document.getElementById("f-name").value.trim();
-  const tagline=document.getElementById("f-tagline").value.trim();
-  const when=document.getElementById("f-when").value.trim();
-  const sop=document.getElementById("f-sop").value.trim();
-  const category=document.getElementById("f-category").value;
-  const owner=document.getElementById("f-owner").value.trim();
-  if(!name||!tagline||!when||!sop||!category||!owner){toast("Fill in all required fields");return}
-  agents.push({
-    id:"A"+nextAgentNum++,name,tagline,
+function readAgentForm(){
+  return{
+    name:document.getElementById("f-name").value.trim(),
+    tagline:document.getElementById("f-tagline").value.trim(),
     description:document.getElementById("f-desc").value.trim(),
+    objective:document.getElementById("f-objective").value.trim(),
+    successCriteria:parseLines(document.getElementById("f-success").value),
+    guardrails:parseLines(document.getElementById("f-guardrails").value),
     platform:document.getElementById("f-platform").value,
     status:document.getElementById("f-status").value,
-    category,owner,initials:getInitials(owner),
-    when,sop,
+    category:document.getElementById("f-category").value,
+    owner:document.getElementById("f-owner").value.trim(),
+    model:document.getElementById("f-model").value.trim(),
+    version:document.getElementById("f-version").value.trim(),
+    when:document.getElementById("f-when").value.trim(),
+    sop:document.getElementById("f-sop").value.trim(),
     inputs:parseCSV(document.getElementById("f-inputs").value),
     outputs:parseCSV(document.getElementById("f-outputs").value),
-    integrations:parseCSV(document.getElementById("f-integrations").value),
+    skills:parseCSV(document.getElementById("f-skills").value),
+    tools:parseCSV(document.getElementById("f-tools").value),
+    context:parseCSV(document.getElementById("f-context").value),
     accessUrl:document.getElementById("f-access").value.trim(),
-    repoUrl:document.getElementById("f-repo").value.trim(),
-    evalStatus:"Not evaluated",evalNotes:"",knownIssues:"",lastReviewed:""
-  });
-  closeModal();toast("Agent added: "+name);render();
+    repoUrl:document.getElementById("f-repo").value.trim()
+  };
+}
+function validAgent(f){return f.name&&f.tagline&&f.objective&&f.when&&f.sop&&f.category&&f.owner}
+
+function saveNewAgent(){
+  const f=readAgentForm();
+  if(!validAgent(f)){toast("Fill in all required fields (incl. objective)");return}
+  agents.push(Object.assign({id:"A"+nextAgentNum++,initials:getInitials(f.owner),version:f.version||"1.0",evalHistory:[],changelog:[{version:f.version||"1.0",date:new Date().toISOString().split("T")[0],note:"Registered in directory."}],proposedImprovement:null},f));
+  persist();closeModal();toast("Agent added: "+f.name);
+  if(state.pendingRequestId){const r=requests.find(x=>x.id===state.pendingRequestId);if(r){r.status="Shipped";r.shippedAgentId="A"+(nextAgentNum-1);}state.pendingRequestId=null;persist()}
+  render();
 }
 
 function saveEditAgent(id){
   const a=agents.find(x=>x.id===id);if(!a)return;
-  const name=document.getElementById("f-name").value.trim();
-  const tagline=document.getElementById("f-tagline").value.trim();
-  const when=document.getElementById("f-when").value.trim();
-  const sop=document.getElementById("f-sop").value.trim();
-  const category=document.getElementById("f-category").value;
-  const owner=document.getElementById("f-owner").value.trim();
-  if(!name||!tagline||!when||!sop||!category||!owner){toast("Fill in all required fields");return}
-  Object.assign(a,{name,tagline,description:document.getElementById("f-desc").value.trim(),platform:document.getElementById("f-platform").value,status:document.getElementById("f-status").value,category,owner,initials:getInitials(owner),when,sop,inputs:parseCSV(document.getElementById("f-inputs").value),outputs:parseCSV(document.getElementById("f-outputs").value),integrations:parseCSV(document.getElementById("f-integrations").value),accessUrl:document.getElementById("f-access").value.trim(),repoUrl:document.getElementById("f-repo").value.trim(),evalStatus:document.getElementById("f-eval").value,evalNotes:document.getElementById("f-evalnotes").value.trim(),knownIssues:document.getElementById("f-issues").value.trim(),lastReviewed:document.getElementById("f-reviewed").value});
-  closeModal();toast("Agent updated: "+name);state.agent=a;render();
+  const f=readAgentForm();
+  if(!validAgent(f)){toast("Fill in all required fields (incl. objective)");return}
+  const versionChanged=f.version&&f.version!==a.version;
+  Object.assign(a,f,{initials:getInitials(f.owner)});
+  if(versionChanged)a.changelog.push({version:f.version,date:new Date().toISOString().split("T")[0],note:"Edited via directory."});
+  persist();closeModal();toast("Agent updated: "+f.name);state.agent=a;render();
 }
 
 function saveNewRequest(){
@@ -218,17 +380,18 @@ function saveNewRequest(){
   const desc=document.getElementById("r-desc").value.trim();
   const name=document.getElementById("r-name").value.trim();
   if(!title||!desc||!name){toast("Fill in all required fields");return}
-  requests.push({id:"R"+nextReqNum++,title,desc,requestedBy:name,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),priority:document.getElementById("r-priority").value,status:"Requested",notes:"",assignee:""});
-  closeModal();toast("Request submitted: "+title);render();
+  requests.push({id:"R"+nextReqNum++,title,desc,requestedBy:name,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),priority:document.getElementById("r-priority").value,status:"Requested",notes:"",assignee:"",shippedAgentId:null});
+  persist();closeModal();toast("Request submitted: "+title);render();
 }
 
 function saveEval(id){
   const a=agents.find(x=>x.id===id);if(!a)return;
-  a.evalStatus=document.getElementById("e-status").value;
-  a.lastReviewed=document.getElementById("e-date").value;
-  a.evalNotes=document.getElementById("e-notes").value.trim();
-  a.knownIssues=document.getElementById("e-issues").value.trim();
-  closeModal();toast("Evaluation updated");state.agent=a;render();
+  const notes=document.getElementById("e-notes").value.trim();
+  if(!notes){toast("Add eval notes");return}
+  let score=parseInt(document.getElementById("e-score").value,10);if(isNaN(score))score=null;else score=Math.max(0,Math.min(100,score));
+  a.evalHistory.push({date:document.getElementById("e-date")?document.getElementById("e-date").value:new Date().toISOString().split("T")[0],status:document.getElementById("e-status").value,score,notes,knownIssues:document.getElementById("e-issues").value.trim(),by:document.getElementById("e-by").value.trim(),traceUrl:document.getElementById("e-trace").value.trim()});
+  if(!a.evalHistory[a.evalHistory.length-1].date)a.evalHistory[a.evalHistory.length-1].date=new Date().toISOString().split("T")[0];
+  persist();closeModal();toast("Evaluation logged");state.agent=a;render();
 }
 
 function saveTriage(id){
@@ -237,7 +400,39 @@ function saveTriage(id){
   r.priority=document.getElementById("t-priority").value;
   r.assignee=document.getElementById("t-assignee").value.trim();
   r.notes=document.getElementById("t-notes").value.trim();
-  closeModal();toast("Request updated: "+r.title);render();
+  persist();closeModal();toast("Request updated: "+r.title);render();
+}
+
+// Requests → Agents: open a prefilled Add Agent form, mark request Shipped on save
+function shipRequestAsAgent(id){
+  const r=requests.find(x=>x.id===id);if(!r)return;
+  state.pendingRequestId=id;
+  openModal("addAgent",{name:r.title.replace(/ Agent$/,""),tagline:r.desc.slice(0,120),description:r.desc,platform:"Claude",status:"Experimental",category:"",owner:r.assignee||"",model:"",version:"1.0",objective:"",successCriteria:[],guardrails:[],when:"",sop:"",inputs:[],outputs:[],skills:[],tools:[],context:[],accessUrl:"",repoUrl:""});
+}
+
+// ── THE LOOP: propose (stub) → human approves/rejects → new version ──
+// In production, proposedImprovement is written by a GEPA/DSPy job that reads
+// failing traces from Langfuse. Here it's synthesised from the latest eval so
+// the human-in-the-loop review flow is exercisable end-to-end.
+function proposeImprovement(id){
+  const a=agents.find(x=>x.id===id);if(!a)return;
+  const e=latestEval(a);
+  const issue=(e&&e.knownIssues)||"the most frequent failure in recent traces";
+  a.proposedImprovement={source:"GEPA (stub)",date:new Date().toISOString().split("T")[0],status:"proposed",
+    summary:"Prompt/skill revision targeting: "+issue,
+    detail:"Reflective optimiser read the recent eval traces and proposes a revised prompt + tool-description addressing \""+issue+"\". Review the diff, then approve to cut a new version or reject to discard."};
+  persist();state.agent=a;render();toast("Improvement proposed — awaiting review");
+}
+function approveImprovement(id){
+  const a=agents.find(x=>x.id===id);if(!a||!a.proposedImprovement)return;
+  const nv=bumpVersion(a.version);
+  a.changelog.push({version:nv,date:new Date().toISOString().split("T")[0],note:"Approved improvement: "+a.proposedImprovement.summary});
+  a.version=nv;a.proposedImprovement=null;
+  persist();state.agent=a;render();toast("Approved → shipped v"+nv);
+}
+function rejectImprovement(id){
+  const a=agents.find(x=>x.id===id);if(!a||!a.proposedImprovement)return;
+  a.proposedImprovement=null;persist();state.agent=a;render();toast("Improvement rejected");
 }
 
 // ── RENDER ──
@@ -246,6 +441,16 @@ function renderSubTabs(){
   return `<div class="sub-tabs">
     <div class="sub-tab ${state.subTab==="agents"?"active":""}" onclick="switchSubTab('agents')">Agents<span class="count-badge">${agents.length}</span></div>
     <div class="sub-tab ${state.subTab==="requests"?"active":""}" onclick="switchSubTab('requests')">Requests<span class="count-badge">${reqCount}</span></div>
+  </div>`;
+}
+
+function renderHealthStrip(){
+  const h=fleetHealth();
+  return `<div class="health-strip">
+    <div class="health-stat"><span class="health-num">${h.avg}</span><span class="health-label">Fleet health<br>avg eval score</span></div>
+    <div class="health-stat"><span class="health-num">${h.coverage}%</span><span class="health-label">Eval coverage<br>${h.evaluated}/${h.total} evaluated</span></div>
+    <div class="health-stat"><span class="health-num ${h.needsReview?"health-warn":""}">${h.needsReview}</span><span class="health-label">Need review<br>weak · stale · unevaluated</span></div>
+    <div class="health-stat"><span class="health-num ${h.proposals?"health-loop":""}">${h.proposals}</span><span class="health-label">Improvements<br>awaiting approval</span></div>
   </div>`;
 }
 
@@ -260,18 +465,25 @@ function renderAgentsList(){
   return `
     <div class="section-header"><h2>AGENTS</h2><div class="actions"><button class="btn" onclick="openModal('request')">Request an Agent</button><button class="btn btn-primary" onclick="openModal('addAgent')">+ Add agent</button></div></div>
     ${renderSubTabs()}
-    <p class="count-line">${filtered.length} agent${filtered.length!==1?"s":""} across the team. Click one to see its SOP, eval status, and how to use it.</p>
+    ${renderHealthStrip()}
+    <p class="count-line">${filtered.length} agent${filtered.length!==1?"s":""} across the team. Click one to see its goals, skills, tools, context, and eval history. <a class="reset-link" onclick="resetData()">reset demo data</a></p>
     <div class="filters">
-      ${cats.map(c=>`<button class="filter-chip ${state.catFilter===c?"active":""}" onclick="setFilter('cat','${c}')">${c}</button>`).join("")}
+      ${cats.map(c=>`<button class="filter-chip ${state.catFilter===c?"active":""}" onclick="setFilter('cat','${escHtml(c)}')">${escHtml(c)}</button>`).join("")}
       <div class="filter-sep"></div>
-      ${stats.map(s=>`<button class="filter-chip ${state.statusFilter===s?"active":""}" onclick="setFilter('status','${s}')">${s}</button>`).join("")}
+      ${stats.map(s=>`<button class="filter-chip ${state.statusFilter===s?"active":""}" onclick="setFilter('status','${escHtml(s)}')">${escHtml(s)}</button>`).join("")}
     </div>
-    <div class="card-grid">${filtered.map(a=>`
+    <div class="card-grid">${filtered.map(a=>{
+      const e=latestEval(a);const prop=a.proposedImprovement&&a.proposedImprovement.status==="proposed";
+      return `
       <div class="card" onclick="openDetail('${a.id}')">
-        <div class="card-top"><span class="card-id">${a.id}</span><span class="pill ${statusClass(a.status)}"><span class="dot"></span>${a.status}</span></div>
-        <h3>${a.name}</h3><p>${a.tagline}</p>
-        <div class="card-footer"><span class="card-meta">${platformIcon(a.platform)} ${a.platform}<span class="sep">&middot;</span>${a.category}</span><div class="avatar">${a.initials}</div></div>
-      </div>`).join("")}</div>
+        <div class="card-top"><span class="card-id">${a.id} · v${escHtml(a.version||"1.0")}</span><span class="pill ${statusClass(a.status)}"><span class="dot"></span>${escHtml(a.status)}</span></div>
+        <h3>${escHtml(a.name)}</h3><p>${escHtml(a.tagline)}</p>
+        <div class="card-eval">
+          <span class="pill ${evalClass(agentEvalStatus(a))} pill-xs">${e&&typeof e.score==="number"?e.score+" · ":""}${escHtml(agentEvalStatus(a))}</span>
+          ${prop?'<span class="pill pill-loop pill-xs">● improvement pending</span>':""}
+        </div>
+        <div class="card-footer"><span class="card-meta">${platformIcon(a.platform)} ${escHtml(a.platform)}<span class="sep">&middot;</span>${escHtml(a.category)}</span><div class="avatar">${escHtml(a.initials)}</div></div>
+      </div>`;}).join("")}</div>
     ${filtered.length===0?'<div class="empty-filter">No agents match these filters.</div>':""}`;
 }
 
@@ -282,11 +494,11 @@ function renderRequests(){
     if(!items.length)return"";
     return `<div class="status-group"><div class="status-group-title">${name}<span class="group-count">${items.length}</span></div><div class="request-list">${items.map(r=>`
       <div class="request-card" onclick="openModal('triage',requests.find(x=>x.id==='${r.id}'))">
-        <div class="request-left"><h3>${r.title}</h3><p>${escHtml(r.desc)}</p></div>
+        <div class="request-left"><h3>${escHtml(r.title)}</h3><p>${escHtml(r.desc)}</p>${r.shippedAgentId?`<span class="shipped-tag">→ shipped as ${escHtml(r.shippedAgentId)}</span>`:""}</div>
         <div class="request-right">
-          <span class="pill ${reqStatusClass(r.status)}"><span class="dot"></span>${r.status}</span>
-          <span class="pill ${priorityClass(r.priority)}">${r.priority}</span>
-          <div class="request-meta">${r.requestedBy}<br>${r.date}${r.assignee?`<br><b>${r.assignee}</b>`:""}</div>
+          <span class="pill ${reqStatusClass(r.status)}"><span class="dot"></span>${escHtml(r.status)}</span>
+          <span class="pill ${priorityClass(r.priority)}">${escHtml(r.priority)}</span>
+          <div class="request-meta">${escHtml(r.requestedBy)}<br>${escHtml(r.date)}${r.assignee?`<br><b>${escHtml(r.assignee)}</b>`:""}</div>
         </div>
       </div>`).join("")}</div></div>`;
   }
@@ -295,53 +507,89 @@ function renderRequests(){
   return `
     <div class="section-header"><h2>AGENTS</h2><div class="actions"><button class="btn btn-primary" onclick="openModal('request')">+ New request</button><button class="btn" onclick="openModal('addAgent')">Add agent</button></div></div>
     ${renderSubTabs()}
-    <p class="count-line">Agent requests from the team. Click a request to triage it.</p>
+    <p class="count-line">Agent requests from the team. Click a request to triage it — or ship an approved one straight into the catalog.</p>
     ${active}
     ${done?`<div class="resolved-divider"><div class="resolved-title">RESOLVED</div>${done}</div>`:""}`;
 }
 
+function pillarList(items,empty){return items&&items.length?items.map(i=>`<div class="item">&bull; ${escHtml(i)}</div>`).join(""):`<div class="item empty">${empty}</div>`}
+function chips(items){return items&&items.length?items.map(i=>`<span class="chip">${escHtml(i)}</span>`).join(""):'<span class="chip empty">None specified</span>'}
+
 function renderDetail(a){
-  const hasEval=a.evalNotes||a.lastReviewed;
   const sopLines=a.sop.split("\n").filter(Boolean);
+  const e=latestEval(a);
+  const prop=a.proposedImprovement&&a.proposedImprovement.status==="proposed";
   return `<div class="detail">
     <button class="back-btn" onclick="goBack()"><span>&lsaquo;</span> Back to Directory</button>
     <div class="detail-header">
-      <div class="detail-eyebrow">AGENT ${a.id}</div>
+      <div class="detail-eyebrow">AGENT ${a.id} · v${escHtml(a.version||"1.0")}${a.model?" · "+escHtml(a.model):""}</div>
       <button class="btn btn-sm" onclick="openModal('editAgent',agents.find(x=>x.id==='${a.id}'))">Edit</button>
     </div>
-    <h1>${a.name}</h1>
-    <p class="tagline">${a.tagline}</p>
+    <h1>${escHtml(a.name)}</h1>
+    <p class="tagline">${escHtml(a.tagline)}</p>
     <div class="pills">
-      <span class="pill ${statusClass(a.status)}"><span class="dot"></span>${a.status}</span>
-      <span class="pill pill-neutral">${a.category}</span>
-      <span class="pill pill-neutral">${platformIcon(a.platform)} ${a.platform}</span>
-      <span class="pill pill-neutral pill-owner"><span class="mini-avatar">${a.initials}</span>${a.owner}</span>
+      <span class="pill ${statusClass(a.status)}"><span class="dot"></span>${escHtml(a.status)}</span>
+      <span class="pill pill-neutral">${escHtml(a.category)}</span>
+      <span class="pill pill-neutral">${platformIcon(a.platform)} ${escHtml(a.platform)}</span>
+      <span class="pill pill-neutral pill-owner"><span class="mini-avatar">${escHtml(a.initials)}</span>${escHtml(a.owner)}</span>
     </div>
-    <div class="section"><div class="section-title">When to use</div><div class="section-body">${a.when}</div></div>
-    <div class="section"><div class="section-title">SOP &mdash; How to use this agent</div><div class="section-body">${sopLines.map(s=>`<div class="step">${s}</div>`).join("")}</div></div>
+
+    ${prop?`<div class="loop-card">
+      <div class="loop-head"><span class="loop-badge">● IMPROVEMENT PROPOSED</span><span class="loop-src">${escHtml(a.proposedImprovement.source)} · ${formatDate(a.proposedImprovement.date)}</span></div>
+      <div class="loop-summary">${escHtml(a.proposedImprovement.summary)}</div>
+      <div class="loop-detail">${escHtml(a.proposedImprovement.detail)}</div>
+      <div class="loop-actions"><button class="btn btn-primary btn-sm" onclick="approveImprovement('${a.id}')">Approve &rarr; ship v${bumpVersion(a.version)}</button><button class="btn btn-sm" onclick="rejectImprovement('${a.id}')">Reject</button></div>
+    </div>`:""}
+
+    <div class="pillar-block pillar-goals">
+      <div class="pillar-tag">① GOALS</div>
+      <div class="section-body objective">${escHtml(a.objective||"No objective set.")}</div>
+      <div class="io-grid">
+        <div class="io-box"><h4>SUCCESS CRITERIA</h4>${pillarList(a.successCriteria,"None specified")}</div>
+        <div class="io-box"><h4>GUARDRAILS</h4>${pillarList(a.guardrails,"None specified")}</div>
+      </div>
+    </div>
+
+    <div class="section"><div class="section-title">When to use</div><div class="section-body">${escHtml(a.when)}</div></div>
+    <div class="section"><div class="section-title">SOP &mdash; How to use this agent</div><div class="section-body">${sopLines.map(s=>`<div class="step">${escHtml(s)}</div>`).join("")}</div></div>
     <div class="io-grid">
-      <div class="io-box"><h4>INPUTS</h4>${a.inputs.length?a.inputs.map(i=>`<div class="item">&bull; ${i}</div>`).join(""):'<div class="item empty">None specified</div>'}</div>
-      <div class="io-box"><h4>OUTPUTS</h4>${a.outputs.length?a.outputs.map(o=>`<div class="item">&bull; ${o}</div>`).join(""):'<div class="item empty">None specified</div>'}</div>
+      <div class="io-box"><h4>INPUTS</h4>${pillarList(a.inputs,"None specified")}</div>
+      <div class="io-box"><h4>OUTPUTS</h4>${pillarList(a.outputs,"None specified")}</div>
     </div>
-    ${(a.integrations&&a.integrations.length)||a.accessUrl||a.repoUrl?`<div class="section"><div class="section-title">Technical Details</div><div class="section-body">
-      ${a.integrations&&a.integrations.length?`<div class="detail-meta-line"><strong>Integrations:</strong> ${a.integrations.join(", ")}</div>`:""}
+
+    <div class="pillar-block pillar-scc">
+      <div class="io-grid io-grid-3">
+        <div class="io-box"><h4>② SKILLS</h4><div class="chip-row">${chips(a.skills)}</div></div>
+        <div class="io-box"><h4>③ TOOLS</h4><div class="chip-row">${chips(a.tools)}</div></div>
+        <div class="io-box"><h4>④ CONTEXT</h4><div class="chip-row">${chips(a.context)}</div></div>
+      </div>
+    </div>
+
+    ${a.accessUrl||a.repoUrl?`<div class="section"><div class="section-title">Technical Details</div><div class="section-body">
       ${a.accessUrl?`<div class="detail-access-line"><strong>Access:</strong> <a href="${escHtml(a.accessUrl)}">${escHtml(a.accessUrl)}</a></div>`:""}
       ${a.repoUrl?`<div><strong>Repo:</strong> <a href="${escHtml(a.repoUrl)}">${escHtml(a.repoUrl)}</a></div>`:""}
     </div></div>`:""}
+
     <div class="section">
-      <div class="section-title" style="display:flex;justify-content:space-between;align-items:center">Eval &amp; Observability<button class="btn-ghost btn-sm" onclick="openModal('eval',agents.find(x=>x.id==='${a.id}'))">Update eval</button></div>
-      <div class="eval-pill-row"><span class="pill ${evalClass(a.evalStatus)}">${a.evalStatus}</span>${a.lastReviewed?`<span class="date">Last reviewed: ${formatDate(a.lastReviewed)}</span>`:""}</div>
-      ${a.evalNotes?`<div class="notes-box"><h4>NOTES</h4><p>${a.evalNotes}</p></div>`:""}
-      ${a.knownIssues?`<div class="issues-box"><h4>KNOWN ISSUES</h4><p>${a.knownIssues}</p></div>`:""}
-      ${!hasEval?`<div class="empty-eval"><p>This agent hasn't been evaluated yet.</p><div class="cta" onclick="openModal('eval',agents.find(x=>x.id==='${a.id}'))">Add an evaluation &rarr;</div></div>`:""}
+      <div class="section-title eval-title">Eval &amp; Observability<span class="eval-title-actions"><button class="btn-ghost btn-sm" onclick="proposeImprovement('${a.id}')">Propose improvement</button><button class="btn-ghost btn-sm" onclick="openModal('eval',agents.find(x=>x.id==='${a.id}'))">Log eval</button></span></div>
+      <div class="eval-pill-row"><span class="pill ${evalClass(agentEvalStatus(a))}">${e&&typeof e.score==="number"?e.score+" · ":""}${escHtml(agentEvalStatus(a))}</span>${e?`<span class="date">Last reviewed: ${formatDate(e.date)}${e.by?" · "+escHtml(e.by):""}</span>`:""}</div>
+      ${a.evalHistory&&a.evalHistory.length?`<div class="eval-history">${a.evalHistory.slice().reverse().map(h=>`
+        <div class="eval-row">
+          <div class="eval-row-top"><span class="pill ${evalClass(h.status)} pill-xs">${escHtml(h.status)}</span>${typeof h.score==="number"?`<span class="eval-score">${h.score}</span>`:""}<span class="eval-date">${formatDate(h.date)}${h.by?" · "+escHtml(h.by):""}</span>${h.traceUrl?`<a class="eval-trace" href="${escHtml(h.traceUrl)}">trace ↗</a>`:""}</div>
+          ${h.notes?`<div class="eval-note">${escHtml(h.notes)}</div>`:""}
+          ${h.knownIssues?`<div class="eval-issue"><b>Known issues:</b> ${escHtml(h.knownIssues)}</div>`:""}
+        </div>`).join("")}</div>`:`<div class="empty-eval"><p>This agent hasn't been evaluated yet.</p><div class="cta" onclick="openModal('eval',agents.find(x=>x.id==='${a.id}'))">Log the first evaluation &rarr;</div></div>`}
     </div>
-    <button class="contact-btn">&#x1F4AC; Message ${a.owner} on Slack</button>
+
+    ${a.changelog&&a.changelog.length?`<div class="section"><div class="section-title">Version history</div><div class="section-body">${a.changelog.slice().reverse().map(c=>`<div class="change-row"><span class="change-ver">v${escHtml(c.version)}</span><span class="change-date">${formatDate(c.date)}</span><span class="change-note">${escHtml(c.note)}</span></div>`).join("")}</div></div>`:""}
+
+    <button class="contact-btn">&#x1F4AC; Message ${escHtml(a.owner)} on Slack</button>
   </div>`;
 }
 
 function render(){
   const app=document.getElementById("app");
-  if(state.view==="detail"&&state.agent){app.innerHTML=renderDetail(state.agent);return}
+  if(state.view==="detail"&&state.agent){const fresh=agents.find(x=>x.id===state.agent.id);if(fresh)state.agent=fresh;app.innerHTML=renderDetail(state.agent);return}
   app.innerHTML=state.subTab==="agents"?renderAgentsList():renderRequests();
 }
 
@@ -350,4 +598,6 @@ function openDetail(id){state.agent=agents.find(a=>a.id===id);state.view="detail
 function goBack(){state.view="list";state.agent=null;render()}
 function switchSubTab(tab){state.subTab=tab;state.view="list";render()}
 
+// ── BOOT ──
+hydrate();
 render();

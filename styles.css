@@ -331,3 +331,64 @@ input[type="date"] { color-scheme: dark; }
 @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(12px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 
 .watermark { position: fixed; bottom: 16px; right: 20px; font-size: 11px; color: var(--accent-text); opacity: 0.5; font-weight: var(--font-weight-medium); letter-spacing: 0.04em; }
+
+/* ═══ v2 additions: fleet health · four pillars · eval history · the loop ═══ */
+
+/* Fleet health strip */
+.health-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 16px 0 20px; }
+@media (max-width: 640px) { .health-strip { grid-template-columns: repeat(2, 1fr); } }
+.health-stat { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-surface); padding: 14px 16px; }
+.health-num { display: block; font-size: 26px; font-weight: var(--font-weight-medium); color: var(--foreground); line-height: 1.1; }
+.health-num.health-warn { color: var(--warning-text); }
+.health-num.health-loop { color: var(--accent-text); }
+.health-label { display: block; font-size: 11px; color: var(--foreground-subtle); line-height: 1.4; margin-top: 4px; }
+.reset-link { color: var(--foreground-subtle); text-decoration: underline; cursor: pointer; margin-left: 6px; }
+.reset-link:hover { color: var(--accent-text); }
+
+/* Card eval line */
+.card-eval { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
+.pill-xs { font-size: 11px; padding: 2px 8px; }
+.pill-loop { background: rgb(215 122 89 / 14%); border-color: var(--warning-border); color: var(--accent-text); }
+
+/* Pillar blocks */
+.pillar-block { border-radius: var(--radius-surface); padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-subtle); }
+.pillar-goals { background: rgb(215 122 89 / 6%); }
+.pillar-scc { background: var(--surface); }
+.pillar-tag { font-size: 11px; letter-spacing: var(--tracking-eyebrow); color: var(--accent-text); font-weight: var(--font-weight-medium); margin-bottom: 8px; }
+.section-body.objective { font-size: 15px; color: var(--foreground); line-height: 1.6; margin-bottom: 12px; }
+.form-section.pillar-goals, .form-section.pillar-scc { border-left: 2px solid var(--warning-border); padding-left: 14px; }
+.io-grid-3 { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 640px) { .io-grid-3 { grid-template-columns: 1fr; } }
+
+/* Chips */
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { display: inline-flex; align-items: center; background: var(--surface-strong); border: 1px solid var(--border-subtle); padding: 3px 10px; border-radius: 999px; font-size: 12px; color: var(--foreground); }
+.chip.empty { color: var(--foreground-subtle); background: transparent; border-style: dashed; }
+
+/* Eval history */
+.eval-history { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+.eval-row { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-surface); padding: 12px 14px; }
+.eval-row-top { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.eval-score { font-weight: var(--font-weight-medium); color: var(--foreground); font-size: 14px; }
+.eval-date { font-size: 12px; color: var(--foreground-subtle); }
+.eval-trace { font-size: 12px; color: var(--accent-text); margin-left: auto; }
+.eval-note { font-size: 14px; color: var(--foreground); line-height: 1.55; margin-top: 8px; }
+.eval-issue { font-size: 13px; color: var(--foreground-muted); margin-top: 6px; }
+.eval-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.eval-title-actions { display: inline-flex; gap: 6px; }
+
+/* The loop — proposed improvement card */
+.loop-card { border: 1px solid var(--warning-border); background: rgb(215 122 89 / 8%); border-radius: var(--radius-surface); padding: 16px; margin: 4px 0 20px; }
+.loop-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.loop-badge { font-size: 11px; letter-spacing: var(--tracking-eyebrow); color: var(--accent-text); font-weight: var(--font-weight-medium); }
+.loop-src { font-size: 12px; color: var(--foreground-subtle); }
+.loop-summary { font-size: 15px; color: var(--foreground); font-weight: var(--font-weight-medium); margin-bottom: 6px; }
+.loop-detail { font-size: 13px; color: var(--foreground-muted); line-height: 1.6; margin-bottom: 12px; }
+.loop-actions { display: flex; gap: 8px; }
+
+/* Version history */
+.change-row { display: flex; gap: 12px; align-items: baseline; padding: 5px 0; font-size: 13px; }
+.change-ver { color: var(--accent-text); font-weight: var(--font-weight-medium); min-width: 40px; }
+.change-date { color: var(--foreground-subtle); min-width: 96px; }
+.change-note { color: var(--foreground); }
+.shipped-tag { display: inline-block; font-size: 11px; color: var(--success-text); margin-top: 6px; }
