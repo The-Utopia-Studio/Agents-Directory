@@ -485,6 +485,7 @@ function renderAgentsList(){
     <div class="section-header"><h2>AGENTS</h2><div class="actions"><button class="btn" onclick="openModal('request')">Request an Agent</button><button class="btn btn-primary" onclick="openModal('addAgent')">+ Add agent</button></div></div>
     ${renderSubTabs()}
     ${renderHealthStrip()}
+    <div id="automations" class="automations"></div>
     <p class="count-line">${filtered.length} agent${filtered.length!==1?"s":""} across the team. Click one to see its goals, skills, tools, context, and eval history. <a class="reset-link" onclick="resetData()">reset demo data</a></p>
     <div class="filters">
       ${cats.map(c=>`<button class="filter-chip ${state.catFilter===c?"active":""}" onclick="setFilter('cat','${escHtml(c)}')">${escHtml(c)}</button>`).join("")}
@@ -557,6 +558,7 @@ function renderDetail(a){
       <div class="loop-head"><span class="loop-badge">● IMPROVEMENT PROPOSED</span><span class="loop-src">${escHtml(a.proposedImprovement.source)} · ${formatDate(a.proposedImprovement.date)}</span></div>
       <div class="loop-summary">${escHtml(a.proposedImprovement.summary)}</div>
       <div class="loop-detail">${escHtml(a.proposedImprovement.detail)}</div>
+      ${a.proposedImprovement.verdict?`<div class="loop-verdict"><span class="pill pill-xs ${a.proposedImprovement.verdict.verdict==="ship"?"pill-green":a.proposedImprovement.verdict.verdict==="reject"?"pill-amber":"pill-blue"}">checker: ${escHtml(a.proposedImprovement.verdict.verdict)} · ${a.proposedImprovement.verdict.confidence}</span>${(a.proposedImprovement.verdict.reasons||[]).length?`<span class="loop-verdict-why">${escHtml(a.proposedImprovement.verdict.reasons[0])}</span>`:""}</div>`:""}
       <div class="loop-actions"><button class="btn btn-primary btn-sm" onclick="approveImprovement('${a.id}')">Approve &rarr; ship v${bumpVersion(a.version)}</button><button class="btn btn-sm" onclick="rejectImprovement('${a.id}')">Reject</button></div>
     </div>`:""}
 
@@ -615,6 +617,34 @@ function render(){
   const app=document.getElementById("app");
   if(state.view==="detail"&&state.agent){const fresh=agents.find(x=>x.id===state.agent.id);if(fresh)state.agent=fresh;app.innerHTML=renderDetail(state.agent);return}
   app.innerHTML=state.subTab==="agents"?renderAgentsList():renderRequests();
+  if(state.subTab==="agents"&&window.DirectoryAPI&&DirectoryAPI.enabled)loadAutomations();
+}
+
+// ── Automations panel (server-side loop; shown only when the service is up) ──
+async function loadAutomations(){
+  const el=document.getElementById("automations");
+  if(!el||!(window.DirectoryAPI&&DirectoryAPI.enabled))return;
+  try{
+    const [inbox,runs]=await Promise.all([DirectoryAPI.loopInbox(),DirectoryAPI.loopRuns(1)]);
+    const last=runs.runs&&runs.runs[0];
+    const items=inbox.inbox||[];
+    const vClass=v=>v==="ship"?"pill-green":v==="reject"?"pill-amber":"pill-blue";
+    el.innerHTML=`
+      <div class="auto-head">
+        <div><span class="auto-title">◷ Automations</span><span class="auto-sub">${last?`last cycle ${formatDate(last.ts)} · scanned ${last.scanned} · selected ${last.selected} · $${last.budget.spentUsd}`:"heartbeat idle — run a cycle to triage the fleet"}</span></div>
+        <button class="btn btn-sm btn-primary" onclick="runLoopNow(this)">Run automations now</button>
+      </div>
+      <div class="auto-inbox">
+        <div class="auto-inbox-title">Triage inbox<span class="count-badge">${items.length}</span></div>
+        ${items.length?items.map(x=>`<div class="auto-item"><span class="auto-agent">${escHtml(x.agentId)}</span><span class="auto-summary">${escHtml(x.proposal.summary)}</span>${x.proposal.verdict?`<span class="pill pill-xs ${vClass(x.proposal.verdict.verdict)}">checker: ${escHtml(x.proposal.verdict.verdict)} ${x.proposal.verdict.confidence}</span>`:""}</div>`).join(""):'<div class="auto-empty">Inbox clear — nothing awaiting triage.</div>'}
+      </div>`;
+  }catch(e){el.innerHTML=""}
+}
+async function runLoopNow(btn){
+  if(btn){btn.disabled=true;btn.textContent="Running…"}
+  try{const r=await DirectoryAPI.runLoop();toast(`Cycle: scanned ${r.scanned}, ${r.jobs.length} job(s) run, $${r.budget.spentUsd} spent`)}
+  catch(e){toast("Loop service unreachable")}
+  loadAutomations();
 }
 
 async function recallContext(id){
@@ -638,3 +668,5 @@ function switchSubTab(tab){state.subTab=tab;state.view="list";render()}
 // ── BOOT ──
 hydrate();
 render();
+// The probe resolves after the first render — refresh the automations panel then.
+if(window.DirectoryAPI)DirectoryAPI.ready.then(()=>{if(state.view==="list"&&state.subTab==="agents")loadAutomations()});

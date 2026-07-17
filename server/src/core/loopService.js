@@ -3,7 +3,7 @@
 // business rules of the eval -> improve -> approve cycle live here.
 import { bumpVersion } from "./version.js";
 
-export function createLoopService({ store, obs, optimizer, memory }) {
+export function createLoopService({ store, obs, optimizer, memory, verifier }) {
   const ns = (agentId) => `agent:${agentId}`;
 
   const svc = {
@@ -88,6 +88,31 @@ export function createLoopService({ store, obs, optimizer, memory }) {
       return { ok: true };
     },
 
+    // Attach a verifier verdict to the pending proposal (maker/checker split).
+    async attachVerdict(agentId, verdict) {
+      const agent = await store.get("agents", agentId);
+      if (!agent?.proposedImprovement) return null;
+      agent.proposedImprovement.verdict = verdict;
+      await store.put("agents", agent);
+      return agent.proposedImprovement;
+    },
+
+    // ── the loop's state: triage inbox + run history ──
+    async listInbox() {
+      const agents = await store.all("agents");
+      return agents
+        .filter((a) => a.proposedImprovement?.status === "proposed")
+        .map((a) => ({ agentId: a.id, name: a.name, version: a.version, proposal: a.proposedImprovement }));
+    },
+    async recordLoopRun(run) {
+      const saved = await store.append("loopRuns", { ...run, ts: run.ts || new Date().toISOString() });
+      return saved;
+    },
+    async recentLoopRuns(limit = 20) {
+      const runs = await store.all("loopRuns");
+      return runs.sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, limit);
+    },
+
     // ── fleet health roll-up ──
     async fleetHealth() {
       const agents = await store.all("agents");
@@ -116,6 +141,7 @@ export function createLoopService({ store, obs, optimizer, memory }) {
         observability: { provider: obs.name, ...(await obs.health()) },
         optimizer: { provider: optimizer.name, ...(await optimizer.health()) },
         memory: { provider: memory.name, ...(await memory.health()) },
+        verifier: verifier ? { provider: verifier.name, ...(await verifier.health()) } : null,
       };
     },
   };

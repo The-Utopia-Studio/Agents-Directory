@@ -45,6 +45,11 @@ window.DirectoryAPI = (function () {
     // Context pillar (memory)
     addContext: (id, item) => j("POST", `/api/agents/${id}/context`, item),
     recallContext: (id, q) => j("GET", `/api/agents/${id}/context/search?q=${encodeURIComponent(q)}`),
+    // Loop / automations (the heartbeat)
+    runLoop: () => j("POST", "/api/loop/run"),
+    loopInbox: () => j("GET", "/api/loop/inbox"),
+    loopRuns: (n = 5) => j("GET", `/api/loop/runs?limit=${n}`),
+    runGoal: (id, opts) => j("POST", `/api/agents/${id}/goal`, opts || {}),
   };
 
   api.ready = api.probe();

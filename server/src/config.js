@@ -47,6 +47,25 @@ export const config = {
     },
   },
 
+  // The checker in the maker/checker split — grades the optimizer's proposals.
+  verifier: {
+    provider: env.VERIFIER || "heuristic",
+    endpoint: env.VERIFIER_ENDPOINT || "",
+    model: env.VERIFIER_MODEL || "claude-opus-4-8",
+  },
+
+  // The heartbeat — automations that make it a loop, not a one-off run.
+  loop: {
+    enabled: env.LOOP_ENABLED === "true",
+    intervalMs: Number(env.LOOP_INTERVAL_MS || 0), // 0 = no auto scheduler (manual trigger only)
+    lowScore: Number(env.LOOP_LOW_SCORE || 70),
+    maxJobs: Number(env.LOOP_MAX_JOBS || 3),
+    budgetUsd: Number(env.LOOP_BUDGET_USD || 1),
+    costPerJobUsd: Number(env.LOOP_COST_PER_JOB || 0.05),
+    autoApply: env.LOOP_AUTOAPPLY === "true",       // default: human approves everything
+    autoApplyConfidence: Number(env.LOOP_AUTOAPPLY_CONFIDENCE || 0.85),
+  },
+
   // The Context pillar — agent memory / knowledge with semantic recall.
   memory: {
     provider: env.MEMORY_PROVIDER || "local",

@@ -2,10 +2,19 @@
 // contract the front-end's api.js talks to.
 import { reply } from "./router.js";
 
-export function registerRoutes(router, svc) {
+export function registerRoutes(router, svc, engine) {
   // health / status of the wired providers
   router.get("/api/health", async () => svc.health());
   router.get("/api/fleet/health", async () => svc.fleetHealth());
+
+  // ── the loop / automations (the heartbeat) ──
+  router.post("/api/loop/run", async () => reply(201, await engine.runCycle()));
+  router.get("/api/loop/runs", async ({ query }) => ({ runs: await svc.recentLoopRuns(Number(query.limit) || 20) }));
+  router.get("/api/loop/inbox", async () => ({ inbox: await svc.listInbox() }));
+  // run-until-done on one agent (the /goal primitive)
+  router.post("/api/agents/:id/goal", async ({ params, body }) =>
+    reply(201, await engine.runGoal(params.id, body || {}))
+  );
 
   // agents
   router.get("/api/agents", async () => ({ agents: await svc.listAgents() }));

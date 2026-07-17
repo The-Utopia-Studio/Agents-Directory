@@ -42,19 +42,43 @@ append-only `evalHistory[]` (numeric scores → trendable fleet health), and a
 ## The loop
 
 ```
+        ┌──────────── Loop Engine (the heartbeat) ────────────┐
+        │  runCycle: triage → maker → checker → route/budget  │
+        └─────────────────────────────────────────────────────┘
 spec ──run──▶ traces ──score──▶ eval history
   ▲                                   │
   │                          failing signal
   │                                   ▼
-new version ◀─ human approve ◀─ optimizer proposes
+new version ◀─ human approve ◀─ verifier grades ◀─ optimizer proposes
+   (or auto-apply within policy)   (checker)          (maker)
 ```
 
 1. **Observe** — runs are recorded as traces (`ObservabilityProvider`).
 2. **Score** — evals are appended, measured against the success criteria.
-3. **Improve** — an `Optimizer` reads the *failing* traces and proposes a
+3. **Improve (maker)** — an `Optimizer` reads the *failing* traces and proposes a
    targeted prompt/skill revision.
-4. **Human in the loop** — the owner approves (cuts a new version, logs the
-   changelog) or rejects. This is what replaces one-shot builds.
+4. **Verify (checker)** — a distinct `Verifier` grades the proposal
+   `ship | hold | reject` — the maker/checker split, so the model that wrote the
+   fix isn't the one that approves it.
+5. **Human in the loop** — the owner approves (cuts a new version, logs the
+   changelog) or rejects from the triage inbox. This replaces one-shot builds.
+
+### The heartbeat (loop engineering)
+
+`src/loop/` turns the above from a manual click into an automation
+([Osmani, "Loop Engineering"](https://addyosmani.com)):
+
+- **`runCycle()`** — one heartbeat: triage the fleet (agents below a score / with
+  failing signal, not already in the inbox) → maker → checker → route to inbox or
+  auto-apply within policy → record the cycle to state. Bounded by a **token
+  budget** (`LOOP_BUDGET_USD`, `LOOP_MAX_JOBS`).
+- **`runGoal(agentId, {targetScore})`** — run-until-done on one agent. The stop
+  condition *is the agent's success criteria*; a fresh eval re-verifies each pass
+  (the `reevaluate` hook is where a real eval run plugs in).
+- **Scheduler** — off by default; `LOOP_ENABLED` + `LOOP_INTERVAL_MS` runs it in
+  process, or push to cron / GitHub Actions for production.
+- **Stay the engineer** — auto-apply is opt-in (`LOOP_AUTOAPPLY`); by default
+  every proposal waits for a human in the triage inbox.
 
 ## Why it's modular & scalable
 
@@ -64,7 +88,8 @@ Three seams, each an interface with swappable implementations:
 |---|---|---|---|
 | Persistence | `store.js` | file (`data/*.json`) | Postgres / Supabase |
 | Observability | `ObservabilityProvider` | `local`, `langfuse` | any tracer |
-| Self-improvement | `Optimizer` | `heuristic`, `gepa` | DSPy / custom |
+| Self-improvement (maker) | `Optimizer` | `heuristic`, `gepa` | DSPy / custom |
+| Verification (checker) | `Verifier` | `heuristic`, `llm` | any judge model |
 | Memory (Context) | `MemoryProvider` | `local`, `supermemory`, `activeloop` | any memory layer |
 
 Selection happens once, in `config.js`, by name. Adding a provider is a new file
