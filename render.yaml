@@ -1,0 +1,33 @@
+# Render blueprint for the loop service (server/). Alternative to Railway.
+# Secrets are NOT set here — add them in the Render dashboard (sync: false).
+services:
+  - type: web
+    name: agents-directory-loop
+    runtime: docker
+    rootDir: server
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /api/health
+    plan: starter
+    envVars:
+      # ── non-secret config (safe to declare here) ──
+      - key: CORS_ORIGIN
+        value: "*"                 # tighten to the front-end origin in production
+      - key: MEMORY_PROVIDER
+        value: local               # flip to "supermemory" once the key is set
+      - key: OBS_PROVIDER
+        value: local
+      - key: OPTIMIZER
+        value: heuristic
+      - key: VERIFIER
+        value: heuristic
+      - key: LOOP_ENABLED
+        value: "false"
+      - key: LOOP_AUTOAPPLY
+        value: "false"
+      # ── secrets — set the values in the dashboard, never in git ──
+      - key: SUPERMEMORY_API_KEY
+        sync: false
+      - key: LANGFUSE_PUBLIC_KEY
+        sync: false
+      - key: LANGFUSE_SECRET_KEY
+        sync: false
