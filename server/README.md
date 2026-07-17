@@ -34,6 +34,24 @@ Other routes: `GET /api/health`, `GET /api/fleet/health`,
 `GET|PUT /api/agents/:id`, `GET|POST /api/agents/:id/traces`,
 `POST /api/agents/:id/evals`.
 
+## Context / memory (the fourth pillar)
+
+Each agent's declared `context[]` is seeded into memory on first boot, and you
+can add more and recall it semantically:
+
+```
+POST /api/agents/A2/context           { "content": "Fellow's voice is warm, concise." }
+GET  /api/agents/A2/context/search?q=what%20is%20the%20voice
+  → { results:[ { content:"…", score } ] }        # namespaced per agent
+```
+
+**Provider choice:** `supermemory` is recommended for agent memory (REST
+ingest + search, embeddings/chunking handled for you, memory graph). `activeloop`
+targets the Utopia Deep Lake org — it's a vector+tensor data lake whose REST is
+query-first (you bring embeddings via `EMBED_ENDPOINT` and a deeplake writer
+sidecar for ingest), better suited to large multimodal RAG than lightweight
+per-agent memory. `local` (default) ranks by token overlap — offline, no keys.
+
 ## Swapping providers (the scalability lever)
 
 Everything is selected in `.env` by name. The rest of the code depends on
@@ -44,6 +62,7 @@ a concrete provider.
 |---|---|---|---|
 | Observability | `local` (file traces) | **Langfuse** | `OBS_PROVIDER=langfuse` + keys |
 | Optimizer | `heuristic` (reflective, offline) | **GEPA / DSPy** | `OPTIMIZER=gepa` + endpoint/cmd |
+| Memory (Context) | `local` (token overlap) | **Supermemory** / Activeloop | `MEMORY_PROVIDER=supermemory` + key |
 | Store | file (`data/*.json`) | Postgres / Supabase | reimplement `src/core/store.js` |
 
 Adding a new backend = write an adapter implementing the interface, then
@@ -75,6 +94,7 @@ src/
     version.js            shared version bump
   observability/          ObservabilityProvider: local + langfuse adapters
   improve/                Optimizer: heuristic + gepa adapters
+  memory/                 MemoryProvider: local + supermemory + activeloop
   http/                   router, routes, server entrypoint
   scripts/seed.js         idempotent seed (agents + failing traces)
 test/                     offline end-to-end loop tests

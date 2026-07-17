@@ -3,12 +3,36 @@
 // business rules of the eval -> improve -> approve cycle live here.
 import { bumpVersion } from "./version.js";
 
-export function createLoopService({ store, obs, optimizer }) {
+export function createLoopService({ store, obs, optimizer, memory }) {
+  const ns = (agentId) => `agent:${agentId}`;
+
   const svc = {
     // ── agents ──
     async listAgents() { return store.all("agents"); },
     async getAgent(id) { return store.get("agents", id); },
     async putAgent(agent) { return store.put("agents", agent); },
+
+    // ── context / memory (the fourth pillar) ──
+    async addContext(agentId, item) {
+      if (!item?.content) throw httpError(400, "content required");
+      return memory.ingest(ns(agentId), item);
+    },
+    async recallContext(agentId, query, opts) {
+      return memory.search(ns(agentId), query, opts);
+    },
+    // Seed each agent's declared context[] into memory once (deterministic ids
+    // so re-runs don't duplicate). Turns the static string list into recall.
+    async seedContext() {
+      const agents = await store.all("agents");
+      let n = 0;
+      for (const a of agents) {
+        for (const [i, c] of (a.context || []).entries()) {
+          await memory.ingest(ns(a.id), { id: `seed_${a.id}_${i}`, content: c, metadata: { agentId: a.id, seeded: true } });
+          n++;
+        }
+      }
+      return n;
+    },
 
     // ── traces (observability) ──
     async recordTrace(agentId, trace) {
@@ -91,6 +115,7 @@ export function createLoopService({ store, obs, optimizer }) {
         ok: true,
         observability: { provider: obs.name, ...(await obs.health()) },
         optimizer: { provider: optimizer.name, ...(await optimizer.health()) },
+        memory: { provider: memory.name, ...(await memory.health()) },
       };
     },
   };

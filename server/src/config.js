@@ -46,4 +46,22 @@ export const config = {
       budget: Number(env.GEPA_BUDGET || 10),
     },
   },
+
+  // The Context pillar — agent memory / knowledge with semantic recall.
+  memory: {
+    provider: env.MEMORY_PROVIDER || "local",
+    topK: Number(env.MEMORY_TOP_K || 5),
+    supermemory: {
+      baseUrl: env.SUPERMEMORY_BASE_URL || "https://api.supermemory.ai",
+      apiKey: env.SUPERMEMORY_API_KEY || "",
+    },
+    activeloop: {
+      baseUrl: env.ACTIVELOOP_BASE_URL || "https://app.activeloop.ai/api/query/v1",
+      token: env.ACTIVELOOP_TOKEN || "",
+      org: env.ACTIVELOOP_ORG || "",
+      dataset: env.ACTIVELOOP_DATASET || "agent_memory",
+      embedEndpoint: env.EMBED_ENDPOINT || "",
+      ingestEndpoint: env.ACTIVELOOP_INGEST_ENDPOINT || "",
+    },
+  },
 };

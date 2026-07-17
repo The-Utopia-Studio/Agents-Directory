@@ -9,6 +9,7 @@ import { createStore } from "../src/core/store.js";
 import { createLoopService } from "../src/core/loopService.js";
 import { getObservability } from "../src/observability/index.js";
 import { getOptimizer } from "../src/improve/index.js";
+import { getMemory } from "../src/memory/index.js";
 import { seed } from "../src/scripts/seed.js";
 import { config } from "../src/config.js";
 import { bumpVersion } from "../src/core/version.js";
@@ -19,7 +20,8 @@ async function freshService() {
   await seed(store);
   const obs = getObservability(config, { store });
   const optimizer = getOptimizer(config);
-  return createLoopService({ store, obs, optimizer });
+  const memory = getMemory(config, { store });
+  return createLoopService({ store, obs, optimizer, memory });
 }
 
 test("seeds six agents and A2 failing traces", async () => {
@@ -77,4 +79,24 @@ test("recordTrace round-trips through observability", async () => {
   await svc.recordTrace("A1", { status: "fail", score: 40, failureReason: "test", output: "x" });
   const traces = await svc.listTraces("A1");
   assert.ok(traces.some((t) => t.failureReason === "test"));
+});
+
+test("context: ingest then recall (the fourth pillar)", async () => {
+  const svc = await freshService();
+  await svc.addContext("A2", { content: "The fellow's brand voice is warm, concise, and understated." });
+  await svc.addContext("A2", { content: "Avoid buzzwords like synergy and thought leader." });
+  const hits = await svc.recallContext("A2", "what is the fellow's voice?");
+  assert.ok(hits.length > 0, "should recall relevant memory");
+  assert.match(hits[0].content, /voice|warm|concise/i);
+  // namespaced — A1 shouldn't see A2's memory
+  const other = await svc.recallContext("A1", "voice");
+  assert.ok(!other.some((h) => /warm, concise/.test(h.content)));
+});
+
+test("seedContext turns declared context[] into recall", async () => {
+  const svc = await freshService();
+  const n = await svc.seedContext();
+  assert.ok(n >= 6, "seeds context items across agents");
+  const hits = await svc.recallContext("A2", "voice glossary");
+  assert.ok(hits.some((h) => /glossary/i.test(h.content)));
 });

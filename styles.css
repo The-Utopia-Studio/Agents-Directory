@@ -386,6 +386,18 @@ input[type="date"] { color-scheme: dark; }
 .loop-detail { font-size: 13px; color: var(--foreground-muted); line-height: 1.6; margin-bottom: 12px; }
 .loop-actions { display: flex; gap: 8px; }
 
+/* Context recall (memory pillar, live only) */
+.ctx-recall { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 14px; }
+.ctx-recall-head { display: flex; align-items: center; gap: 8px; font-size: 12px; letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--foreground-subtle); margin-bottom: 8px; }
+.ctx-provider { font-family: var(--font-mono, ui-monospace, monospace); font-size: 10px; color: var(--accent-text); border: 1px solid var(--border-subtle); border-radius: 999px; padding: 1px 7px; text-transform: none; letter-spacing: 0; }
+.ctx-recall-row { display: flex; gap: 8px; }
+.ctx-input { flex: 1; background: var(--surface); border: 1px solid var(--input); border-radius: var(--radius-control); padding: 8px 12px; color: var(--foreground); font-family: inherit; font-size: 14px; }
+.ctx-input:focus { outline: none; border-color: var(--ring); box-shadow: 0 0 0 3px rgb(215 122 89 / 16%); }
+.ctx-results { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.ctx-hit { display: flex; gap: 10px; align-items: baseline; background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 10px; padding: 8px 12px; font-size: 13.5px; color: var(--foreground); }
+.ctx-score { font-family: ui-monospace, monospace; font-size: 11px; color: var(--accent-text); flex: 0 0 auto; }
+.ctx-empty { font-size: 13px; color: var(--foreground-subtle); }
+
 /* Version history */
 .change-row { display: flex; gap: 12px; align-items: baseline; padding: 5px 0; font-size: 13px; }
 .change-ver { color: var(--accent-text); font-weight: var(--font-weight-medium); min-width: 40px; }

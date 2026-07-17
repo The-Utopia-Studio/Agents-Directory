@@ -30,7 +30,10 @@ the "common language" the directory exists to provide.
 - **Goals** — `objective`, `successCriteria[]`, `guardrails[]`
 - **Skills** — `skills[]` (references into a shared SKILL.md library)
 - **Tools** — `tools[]` (MCPs / integrations / APIs)
-- **Context** — `context[]` (memory / knowledge / data sources)
+- **Context** — `context[]` (memory / knowledge / data sources), backed by a
+  live `MemoryProvider` (Supermemory recommended; Activeloop for the Utopia Deep
+  Lake org; `local` offline). Declared context is seeded into memory and becomes
+  semantically recallable per agent.
 
 Plus the machinery that makes the loop possible: `version` + `changelog[]`, an
 append-only `evalHistory[]` (numeric scores → trendable fleet health), and a
@@ -62,6 +65,7 @@ Three seams, each an interface with swappable implementations:
 | Persistence | `store.js` | file (`data/*.json`) | Postgres / Supabase |
 | Observability | `ObservabilityProvider` | `local`, `langfuse` | any tracer |
 | Self-improvement | `Optimizer` | `heuristic`, `gepa` | DSPy / custom |
+| Memory (Context) | `MemoryProvider` | `local`, `supermemory`, `activeloop` | any memory layer |
 
 Selection happens once, in `config.js`, by name. Adding a provider is a new file
 + one `register(...)` call; no caller changes. The store clones on read/write so

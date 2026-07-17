@@ -582,6 +582,11 @@ function renderDetail(a){
         <div class="io-box"><h4>③ TOOLS</h4><div class="chip-row">${chips(a.tools)}</div></div>
         <div class="io-box"><h4>④ CONTEXT</h4><div class="chip-row">${chips(a.context)}</div></div>
       </div>
+      ${(window.DirectoryAPI&&DirectoryAPI.enabled)?`<div class="ctx-recall">
+        <div class="ctx-recall-head">Memory recall<span class="ctx-provider">${DirectoryAPI.info&&DirectoryAPI.info.memory?escHtml(DirectoryAPI.info.memory.provider):"live"}</span></div>
+        <div class="ctx-recall-row"><input id="ctx-q" class="ctx-input" placeholder="Ask what this agent knows…" onkeydown="if(event.key==='Enter')recallContext('${a.id}')"><button class="btn btn-sm" onclick="recallContext('${a.id}')">Recall</button></div>
+        <div id="ctx-results" class="ctx-results"></div>
+      </div>`:""}
     </div>
 
     ${a.accessUrl||a.repoUrl?`<div class="section"><div class="section-title">Technical Details</div><div class="section-body">
@@ -610,6 +615,19 @@ function render(){
   const app=document.getElementById("app");
   if(state.view==="detail"&&state.agent){const fresh=agents.find(x=>x.id===state.agent.id);if(fresh)state.agent=fresh;app.innerHTML=renderDetail(state.agent);return}
   app.innerHTML=state.subTab==="agents"?renderAgentsList():renderRequests();
+}
+
+async function recallContext(id){
+  const inp=document.getElementById("ctx-q"),box=document.getElementById("ctx-results");
+  if(!inp||!box)return;
+  const q=inp.value.trim();if(!q){box.innerHTML="";return}
+  box.innerHTML='<div class="ctx-empty">Recalling…</div>';
+  try{
+    const r=await DirectoryAPI.recallContext(id,q);
+    box.innerHTML=(r.results&&r.results.length)
+      ? r.results.map(x=>`<div class="ctx-hit">${typeof x.score==="number"?`<span class="ctx-score">${x.score}</span>`:""}<span>${escHtml(x.content)}</span></div>`).join("")
+      : '<div class="ctx-empty">No memories matched.</div>';
+  }catch(e){box.innerHTML='<div class="ctx-empty">Recall unavailable.</div>'}
 }
 
 function setFilter(t,v){if(t==="cat")state.catFilter=v;else state.statusFilter=v;render()}

@@ -71,4 +71,23 @@
  * @property {(agent:Agent, traces:Trace[], latestEval?:EvalRecord) => Promise<Proposal>} propose
  */
 
+/**
+ * @typedef {Object} MemoryItem  A single piece of context/memory.
+ * @property {string} id
+ * @property {string} content
+ * @property {number} [score]           relevance, on search results
+ * @property {Object} [metadata]
+ * @property {string} [ts]
+ */
+
+/**
+ * MemoryProvider — the Context pillar. Every memory backend implements this.
+ * `namespace` scopes memory (e.g. "agent:A2" or "fellow:sarah").
+ * @typedef {Object} MemoryProvider
+ * @property {string} name
+ * @property {() => Promise<{ok:boolean, detail?:string}>} health
+ * @property {(namespace:string, item:{content:string, metadata?:Object, id?:string}) => Promise<MemoryItem>} ingest
+ * @property {(namespace:string, query:string, opts?:{limit?:number}) => Promise<MemoryItem[]>} search
+ */
+
 export {}; // module marker

@@ -42,6 +42,9 @@ window.DirectoryAPI = (function () {
     logEval: (id, record) => j("POST", `/api/agents/${id}/evals`, record),
     recordTrace: (id, trace) => j("POST", `/api/agents/${id}/traces`, trace),
     fleetHealth: () => j("GET", "/api/fleet/health"),
+    // Context pillar (memory)
+    addContext: (id, item) => j("POST", `/api/agents/${id}/context`, item),
+    recallContext: (id, q) => j("GET", `/api/agents/${id}/context/search?q=${encodeURIComponent(q)}`),
   };
 
   api.ready = api.probe();

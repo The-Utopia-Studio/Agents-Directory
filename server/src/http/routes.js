@@ -30,6 +30,14 @@ export function registerRoutes(router, svc) {
     reply(201, await svc.logEval(params.id, body || {}))
   );
 
+  // context / memory (the fourth pillar)
+  router.post("/api/agents/:id/context", async ({ params, body }) =>
+    reply(201, await svc.addContext(params.id, body || {}))
+  );
+  router.get("/api/agents/:id/context/search", async ({ params, query }) => ({
+    results: await svc.recallContext(params.id, query.q || "", { limit: Number(query.limit) || 5 }),
+  }));
+
   // the loop
   router.post("/api/agents/:id/improvements", async ({ params }) =>
     reply(201, await svc.runImprovement(params.id))
