@@ -11,6 +11,7 @@ export function registerRoutes(router, svc, engine) {
   router.post("/api/loop/run", async () => reply(201, await engine.runCycle()));
   router.get("/api/loop/runs", async ({ query }) => ({ runs: await svc.recentLoopRuns(Number(query.limit) || 20) }));
   router.get("/api/loop/inbox", async () => ({ inbox: await svc.listInbox() }));
+  router.get("/api/loop/learnings", async ({ query }) => ({ learnings: await svc.recentLearnings(Number(query.limit) || 20) }));
   // run-until-done on one agent (the /goal primitive)
   router.post("/api/agents/:id/goal", async ({ params, body }) =>
     reply(201, await engine.runGoal(params.id, body || {}))

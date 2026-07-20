@@ -401,6 +401,23 @@ input[type="date"] { color-scheme: dark; }
 .auto-summary { color: var(--foreground); flex: 1; }
 .auto-empty { font-size: 13px; color: var(--foreground-subtle); }
 
+/* Autonomy + golden cases + failure classes (goals pillar) */
+.pillar-tag { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.autonomy-pill { font-family: ui-monospace, monospace; font-size: 11px; text-transform: none; letter-spacing: 0; color: var(--accent-text); border: 1px solid var(--warning-border); border-radius: 999px; padding: 1px 9px; }
+.cost-pill { font-family: ui-monospace, monospace; font-size: 11px; text-transform: none; letter-spacing: 0; color: var(--foreground-subtle); border: 1px solid var(--border-subtle); border-radius: 999px; padding: 1px 9px; }
+.golden, .failclasses { margin-top: 14px; }
+.golden h4, .failclasses h4 { font-size: 12px; letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--foreground-subtle); margin-bottom: 8px; }
+.golden-sub { text-transform: none; letter-spacing: 0; color: var(--foreground-subtle); font-weight: 400; }
+.golden-row { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: 10px; padding: 10px 12px; margin-bottom: 6px; }
+.golden-io { font-size: 13.5px; color: var(--foreground); }
+.golden-rule { font-size: 12px; color: var(--foreground-subtle); margin-top: 4px; }
+.golden-src { font-family: ui-monospace, monospace; }
+.fail-row { display: flex; gap: 12px; align-items: baseline; padding: 6px 0; border-top: 1px solid var(--line-2); font-size: 13px; }
+.fail-row:first-child { border-top: 0; }
+.fail-name { color: var(--accent-text); min-width: 130px; }
+.fail-rate { color: var(--foreground); font-family: ui-monospace, monospace; min-width: 60px; }
+.fail-guard { color: var(--foreground-subtle); }
+
 /* Context recall (memory pillar, live only) */
 .ctx-recall { margin-top: 14px; border-top: 1px dashed var(--border); padding-top: 14px; }
 .ctx-recall-head { display: flex; align-items: center; gap: 8px; font-size: 12px; letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--foreground-subtle); margin-bottom: 8px; }

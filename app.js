@@ -32,6 +32,16 @@ const SEED_AGENTS=[
     objective:"Produce three on-voice bio options a fellow would ship with light edits, not a rewrite.",
     successCriteria:["Fellow ships one of the three variants","CTA judged 'on-brand, not pushy'","Voice-match rated ≥4/5 by owner"],
     guardrails:["No aggressive/salesy CTAs","Match the fellow's register — never default to corporate boilerplate"],
+    autonomyLevel:"L1",
+    goldenCases:[
+      {input:"Founder bio, casual voice, 2 sample sentences",expected:"3 variants, first-person, ≤1 CTA, no buzzwords",rule:"voice-match ≥4/5 AND no banned buzzword",source:"fellow:sarah/bio-v1"},
+      {input:"No voice samples provided",expected:"Agent asks for 2 anchor sentences before generating",rule:"must not generate without anchors",source:"incident 2026-07-08"}
+    ],
+    failureClasses:[
+      {class:"voice mismatch",acceptableRate:"<10%",guardrail:"require ≥2 voice-anchor sentences"},
+      {class:"aggressive CTA",acceptableRate:"0%",guardrail:"score CTA against confident-not-pushy rubric"}
+    ],
+    costPerOutcome:{target:0.03},
     when:"When a fellow needs a new or refreshed LinkedIn bio.",
     sop:"1. Gather the fellow's current bio, role, and goals\n2. Open Bio Generator project in Claude\n3. Provide context and ask for bio options\n4. Iterate on tone and voice match",
     inputs:["Fellow's current bio","Role description","Target audience"],outputs:["3 bio variations","SEO keyword suggestions"],
@@ -152,6 +162,7 @@ function platformIcon(p){return{Claude:"◈",Cursor:"▣",Manus:"◉",ChatGPT:"�
 function reqStatusClass(s){return{Requested:"pill-neutral",Approved:"pill-blue","In Progress":"pill-purple",Shipped:"pill-green",Declined:"pill-grey"}[s]||"pill-neutral"}
 function priorityClass(p){return{Urgent:"pill-amber",Important:"pill-neutral","Nice to have":"pill-grey"}[p]||"pill-grey"}
 function getInitials(name){return name.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2)}
+function autonomyLabel(l){return{L0:"assist only",L1:"suggest + confirm",L2:"act narrow + audit",L3:"act broad",L4:"autonomous"}[l]||"suggest + confirm"}
 function escHtml(s){return s?String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}
 function toast(msg){const t=document.createElement("div");t.className="toast";t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),2500)}
 function formatDate(d){if(!d)return"";const dt=new Date(d);return isNaN(dt)?escHtml(d):dt.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
@@ -200,6 +211,7 @@ function agentFormHtml(agent){
         <div class="form-group"><label>Success criteria</label><textarea id="f-success" rows="3" placeholder="One measurable signal per line">${escHtml((a.successCriteria||[]).join("\n"))}</textarea><div class="hint">One per line. How you'll know it worked.</div></div>
         <div class="form-group"><label>Guardrails</label><textarea id="f-guardrails" rows="3" placeholder="One constraint per line">${escHtml((a.guardrails||[]).join("\n"))}</textarea><div class="hint">One per line. Must-nots and limits.</div></div>
       </div>
+      <div class="form-group"><label>Autonomy level</label><select id="f-autonomy">${["L0","L1","L2","L3","L4"].map(l=>`<option${(a.autonomyLevel||"L1")===l?" selected":""}>${l}</option>`).join("")}</select><div class="hint">L0 assist · L1 suggest+confirm · L2 act narrow+audit · L3 act broad · L4 autonomous. The loop won't auto-apply above this.</div></div>
     </div>
 
     <div class="form-section">
@@ -337,6 +349,7 @@ function readAgentForm(){
     objective:document.getElementById("f-objective").value.trim(),
     successCriteria:parseLines(document.getElementById("f-success").value),
     guardrails:parseLines(document.getElementById("f-guardrails").value),
+    autonomyLevel:document.getElementById("f-autonomy").value,
     platform:document.getElementById("f-platform").value,
     status:document.getElementById("f-status").value,
     category:document.getElementById("f-category").value,
@@ -563,12 +576,14 @@ function renderDetail(a){
     </div>`:""}
 
     <div class="pillar-block pillar-goals">
-      <div class="pillar-tag">① GOALS</div>
+      <div class="pillar-tag">① GOALS<span class="autonomy-pill" title="Autonomy level — the loop won't auto-apply above this">${escHtml(a.autonomyLevel||"L1")} · ${autonomyLabel(a.autonomyLevel||"L1")}</span>${a.costPerOutcome&&a.costPerOutcome.target?`<span class="cost-pill">target ${"$"+a.costPerOutcome.target}/outcome</span>`:""}</div>
       <div class="section-body objective">${escHtml(a.objective||"No objective set.")}</div>
       <div class="io-grid">
         <div class="io-box"><h4>SUCCESS CRITERIA</h4>${pillarList(a.successCriteria,"None specified")}</div>
         <div class="io-box"><h4>GUARDRAILS</h4>${pillarList(a.guardrails,"None specified")}</div>
       </div>
+      ${(a.goldenCases&&a.goldenCases.length)?`<div class="golden"><h4>GOLDEN CASES <span class="golden-sub">the scorable eval set — ${a.goldenCases.length}/20</span></h4>${a.goldenCases.map(g=>`<div class="golden-row"><div class="golden-io"><b>${escHtml(g.input)}</b> → ${escHtml(g.expected)}</div><div class="golden-rule">pass: ${escHtml(g.rule)}${g.source?` · <span class="golden-src">${escHtml(g.source)}</span>`:""}</div></div>`).join("")}</div>`:""}
+      ${(a.failureClasses&&a.failureClasses.length)?`<div class="failclasses"><h4>FAILURE CLASSES</h4>${a.failureClasses.map(f=>`<div class="fail-row"><span class="fail-name">${escHtml(f.class)}</span><span class="fail-rate">${escHtml(f.acceptableRate)}</span><span class="fail-guard">${escHtml(f.guardrail)}</span></div>`).join("")}</div>`:""}
     </div>
 
     <div class="section"><div class="section-title">When to use</div><div class="section-body">${escHtml(a.when)}</div></div>
@@ -625,9 +640,10 @@ async function loadAutomations(){
   const el=document.getElementById("automations");
   if(!el||!(window.DirectoryAPI&&DirectoryAPI.enabled))return;
   try{
-    const [inbox,runs]=await Promise.all([DirectoryAPI.loopInbox(),DirectoryAPI.loopRuns(1)]);
+    const [inbox,runs,learn]=await Promise.all([DirectoryAPI.loopInbox(),DirectoryAPI.loopRuns(1),DirectoryAPI.loopLearnings(4)]);
     const last=runs.runs&&runs.runs[0];
     const items=inbox.inbox||[];
+    const learnings=(learn&&learn.learnings)||[];
     const vClass=v=>v==="ship"?"pill-green":v==="reject"?"pill-amber":"pill-blue";
     el.innerHTML=`
       <div class="auto-head">
@@ -637,7 +653,8 @@ async function loadAutomations(){
       <div class="auto-inbox">
         <div class="auto-inbox-title">Triage inbox<span class="count-badge">${items.length}</span></div>
         ${items.length?items.map(x=>`<div class="auto-item"><span class="auto-agent">${escHtml(x.agentId)}</span><span class="auto-summary">${escHtml(x.proposal.summary)}</span>${x.proposal.verdict?`<span class="pill pill-xs ${vClass(x.proposal.verdict.verdict)}">checker: ${escHtml(x.proposal.verdict.verdict)} ${x.proposal.verdict.confidence}</span>`:""}</div>`).join(""):'<div class="auto-empty">Inbox clear — nothing awaiting triage.</div>'}
-      </div>`;
+      </div>
+      ${learnings.length?`<div class="auto-learnings"><div class="auto-inbox-title">Learnings<span class="count-badge">${learnings.length}</span></div>${learnings.map(l=>`<div class="auto-item"><span class="auto-agent">${escHtml(l.agentId||l.loop)}</span><span class="auto-summary">${escHtml(l.learning)}</span></div>`).join("")}</div>`:""}`;
   }catch(e){el.innerHTML=""}
 }
 async function runLoopNow(btn){

@@ -42,6 +42,29 @@
  */
 
 /**
+ * @typedef {Object} GoldenCase  A pass/fail eval contract from a real artefact.
+ * @property {string} input       trigger / input
+ * @property {string} expected    expected output
+ * @property {string} rule        pass/fail rule
+ * @property {string} [source]    source artefact (path / url)
+ */
+
+/**
+ * @typedef {Object} FailureClass  A named failure mode with an acceptable rate.
+ * @property {string} class
+ * @property {string} acceptableRate
+ * @property {string} guardrail
+ */
+
+/**
+ * Autonomy ladder (from SPF's eval-first spec). Promotion only via eval result,
+ * not vibe. The loop's auto-apply policy keys off this per agent.
+ *   L0 assist only · L1 suggest+confirm · L2 act narrow+audit ·
+ *   L3 act broad+exception queue · L4 autonomous
+ * @typedef {"L0"|"L1"|"L2"|"L3"|"L4"} AutonomyLevel
+ */
+
+/**
  * @typedef {Object} Agent  Mirror of the directory record (four pillars).
  * @property {string} id
  * @property {string} name
@@ -51,6 +74,33 @@
  * @property {string[]} [skills]
  * @property {string[]} [tools]
  * @property {string[]} [context]
+ * @property {AutonomyLevel} [autonomyLevel]
+ * @property {GoldenCase[]} [goldenCases]      the scorable eval set
+ * @property {FailureClass[]} [failureClasses]
+ * @property {{target?:number, actual?:number}} [costPerOutcome]  USD to the cent
+ */
+
+/**
+ * LoopContract — every loop must state one, or it's busywork (SPF doctrine).
+ * @typedef {Object} LoopContract
+ * @property {string} goal              one measurable outcome
+ * @property {string} doneWhen          explicit exit condition
+ * @property {number} maxIterations     hard cap (default 3–5)
+ * @property {string[]} forbiddenMoves  must-nots; children inherit these
+ * @property {string[]} artifacts       what gets written back
+ * @property {"taste"|"money"|"irreversible"|"none"} humanGate
+ */
+
+/**
+ * @typedef {Object} Learning  Append-only note when a loop learns or stops.
+ * @property {string} id
+ * @property {string} date
+ * @property {string} loop
+ * @property {string} [agentId]
+ * @property {string} title
+ * @property {string} context
+ * @property {string} learning
+ * @property {string} [doNot]
  */
 
 /**

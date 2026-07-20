@@ -14,6 +14,16 @@ export const SEED_AGENTS = [
   { id: "A2", name: "Bio Generator", objective: "Three on-voice bio options a fellow ships with light edits.", version: "1.0",
     prompt: "Write three SEO-optimized LinkedIn bios with CTAs, matching the fellow's voice.",
     skills: ["copywriting", "seo-writing"], tools: [], context: ["Fellow bio", "Voice glossary"],
+    autonomyLevel: "L1",
+    goldenCases: [
+      { input: "Founder bio, casual voice, 2 sample sentences", expected: "3 variants, first-person, ≤1 CTA, no buzzwords", rule: "voice-match ≥4/5 AND no banned buzzword", source: "fellow:sarah/bio-v1" },
+      { input: "No voice samples provided", expected: "Agent asks for 2 anchor sentences before generating", rule: "must not generate without anchors", source: "incident 2026-07-08" },
+    ],
+    failureClasses: [
+      { class: "voice mismatch", acceptableRate: "<10%", guardrail: "require ≥2 voice-anchor sentences" },
+      { class: "aggressive CTA", acceptableRate: "0%", guardrail: "score CTA against confident-not-pushy rubric" },
+    ],
+    costPerOutcome: { target: 0.03 },
     evalHistory: [{ date: "2026-07-08", status: "Needs improvement", score: 58, notes: "Voice matching inconsistent.", knownIssues: "Generic corporate language without strong examples; CTAs too aggressive." }],
     changelog: [{ version: "1.0", date: "2026-06-30", note: "Initial build." }], proposedImprovement: null },
   { id: "A3", name: "Post Suggester", objective: "5–10 on-trend post drafts a fellow can edit and publish.", version: "1.1",

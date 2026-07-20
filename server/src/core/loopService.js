@@ -113,6 +113,31 @@ export function createLoopService({ store, obs, optimizer, memory, verifier }) {
       return runs.sort((a, b) => (a.ts < b.ts ? 1 : -1)).slice(0, limit);
     },
 
+    // ── learnings: append-only memory of what failed / was blocked (SPF) ──
+    // "The agent forgets, the repo doesn't." Also feeds the Context pillar.
+    async recordLearning(entry) {
+      const saved = await store.append("learnings", { date: new Date().toISOString().slice(0, 10), ...entry });
+      // Mirror into the agent's memory so future runs recall the block.
+      if (entry.agentId && memory) {
+        await memory.ingest(ns(entry.agentId), {
+          id: `learning_${saved.id}`,
+          content: `LEARNING (${entry.loop}): ${entry.learning}${entry.doNot ? ` — Do not: ${entry.doNot}` : ""}`,
+          metadata: { kind: "learning", agentId: entry.agentId },
+        }).catch(() => {});
+      }
+      return saved;
+    },
+    async recentLearnings(limit = 20) {
+      const rows = await store.all("learnings");
+      return rows.sort((a, b) => (a.date < b.date ? 1 : -1)).slice(0, limit);
+    },
+    // Has this agent already been blocked on this failure signal? (don't retry forever)
+    async isBlockedSignal(agentId, signal) {
+      if (!signal) return false;
+      const rows = await store.query("learnings", (l) => l.agentId === agentId && l.signal === signal);
+      return rows.length > 0;
+    },
+
     // ── fleet health roll-up ──
     async fleetHealth() {
       const agents = await store.all("agents");
