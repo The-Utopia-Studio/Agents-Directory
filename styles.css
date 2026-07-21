@@ -400,6 +400,9 @@ input[type="date"] { color-scheme: dark; }
 .auto-agent { font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent-text); flex: 0 0 auto; }
 .auto-summary { color: var(--foreground); flex: 1; }
 .auto-empty { font-size: 13px; color: var(--foreground-subtle); }
+.auto-queue { margin-top: 12px; }
+.auto-sub2 { font-family: ui-monospace, monospace; font-size: 10px; text-transform: none; letter-spacing: 0; color: var(--foreground-subtle); }
+.rq-score { flex: 0 0 auto; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; background: var(--accent-tint); color: var(--accent-text); font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; }
 
 /* Autonomy + golden cases + failure classes (goals pillar) */
 .pillar-tag { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }

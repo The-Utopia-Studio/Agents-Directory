@@ -91,20 +91,27 @@ test("runGoal carries a loop contract with forbidden moves", async () => {
   assert.ok(result.contract.doneWhen.includes("80"));
 });
 
-test("a verifier rejection writes a learning, then the signal is skipped next cycle", async () => {
+test("runResearch writes a scored queue that runCycle consumes", async () => {
+  const { svc, engine } = await freshStack();
+  const n = await engine.runResearch();
+  assert.ok(n >= 1);
+  const open = await svc.listResearchQueue("open");
+  assert.ok(open.some((x) => x.agentId === "A2"), "A2 is queued");
+  assert.ok(open[0].score >= 1 && open[0].score <= 3, "items are scored 1–3");
+});
+
+test("a verifier rejection blocks the queue item and isn't retried next cycle", async () => {
   const { svc, engine } = await freshStack({}, { verifier: REJECT_ALL });
 
   const run1 = await engine.runCycle();
-  const a2job1 = run1.jobs.find((j) => j.agentId === "A2");
-  assert.equal(a2job1.action, "rejected:verifier→learning");
-
-  const learnings = await svc.recentLearnings();
-  assert.ok(learnings.some((l) => l.agentId === "A2"), "a learning was written");
+  assert.equal(run1.jobs.find((j) => j.agentId === "A2").action, "rejected:verifier→learning");
+  assert.ok((await svc.recentLearnings()).some((l) => l.agentId === "A2"), "a learning was written");
   assert.ok(await svc.isBlockedSignal("A2", "voice"));
+  assert.ok((await svc.listResearchQueue()).some((x) => x.agentId === "A2" && x.status === "blocked"));
 
-  // Second cycle: A2's failure is now a known block — don't retry forever.
+  // Second cycle: the blocked signal is not retried.
   const run2 = await engine.runCycle();
-  assert.equal(run2.jobs.find((j) => j.agentId === "A2").action, "skipped:blocked-learning");
+  assert.ok(!run2.jobs.some((j) => j.agentId === "A2"), "blocked signal is not retried");
 });
 
 test("runGoal stops with a learning on repeated failure (no evaluator progress)", async () => {

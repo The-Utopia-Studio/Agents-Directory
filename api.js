@@ -50,6 +50,7 @@ window.DirectoryAPI = (function () {
     loopInbox: () => j("GET", "/api/loop/inbox"),
     loopRuns: (n = 5) => j("GET", `/api/loop/runs?limit=${n}`),
     loopLearnings: (n = 5) => j("GET", `/api/loop/learnings?limit=${n}`),
+    loopQueue: (status) => j("GET", `/api/loop/queue${status ? "?status=" + status : ""}`),
     runGoal: (id, opts) => j("POST", `/api/agents/${id}/goal`, opts || {}),
   };
 

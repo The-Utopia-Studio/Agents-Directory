@@ -138,6 +138,30 @@ export function createLoopService({ store, obs, optimizer, memory, verifier }) {
       return rows.length > 0;
     },
 
+    // ── research queue (SPF: discovery writes it, improve consumes it) ──
+    async listResearchQueue(status) {
+      const rows = await store.all("researchQueue");
+      const filtered = status ? rows.filter((r) => r.status === status) : rows;
+      return filtered.sort((a, b) => (b.score - a.score) || (a.ts < b.ts ? 1 : -1));
+    },
+    // Dedup by agentId+focus among non-done items; regressions get a fresh item.
+    async upsertResearchItem(item) {
+      const rows = await store.all("researchQueue");
+      const existing = rows.find((r) => r.agentId === item.agentId && r.focus === item.focus && r.status !== "done");
+      if (existing) {
+        return store.put("researchQueue", { ...existing, ...item, id: existing.id, status: item.status || existing.status });
+      }
+      const id = item.id || `RQ-${String(rows.length + 1).padStart(3, "0")}`;
+      return store.append("researchQueue", { id, status: "open", ts: new Date().toISOString(), ...item });
+    },
+    async setResearchStatus(id, status, note) {
+      const it = await store.get("researchQueue", id);
+      if (!it) return null;
+      it.status = status;
+      if (note) it.note = note;
+      return store.put("researchQueue", it);
+    },
+
     // ── fleet health roll-up ──
     async fleetHealth() {
       const agents = await store.all("agents");

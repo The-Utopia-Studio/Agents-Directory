@@ -640,16 +640,20 @@ async function loadAutomations(){
   const el=document.getElementById("automations");
   if(!el||!(window.DirectoryAPI&&DirectoryAPI.enabled))return;
   try{
-    const [inbox,runs,learn]=await Promise.all([DirectoryAPI.loopInbox(),DirectoryAPI.loopRuns(1),DirectoryAPI.loopLearnings(4)]);
+    const [inbox,runs,learn,queue]=await Promise.all([DirectoryAPI.loopInbox(),DirectoryAPI.loopRuns(1),DirectoryAPI.loopLearnings(4),DirectoryAPI.loopQueue()]);
     const last=runs.runs&&runs.runs[0];
     const items=inbox.inbox||[];
     const learnings=(learn&&learn.learnings)||[];
+    const q=(queue&&queue.queue)||[];
+    const openq=q.filter(x=>x.status==="open"||x.status==="in-progress").slice(0,5);
     const vClass=v=>v==="ship"?"pill-green":v==="reject"?"pill-amber":"pill-blue";
+    const sClass=s=>s==="open"?"pill-blue":s==="in-progress"?"pill-purple":s==="blocked"?"pill-amber":"pill-green";
     el.innerHTML=`
       <div class="auto-head">
-        <div><span class="auto-title">◷ Automations</span><span class="auto-sub">${last?`last cycle ${formatDate(last.ts)} · scanned ${last.scanned} · selected ${last.selected} · $${last.budget.spentUsd}`:"heartbeat idle — run a cycle to triage the fleet"}</span></div>
+        <div><span class="auto-title">◷ Automations</span><span class="auto-sub">${last?`last cycle ${formatDate(last.ts)} · scanned ${last.scanned} · improved ${last.selected} · $${last.budget.spentUsd}${last.queue?` · queue ${last.queue.open} open`:""}`:"heartbeat idle — run a cycle to discover + improve"}</span></div>
         <button class="btn btn-sm btn-primary" onclick="runLoopNow(this)">Run automations now</button>
       </div>
+      ${openq.length?`<div class="auto-queue"><div class="auto-inbox-title">Research queue <span class="auto-sub2">discover → improve</span><span class="count-badge">${q.filter(x=>x.status==="open").length}</span></div>${openq.map(x=>`<div class="auto-item"><span class="rq-score" title="score 1–3">${x.score}</span><span class="auto-agent">${escHtml(x.agentId)}</span><span class="auto-summary">${escHtml(x.title)}</span><span class="pill pill-xs ${sClass(x.status)}">${escHtml(x.status)}</span></div>`).join("")}</div>`:""}
       <div class="auto-inbox">
         <div class="auto-inbox-title">Triage inbox<span class="count-badge">${items.length}</span></div>
         ${items.length?items.map(x=>`<div class="auto-item"><span class="auto-agent">${escHtml(x.agentId)}</span><span class="auto-summary">${escHtml(x.proposal.summary)}</span>${x.proposal.verdict?`<span class="pill pill-xs ${vClass(x.proposal.verdict.verdict)}">checker: ${escHtml(x.proposal.verdict.verdict)} ${x.proposal.verdict.confidence}</span>`:""}</div>`).join(""):'<div class="auto-empty">Inbox clear — nothing awaiting triage.</div>'}

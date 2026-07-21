@@ -43,42 +43,75 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
   }
 
   const engine = {
-    async runCycle(contractOverrides = {}) {
-      const contract = defaultContract({ goal: "Triage the fleet and propose fixes", ...contractOverrides });
+    // DISCOVERY — scan the fleet and write scored items to the research queue.
+    // Structured evidence, not open-ended browsing (SPF). Nothing auto-merges.
+    async runResearch() {
       const agents = await svc.listAgents();
-      const selected = selectForTriage(agents, { lowScore: loopCfg.lowScore });
+      const candidates = selectForTriage(agents, { lowScore: loopCfg.lowScore });
+      let n = 0;
+      for (const agent of candidates) {
+        const focus = await candidateSignal(agent);
+        const blocked = await svc.isBlockedSignal(agent.id, focus);
+        const e = agent.evalHistory?.at(-1);
+        const score = e && typeof e.score === "number" && e.score < 60 ? 3
+          : e && e.status === "Needs improvement" ? 2 : 1;
+        // in-progress while a proposal is pending in the inbox; else open.
+        const status = blocked ? "blocked" : agent.proposedImprovement ? "in-progress" : "open";
+        await svc.upsertResearchItem({
+          agentId: agent.id, focus,
+          title: `${agent.name}: ${focus}`,
+          score,
+          why: e ? `eval ${e.score} · ${e.status}` : "unevaluated",
+          evidence: `${agent.id} failing traces + latest eval`,
+          next: "runImprovement", estimate: "S", status,
+        });
+        n++;
+      }
+      return n;
+    },
+
+    // IMPROVE — one heartbeat: refresh the queue, then consume the top OPEN
+    // items (highest score first) up to budget. Blocked items are skipped.
+    async runCycle(contractOverrides = {}) {
+      const contract = defaultContract({ goal: "Discover gaps, then improve the top items", ...contractOverrides });
+      await this.runResearch();
+      const open = await svc.listResearchQueue("open");
       const budget = createBudget(loopCfg);
       const jobs = [];
 
-      for (const agent of selected) {
-        // Don't retry a failure we've already been blocked on (SPF rule).
-        const signal = await candidateSignal(agent);
-        if (await svc.isBlockedSignal(agent.id, signal)) {
-          jobs.push({ agentId: agent.id, action: "skipped:blocked-learning", signal });
-          continue;
-        }
-        if (!budget.canRun()) { jobs.push({ agentId: agent.id, action: "skipped:budget" }); continue; }
+      for (const item of open) {
+        if (!budget.canRun()) { jobs.push({ agentId: item.agentId, item: item.id, action: "skipped:budget" }); continue; }
+        const agent = await svc.getAgent(item.agentId);
+        if (!agent) { await svc.setResearchStatus(item.id, "blocked", "agent removed"); continue; }
         budget.spend();
 
-        const proposal = await svc.runImprovement(agent.id);          // maker
+        const proposal = await svc.runImprovement(item.agentId);      // maker
         const verdict = await verify(agent, proposal);                // checker
-        await svc.attachVerdict(agent.id, verdict);
+        await svc.attachVerdict(item.agentId, verdict);
 
-        let action = "queued:inbox";
+        let action = "queued:inbox", nextStatus = "in-progress";
         if (verdict.verdict === "reject") {
-          await svc.rejectImprovement(agent.id);
+          await svc.rejectImprovement(item.agentId);
           await learn("runCycle", agent, dominantSignal(proposal, agent),
             `Verifier rejected the fix for "${dominantSignal(proposal, agent)}": ${verdict.reasons?.[0] || "no evidence"}.`,
             "re-propose the same fix without new evidence");
-          action = "rejected:verifier→learning";
+          action = "rejected:verifier→learning"; nextStatus = "blocked";
         } else if (shouldAutoApply(verdict, agent, loopCfg)) {
-          const { version } = await svc.approveImprovement(agent.id);
-          action = `auto-approved:v${version}`;
+          const { version } = await svc.approveImprovement(item.agentId);
+          action = `auto-approved:v${version}`; nextStatus = "done";
         }
-        jobs.push({ agentId: agent.id, action, verdict });
+        await svc.setResearchStatus(item.id, nextStatus);
+        jobs.push({ agentId: item.agentId, item: item.id, action, verdict });
       }
 
-      return svc.recordLoopRun({ ts: now(), contract, scanned: agents.length, selected: selected.length, jobs, budget: budget.report() });
+      const q = await svc.listResearchQueue();
+      const count = (s) => q.filter((x) => x.status === s).length;
+      return svc.recordLoopRun({
+        ts: now(), contract,
+        scanned: (await svc.listAgents()).length, selected: jobs.length, jobs,
+        budget: budget.report(),
+        queue: { open: count("open"), inProgress: count("in-progress"), blocked: count("blocked"), done: count("done") },
+      });
     },
 
     async runGoal(agentId, { targetScore = 80, maxIterations, reevaluate, ...overrides } = {}) {

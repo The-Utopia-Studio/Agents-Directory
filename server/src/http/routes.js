@@ -9,6 +9,8 @@ export function registerRoutes(router, svc, engine) {
 
   // ── the loop / automations (the heartbeat) ──
   router.post("/api/loop/run", async () => reply(201, await engine.runCycle()));
+  router.post("/api/loop/research", async () => reply(201, { discovered: await engine.runResearch() }));
+  router.get("/api/loop/queue", async ({ query }) => ({ queue: await svc.listResearchQueue(query.status) }));
   router.get("/api/loop/runs", async ({ query }) => ({ runs: await svc.recentLoopRuns(Number(query.limit) || 20) }));
   router.get("/api/loop/inbox", async () => ({ inbox: await svc.listInbox() }));
   router.get("/api/loop/learnings", async ({ query }) => ({ learnings: await svc.recentLearnings(Number(query.limit) || 20) }));

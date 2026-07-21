@@ -36,6 +36,8 @@ Hard rules the loop engine enforces:
 4. **Budget-bounded.** Every cycle respects a token/cost ceiling.
 5. **Maker ≠ checker.** The optimizer proposes; a separate verifier grades; a human approves.
 
+The cycle is **discover → queue → improve** (SPF `research-queue`): a research step scans the fleet and writes **scored items** (1–3) to a research queue; the cycle consumes the top open item, improves it, and marks it done/blocked. Blocked items (a known learning) are not retried.
+
 Learnings feed back into the **Context pillar** (memory), so blocks compound.
 
 ## Architecture
