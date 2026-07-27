@@ -5,8 +5,14 @@
 // their local stubs. When the service IS up, "Propose improvement" runs the
 // real optimizer against real traces, and approve / reject / eval flow through.
 window.DirectoryAPI = (function () {
+  // Empty / whitespace DIRECTORY_API_BASE must fall through ("" is falsy, but trim
+  // also catches "  " so an unfilled index.html config never wins over localStorage).
+  const configured =
+    typeof window.DIRECTORY_API_BASE === "string"
+      ? window.DIRECTORY_API_BASE.trim()
+      : "";
   const base =
-    window.DIRECTORY_API_BASE ||
+    configured ||
     localStorage.getItem("directory_api_base") ||
     "http://localhost:8790";
 
