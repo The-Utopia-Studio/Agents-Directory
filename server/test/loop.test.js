@@ -21,7 +21,7 @@ async function freshService() {
   const obs = getObservability(config, { store });
   const optimizer = getOptimizer(config);
   const memory = getMemory(config, { store });
-  return createLoopService({ store, obs, optimizer, memory });
+  return createLoopService({ store, obs, optimizer, memory, config });
 }
 
 test("seeds six agents and A2 failing traces", async () => {
@@ -79,6 +79,24 @@ test("recordTrace round-trips through observability", async () => {
   await svc.recordTrace("A1", { status: "fail", score: 40, failureReason: "test", output: "x" });
   const traces = await svc.listTraces("A1");
   assert.ok(traces.some((t) => t.failureReason === "test"));
+});
+
+test("runAgent invokes a runnable agent and records a trace", async () => {
+  const svc = await freshService();
+  const before = (await svc.listTraces("A2")).length;
+  const r = await svc.runAgent("A2", { bio: "founder, warm voice" });
+  assert.equal(r.status, "ok");
+  assert.equal(r.via, "mock");
+  assert.ok(r.output.includes("Bio Generator"));
+  assert.ok(r.traceId);
+  assert.equal((await svc.listTraces("A2")).length, before + 1, "the run was recorded as a trace");
+});
+
+test("runAgent refuses link/prompt agents (open them where they live)", async () => {
+  const svc = await freshService();
+  const a1 = await svc.getAgent("A1");
+  await svc.putAgent({ ...a1, invocation: { type: "link", url: "https://claude.ai/project/x" } });
+  await assert.rejects(() => svc.runAgent("A1", {}), /open it where it lives/);
 });
 
 test("context: ingest then recall (the fourth pillar)", async () => {

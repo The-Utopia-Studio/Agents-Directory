@@ -42,6 +42,7 @@ const SEED_AGENTS=[
       {class:"aggressive CTA",acceptableRate:"0%",guardrail:"score CTA against confident-not-pushy rubric"}
     ],
     costPerOutcome:{target:0.03},
+    invocation:{type:"mock"},
     when:"When a fellow needs a new or refreshed LinkedIn bio.",
     sop:"1. Gather the fellow's current bio, role, and goals\n2. Open Bio Generator project in Claude\n3. Provide context and ask for bio options\n4. Iterate on tone and voice match",
     inputs:["Fellow's current bio","Role description","Target audience"],outputs:["3 bio variations","SEO keyword suggestions"],
@@ -567,6 +568,18 @@ function renderDetail(a){
       <span class="pill pill-neutral pill-owner"><span class="mini-avatar">${escHtml(a.initials)}</span>${escHtml(a.owner)}</span>
     </div>
 
+    <div class="use-panel">
+      <div class="use-head">Use this agent<span class="use-tier">${invocationTier(a)}</span></div>
+      <div class="use-actions">
+        ${a.accessUrl?`<a class="btn btn-sm" href="${escHtml(a.accessUrl)}" target="_blank" rel="noopener">Open in ${escHtml(a.platform)} &#8599;</a>`:""}
+        <button class="btn btn-sm" onclick="copyAgentPrompt('${a.id}')">Copy prompt</button>
+        <button class="btn btn-sm" onclick="copyAgentSkill('${a.id}')">Copy as SKILL.md</button>
+        ${isRunnable(a)&&window.DirectoryAPI&&DirectoryAPI.enabled?`<button class="btn btn-sm btn-primary" onclick="toggleRun('${a.id}')">&#9654; Run here</button>`:""}
+      </div>
+      <div class="use-hint">The directory owns the definition; ${escHtml(a.platform)} is just where it runs today &mdash; copy the prompt or SKILL.md to run it anywhere.</div>
+      <div id="run-panel" class="run-panel"></div>
+    </div>
+
     ${prop?`<div class="loop-card">
       <div class="loop-head"><span class="loop-badge">● IMPROVEMENT PROPOSED</span><span class="loop-src">${escHtml(a.proposedImprovement.source)} · ${formatDate(a.proposedImprovement.date)}</span></div>
       <div class="loop-summary">${escHtml(a.proposedImprovement.summary)}</div>
@@ -666,6 +679,51 @@ async function runLoopNow(btn){
   try{const r=await DirectoryAPI.runLoop();toast(`Cycle: scanned ${r.scanned}, ${r.jobs.length} job(s) run, $${r.budget.spentUsd} spent`)}
   catch(e){toast("Loop service unreachable")}
   loadAutomations();
+}
+
+// ── Using an agent across platforms (invocation) ──
+function isRunnable(a){return["mock","http","mcp","runtime"].includes(a.invocation&&a.invocation.type)}
+function invocationTier(a){const t=(a.invocation&&a.invocation.type)||"link";return{link:"opens where it lives",prompt:"portable prompt",http:"runs from here (endpoint)",mcp:"runs from here (MCP)",runtime:"runs from here (runtime)",mock:"runs from here (demo)"}[t]||"opens where it lives"}
+function slug(s){return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")}
+
+// The agent definition (four pillars) → a portable system prompt. This is what
+// makes an agent usable across platforms: paste it into Claude, Cursor, ChatGPT.
+function buildAgentPrompt(a){
+  const L=[];
+  L.push(`You are ${a.name}. ${a.objective||a.tagline}`);
+  if(a.when)L.push(`\n## When to use\n${a.when}`);
+  if((a.successCriteria||[]).length)L.push(`\n## Success criteria (what good looks like)\n${a.successCriteria.map(s=>"- "+s).join("\n")}`);
+  if((a.guardrails||[]).length)L.push(`\n## Guardrails (must not)\n${a.guardrails.map(s=>"- "+s).join("\n")}`);
+  if((a.skills||[]).length)L.push(`\n## Skills to apply\n${a.skills.map(s=>"- "+s).join("\n")}`);
+  if((a.tools||[]).length)L.push(`\n## Tools you may use\n${a.tools.map(s=>"- "+s).join("\n")}`);
+  if((a.context||[]).length)L.push(`\n## Context to draw on\n${a.context.map(s=>"- "+s).join("\n")}`);
+  if(a.sop)L.push(`\n## Procedure\n${a.sop}`);
+  if((a.inputs||[]).length)L.push(`\n## Inputs\n${a.inputs.map(s=>"- "+s).join("\n")}`);
+  if((a.outputs||[]).length)L.push(`\n## Outputs\n${a.outputs.map(s=>"- "+s).join("\n")}`);
+  return L.join("\n");
+}
+// Export as a SKILL.md (the open cross-vendor standard).
+function buildSkillMd(a){
+  return `---\nname: ${slug(a.name)}\ndescription: ${(a.tagline||a.objective||"").replace(/\n/g," ")}\n---\n\n`+buildAgentPrompt(a)+"\n";
+}
+function copyText(text,msg){(navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(text):Promise.reject()).then(()=>toast(msg)).catch(()=>{const ta=document.createElement("textarea");ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast(msg)}catch(e){toast("Copy failed")}ta.remove()})}
+function copyAgentPrompt(id){const a=agents.find(x=>x.id===id);if(a)copyText(buildAgentPrompt(a),"Prompt copied — paste into any platform")}
+function copyAgentSkill(id){const a=agents.find(x=>x.id===id);if(a)copyText(buildSkillMd(a),"SKILL.md copied")}
+
+function toggleRun(id){
+  const a=agents.find(x=>x.id===id);const box=document.getElementById("run-panel");if(!a||!box)return;
+  if(box.innerHTML){box.innerHTML="";return}
+  const fields=(a.inputs&&a.inputs.length?a.inputs:["input"]).map((inp,i)=>`<div class="run-field"><label>${escHtml(inp)}</label><input id="run-in-${i}" data-k="${escHtml(inp)}" placeholder="${escHtml(inp)}"></div>`).join("");
+  box.innerHTML=`<div class="run-form">${fields}<button class="btn btn-sm btn-primary" onclick="runAgentUI('${id}')">Run &#9654;</button></div><div id="run-out" class="run-out"></div>`;
+}
+async function runAgentUI(id){
+  const box=document.getElementById("run-out");if(!box)return;
+  const inputs={};document.querySelectorAll("#run-panel [data-k]").forEach(el=>{if(el.value.trim())inputs[el.getAttribute("data-k")]=el.value.trim()});
+  box.innerHTML='<div class="run-status">Running…</div>';
+  try{
+    const r=await DirectoryAPI.runAgent(id,inputs);
+    box.innerHTML=`<div class="run-result"><div class="run-result-head">Output <span class="run-via">via ${escHtml(r.via)}</span> <span class="run-trace">&#10003; trace ${escHtml(r.traceId)} recorded</span></div><pre>${escHtml(r.output)}</pre></div>`;
+  }catch(e){box.innerHTML=`<div class="run-status run-err">${escHtml(String(e.message||e))}</div>`}
 }
 
 async function recallContext(id){

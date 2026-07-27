@@ -23,7 +23,7 @@ async function freshStack(loopOverrides = {}, { verifier: verifierOverride } = {
   const optimizer = getOptimizer(config);
   const memory = getMemory(config, { store });
   const verifier = verifierOverride || getVerifier(config);
-  const svc = createLoopService({ store, obs, optimizer, memory, verifier });
+  const svc = createLoopService({ store, obs, optimizer, memory, verifier, config });
   const cfg = { ...config, loop: { ...config.loop, ...loopOverrides } };
   const engine = createLoopEngine({ svc, obs, verifier, config: cfg });
   return { svc, engine, verifier, obs };

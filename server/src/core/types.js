@@ -92,6 +92,27 @@
  */
 
 /**
+ * Invocation — HOW you actually use an agent. The directory owns the agent
+ * definition; platforms are interchangeable runtimes. Three tiers:
+ *   link    — open where it lives (Claude project, Cursor workspace) + deep link
+ *   prompt  — portable: export the definition as a prompt / SKILL.md, paste anywhere
+ *   http | mcp | runtime | mock — the server can RUN it and record a trace
+ * @typedef {Object} Invocation
+ * @property {"link"|"prompt"|"http"|"mcp"|"runtime"|"mock"} type
+ * @property {string} [url]      deep link (link) or endpoint (http)
+ * @property {string} [method]   http method (default POST)
+ * @property {Object} [headers]  http headers
+ */
+
+/**
+ * Invoker — runs an agent where it lives and returns output. Adapters per tier.
+ * @typedef {Object} Invoker
+ * @property {string} name
+ * @property {boolean} serverRun  can the server invoke it? (false for link/prompt)
+ * @property {(agent:Agent, inputs:Object) => Promise<{output:string, costUsd?:number}>} invoke
+ */
+
+/**
  * @typedef {Object} Learning  Append-only note when a loop learns or stops.
  * @property {string} id
  * @property {string} date

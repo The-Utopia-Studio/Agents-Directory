@@ -14,6 +14,7 @@ export const SEED_AGENTS = [
   { id: "A2", name: "Bio Generator", objective: "Three on-voice bio options a fellow ships with light edits.", version: "1.0",
     prompt: "Write three SEO-optimized LinkedIn bios with CTAs, matching the fellow's voice.",
     skills: ["copywriting", "seo-writing"], tools: [], context: ["Fellow bio", "Voice glossary"],
+    invocation: { type: "mock" },
     autonomyLevel: "L1",
     goldenCases: [
       { input: "Founder bio, casual voice, 2 sample sentences", expected: "3 variants, first-person, ≤1 CTA, no buzzwords", rule: "voice-match ≥4/5 AND no banned buzzword", source: "fellow:sarah/bio-v1" },

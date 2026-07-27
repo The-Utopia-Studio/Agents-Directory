@@ -2,8 +2,9 @@
 // the store + the (swappable) observability and optimizer providers. All the
 // business rules of the eval -> improve -> approve cycle live here.
 import { bumpVersion } from "./version.js";
+import { getInvoker } from "../invoke/index.js";
 
-export function createLoopService({ store, obs, optimizer, memory, verifier }) {
+export function createLoopService({ store, obs, optimizer, memory, verifier, config }) {
   const ns = (agentId) => `agent:${agentId}`;
 
   const svc = {
@@ -39,6 +40,31 @@ export function createLoopService({ store, obs, optimizer, memory, verifier }) {
       return obs.recordTrace({ ...trace, agentId });
     },
     async listTraces(agentId, opts) { return obs.listTraces(agentId, opts); },
+
+    // ── run an agent where it lives, and record the run as a trace ──
+    // This is what makes the directory usable, not a shelf — and every run
+    // feeds observability → the eval loop.
+    async runAgent(agentId, inputs = {}) {
+      const agent = await store.get("agents", agentId);
+      if (!agent) throw httpError(404, `No agent ${agentId}`);
+      const invoker = getInvoker(agent, config);
+      if (!invoker.serverRun) {
+        throw httpError(400, `"${agent.name}" is ${agent.invocation?.type || "link"}-invoked — open it where it lives or use its exported prompt/SKILL.md.`);
+      }
+      const started = Date.now();
+      let output, status = "ok", failureReason, costUsd;
+      try {
+        const r = await invoker.invoke(agent, inputs);
+        output = r.output; costUsd = r.costUsd;
+      } catch (e) {
+        status = "error"; output = String(e.message || e); failureReason = "invoke error";
+      }
+      const trace = await obs.recordTrace({
+        agentId, input: JSON.stringify(inputs), output, status, costUsd,
+        latencyMs: Date.now() - started, failureReason, metadata: { via: invoker.name },
+      });
+      return { output, status, via: invoker.name, traceId: trace.id };
+    },
 
     // ── evals (append-only history on the agent) ──
     async logEval(agentId, record) {

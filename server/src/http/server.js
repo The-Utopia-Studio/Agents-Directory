@@ -22,7 +22,7 @@ export async function buildApp(overrides = {}) {
   const optimizer = overrides.optimizer || getOptimizer(config);
   const memory = overrides.memory || getMemory(config, { store });
   const verifier = overrides.verifier || getVerifier(config);
-  const svc = createLoopService({ store, obs, optimizer, memory, verifier });
+  const svc = createLoopService({ store, obs, optimizer, memory, verifier, config });
   const engine = overrides.engine || createLoopEngine({ svc, obs, verifier, config });
 
   // Seed each agent's context[] into memory once (marker in the store), so the
