@@ -16,10 +16,20 @@ window.DirectoryAPI = (function () {
     localStorage.getItem("directory_api_base") ||
     "http://localhost:8790";
 
+  const tokenConfigured =
+    typeof window.DIRECTORY_API_TOKEN === "string"
+      ? window.DIRECTORY_API_TOKEN.trim()
+      : "";
+  const token =
+    tokenConfigured || localStorage.getItem("directory_api_token") || "";
+
   async function j(method, path, body) {
+    const headers = {};
+    if (body) headers["content-type"] = "application/json";
+    if (token) headers["authorization"] = "Bearer " + token;
     const res = await fetch(base + path, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
+      headers: Object.keys(headers).length ? headers : undefined,
       body: body ? JSON.stringify(body) : undefined,
     });
     if (!res.ok) throw new Error(`${method} ${path} -> ${res.status}`);

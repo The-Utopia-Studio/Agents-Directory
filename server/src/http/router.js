@@ -1,7 +1,7 @@
 // Minimal dependency-free router: method + path patterns with :params,
-// JSON body parsing, CORS, and uniform error handling. Enough for a clean
-// REST surface without pulling in a framework.
-export function createRouter({ corsOrigin = "*" } = {}) {
+// JSON body parsing, CORS, optional bearer auth, and uniform error handling.
+// Enough for a clean REST surface without pulling in a framework.
+export function createRouter({ corsOrigin = "*", apiToken = "" } = {}) {
   const routes = [];
 
   function add(method, pattern, handler) {
@@ -22,11 +22,27 @@ export function createRouter({ corsOrigin = "*" } = {}) {
         const cors = {
           "access-control-allow-origin": corsOrigin,
           "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
-          "access-control-allow-headers": "content-type",
+          // authorization must be listed so browser preflight allows Bearer tokens
+          "access-control-allow-headers": "content-type, authorization",
         };
         if (req.method === "OPTIONS") { res.writeHead(204, cors); return res.end(); }
 
         const url = new URL(req.url, "http://localhost");
+        const path = url.pathname.replace(/\/+$/, "") || "/";
+
+        // Optional shared-secret gate. Unset API_TOKEN => open (backwards-compatible).
+        // Health stays public so Railway / Docker probes work without a token.
+        if (apiToken) {
+          const isPublicHealth = req.method === "GET" && path === "/api/health";
+          if (!isPublicHealth) {
+            const auth = req.headers.authorization || "";
+            if (auth !== `Bearer ${apiToken}`) {
+              send(res, 401, { error: "Unauthorized" }, cors);
+              return;
+            }
+          }
+        }
+
         for (const r of routes) {
           if (r.method !== req.method) continue;
           const m = url.pathname.match(r.rx);

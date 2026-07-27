@@ -26,6 +26,9 @@ export const config = {
   port: Number(env.PORT || 8790),
   dataDir,
   corsOrigin: env.CORS_ORIGIN || "*",
+  // Optional shared secret. When set, the router requires Authorization: Bearer.
+  // When unset/empty, all routes stay open (local + zero-secrets deploy).
+  apiToken: env.API_TOKEN || "",
 
   observability: {
     provider: env.OBS_PROVIDER || "local",
