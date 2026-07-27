@@ -12,8 +12,9 @@ ENV NODE_ENV=production
 # Hosts inject PORT; the app reads it (defaults to 8790 locally).
 EXPOSE 8790
 
-# Basic healthcheck against the built-in endpoint.
+# Healthcheck without wget (not present on node:20-alpine).
+# Railway also probes /api/health via railway.json; this keeps Docker HEALTHCHECK honest.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s \
-  CMD wget -qO- http://localhost:${PORT:-8790}/api/health || exit 1
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||8790)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "src/http/server.js"]
