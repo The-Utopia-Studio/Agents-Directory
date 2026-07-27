@@ -338,7 +338,7 @@ function openModal(type,data){
   else if(type==="triage") html=triageFormHtml(data);
   root.innerHTML=`<div class="modal-overlay" onclick="if(event.target===this)closeModal()"><div class="modal">${html}</div></div>`;
 }
-function closeModal(){document.getElementById("modal-root").innerHTML=""}
+function closeModal(){document.getElementById("modal-root").innerHTML="";state.pendingRequestId=null}
 
 // ── SAVE HANDLERS ──
 function readAgentForm(){
@@ -373,8 +373,8 @@ function saveNewAgent(){
   const f=readAgentForm();
   if(!validAgent(f)){toast("Fill in all required fields (incl. objective)");return}
   agents.push(Object.assign({id:"A"+nextAgentNum++,initials:getInitials(f.owner),version:f.version||"1.0",evalHistory:[],changelog:[{version:f.version||"1.0",date:new Date().toISOString().split("T")[0],note:"Registered in directory."}],proposedImprovement:null},f));
+  if(state.pendingRequestId){const r=requests.find(x=>x.id===state.pendingRequestId);if(r){r.status="Shipped";r.shippedAgentId="A"+(nextAgentNum-1);}state.pendingRequestId=null}
   persist();closeModal();toast("Agent added: "+f.name);
-  if(state.pendingRequestId){const r=requests.find(x=>x.id===state.pendingRequestId);if(r){r.status="Shipped";r.shippedAgentId="A"+(nextAgentNum-1);}state.pendingRequestId=null;persist()}
   render();
 }
 
@@ -454,7 +454,7 @@ async function approveImprovement(id){
       const r=await DirectoryAPI.approve(id);
       a.version=r.version;if(r.agent&&r.agent.changelog)a.changelog=r.agent.changelog;a.proposedImprovement=null;
       persist();state.agent=a;render();toast("Approved → shipped v"+r.version);return;
-    }catch(e){toast("Service unreachable — approving locally")}
+    }catch(e){toast("Approval failed — check connection and retry");return}
   }
   const nv=bumpVersion(a.version);
   a.changelog.push({version:nv,date:new Date().toISOString().split("T")[0],note:"Approved improvement: "+a.proposedImprovement.summary});
