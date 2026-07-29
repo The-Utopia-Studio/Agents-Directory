@@ -56,45 +56,69 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         throw httpError(400, `"${agent.name}" is ${agent.invocation?.type || "link"}-invoked — open it where it lives or use its exported prompt/SKILL.md.`);
       }
       const started = Date.now();
+      // The invocation try wraps ONLY the invocation. Trace writes happen
+      // outside it so a failing writer can never be mistaken for a run failure.
+      let result;
       try {
-        const r = await invoker.invoke(agent, inputs);
-        const trace = await obs.recordTrace({
-          agentId,
-          input: JSON.stringify(inputs),
-          output: r.output,
-          status: "ok",
-          costUsd: r.costUsd,
-          latencyMs: Date.now() - started,
-          metadata: { via: invoker.name },
-        });
-        return {
-          output: r.output,
-          status: "ok",
-          via: invoker.name,
-          traceId: trace.id || null,
-          tracePersisted: trace.persisted !== false && Boolean(trace.id),
-        };
+        result = await invoker.invoke(agent, inputs);
       } catch (e) {
         const message = String(e.message || e);
-        const trace = await obs.recordTrace({
-          agentId,
-          input: JSON.stringify(inputs),
-          output: "",
-          status: "error",
-          latencyMs: Date.now() - started,
-          failureReason: message,
-          metadata: { via: invoker.name, failed: true },
-        });
+        // Trace persistence is secondary; the invocation failure is the truth
+        // the caller needs. A failing writer must not become the reported error.
+        let trace = null;
+        try {
+          trace = await obs.recordTrace({
+            agentId,
+            input: JSON.stringify(inputs),
+            output: "",
+            status: "error",
+            latencyMs: Date.now() - started,
+            failureReason: message,
+            metadata: { via: invoker.name, failed: true },
+          });
+        } catch (persistError) {
+          console.error(
+            `[loop] failed run for ${agentId} could not be traced. invocation error: ${message}; persistence error: ${String(persistError?.message || persistError)}`,
+          );
+        }
         const status =
           Number.isInteger(e.status) && e.status >= 400 && e.status <= 599
             ? e.status
             : 502;
         const error = httpError(status, message);
         error.runStatus = "error";
-        error.traceId = trace.id || null;
-        error.tracePersisted = trace.persisted !== false && Boolean(trace.id);
+        error.traceId = trace?.id || null;
+        error.tracePersisted =
+          Boolean(trace) && trace.persisted !== false && Boolean(trace.id);
         throw error;
       }
+
+      // The run succeeded. Tracing it is secondary bookkeeping: if the writer
+      // fails, the output still has to reach the caller as a success.
+      let trace = null;
+      try {
+        trace = await obs.recordTrace({
+          agentId,
+          input: JSON.stringify(inputs),
+          output: result.output,
+          status: "ok",
+          costUsd: result.costUsd,
+          latencyMs: Date.now() - started,
+          metadata: { via: invoker.name },
+        });
+      } catch (persistError) {
+        console.error(
+          `[loop] successful run for ${agentId} could not be traced; persistence error: ${String(persistError?.message || persistError)}`,
+        );
+      }
+      return {
+        output: result.output,
+        status: "ok",
+        via: invoker.name,
+        traceId: trace?.id || null,
+        tracePersisted:
+          Boolean(trace) && trace.persisted !== false && Boolean(trace.id),
+      };
     },
 
     // ── evals (append-only history on the agent) ──

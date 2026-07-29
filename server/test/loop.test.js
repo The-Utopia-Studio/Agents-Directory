@@ -100,6 +100,61 @@ test("runAgent invokes a runnable agent without file trace persistence", async (
   assert.equal((await svc.listTraces("A2")).length, before);
 });
 
+// Same wiring as freshService, but every trace write throws — the case where
+// the observability adapter itself is broken, not merely write-disabled.
+async function serviceWithFailingTraceWriter() {
+  const dir = await mkdtemp(join(tmpdir(), "adir-tracefail-"));
+  const store = createStore(dir);
+  await seed(store);
+  const obs = getObservability(config, { store });
+  const brokenObs = {
+    ...obs,
+    async recordTrace() {
+      throw new Error("trace store unavailable");
+    },
+  };
+  return createLoopService({
+    store,
+    obs: brokenObs,
+    optimizer: getOptimizer(config),
+    memory: getMemory(config, { store }),
+    config,
+  });
+}
+
+test("failed run reports the invocation error when trace persistence throws", async () => {
+  const svc = await serviceWithFailingTraceWriter();
+  const a2 = await svc.getAgent("A2");
+  await svc.putAgent({
+    ...a2,
+    invocation: { type: "http", url: "http://127.0.0.1/private" },
+  });
+  await assert.rejects(
+    () => svc.runAgent("A2", {}),
+    (error) => {
+      assert.match(error.message, /local address|non-public address/);
+      assert.doesNotMatch(error.message, /trace store unavailable/);
+      assert.equal(error.status, 400);
+      assert.equal(error.runStatus, "error");
+      // No trace exists, and the response must not imply one does.
+      assert.equal(error.traceId, null);
+      assert.equal(error.tracePersisted, false);
+      return true;
+    },
+  );
+});
+
+test("successful run keeps its output when trace persistence throws", async () => {
+  const svc = await serviceWithFailingTraceWriter();
+  const r = await svc.runAgent("A2", { bio: "founder, warm voice" });
+  assert.equal(r.status, "ok");
+  assert.equal(r.via, "mock");
+  // The output surviving a trace failure is the whole point of this test.
+  assert.ok(r.output.includes("Bio Generator"));
+  assert.equal(r.traceId, null);
+  assert.equal(r.tracePersisted, false);
+});
+
 test("runAgent refuses link/prompt agents (open them where they live)", async () => {
   const svc = await freshService();
   const a1 = await svc.getAgent("A1");
