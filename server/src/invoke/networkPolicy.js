@@ -219,6 +219,13 @@ export async function requestJsonEndpoint(
     transport = sendPinnedRequest,
   } = {},
 ) {
+  if (
+    transport !== sendPinnedRequest &&
+    process.env.NODE_ENV !== "test" &&
+    !process.env.NODE_TEST_CONTEXT
+  ) {
+    throw invocationError(500, "Custom invocation transport is test-only");
+  }
   const controller = new AbortController();
   let rejectTimeout;
   const timeoutPromise = new Promise((_resolve, reject) => {

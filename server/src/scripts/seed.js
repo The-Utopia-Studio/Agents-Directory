@@ -1,13 +1,14 @@
-// Seed the store with the six agents and a set of synthetic traces for the
-// Bio Generator (A2) so the improvement loop has real failing signal to work
-// with out of the box. Idempotent — only seeds empty collections.
+// Seed the store with the six catalogue agents. Legacy trace fixtures remain
+// exported for offline tests, but production startup never writes traces.
 import { fileURLToPath } from "node:url";
 import { config } from "../config.js";
 import { createStore } from "../core/store.js";
+import { backfillStoredUsabilityModes } from "../core/usabilityModes.js";
 
 export const SEED_AGENTS = [
   { id: "A1", name: "LinkedIn Auditor", objective: "Prioritized, voice-preserving profile fixes, same-day.", version: "1.2",
     prompt: "You audit LinkedIn profiles and suggest prioritized fixes, preserving the person's voice.",
+    usabilityModes: ["download-install"],
     skills: ["personal-branding", "copywriting"], tools: ["LinkedIn (scrape)"], context: ["Fellow profile", "Branding playbook"],
     evalHistory: [{ date: "2026-07-10", status: "Performing well", score: 81, notes: "Voice examples helped.", knownIssues: "Struggles with non-English profiles." }],
     changelog: [{ version: "1.2", date: "2026-07-10", note: "Added few-shot voice examples." }], proposedImprovement: null },
@@ -30,19 +31,23 @@ export const SEED_AGENTS = [
     changelog: [{ version: "1.0", date: "2026-06-30", note: "Initial build." }], proposedImprovement: null },
   { id: "A3", name: "Post Suggester", objective: "5–10 on-trend post drafts a fellow can edit and publish.", version: "1.1",
     prompt: "Generate LinkedIn post drafts with hooks and CTAs from trending topics.",
+    usabilityModes: ["download-install"],
     skills: ["social-content", "trend-research"], tools: ["Web search"], context: ["Industry", "News feed"],
     evalHistory: [{ date: "2026-07-12", status: "Performing well", score: 78, notes: "Strong hooks.", knownIssues: "Occasionally outdated trends." }],
     changelog: [{ version: "1.1", date: "2026-07-01", note: "Tightened recency window." }], proposedImprovement: null },
   { id: "A4", name: "Marketing Scout", objective: "Weekly high-signal marketing tasks from internal chatter.", version: "0.3",
     prompt: "Mine Slack for marketing task and content opportunities; cite source threads.",
+    usabilityModes: ["download-install"],
     skills: ["insight-synthesis"], tools: ["Slack (MCP)"], context: ["Approved channels"],
     evalHistory: [], changelog: [{ version: "0.3", date: "2026-07-09", note: "Early testing." }], proposedImprovement: null },
   { id: "A5", name: "Design Agent", objective: "Design-system components + QA matching the ceramic system.", version: "0.2",
     prompt: "Generate design-system components and QA against ceramic tokens via MCP.",
+    usabilityModes: ["download-install"],
     skills: ["design-review"], tools: ["Figma (MCP)", "GitHub (MCP)"], context: ["Ceramic tokens"],
     evalHistory: [], changelog: [{ version: "0.2", date: "2026-07-06", note: "Wiring MCP." }], proposedImprovement: null },
   { id: "A6", name: "Research Assistant", objective: "A brief becomes a sourced findings doc for a call.", version: "1.0",
     prompt: "Turn a research brief into a structured, cited findings document.",
+    usabilityModes: ["download-install"],
     skills: ["company-research", "competitive-analysis"], tools: ["Web search"], context: ["Brief", "Market notes"],
     evalHistory: [{ date: "2026-07-05", status: "Performing well", score: 84, notes: "Strong synthesis.", knownIssues: "Misses niche sources." }],
     changelog: [{ version: "1.0", date: "2026-06-28", note: "Initial build." }], proposedImprovement: null },
@@ -60,8 +65,8 @@ export const SEED_TRACES = [
 export async function seed(store) {
   await store.ready();
   const a = await store.seedIfEmpty("agents", SEED_AGENTS);
-  const t = await store.seedIfEmpty("traces", SEED_TRACES);
-  return { agents: a, traces: t };
+  const usabilityModesBackfilled = await backfillStoredUsabilityModes(store);
+  return { agents: a, usabilityModesBackfilled };
 }
 
 // Run directly: `npm run seed`

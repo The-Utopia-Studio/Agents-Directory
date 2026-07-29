@@ -11,6 +11,7 @@
 // ── SEED DATA ──
 const SEED_AGENTS=[
   {id:"A1",name:"LinkedIn Auditor",tagline:"Scrapes and analyzes LinkedIn profiles, then suggests prioritized fixes with suggested rewrites.",description:"",platform:"Claude",status:"Active",category:"Personal Branding",owner:"Sarah",initials:"SA",model:"Claude Opus 4.x",version:"1.2",
+    usabilityModes:["download-install"],
     objective:"Every audited profile leaves with a prioritized, voice-preserving set of fixes the fellow can action same-day.",
     successCriteria:["Fellow applies ≥3 of the suggested fixes","Headline rewrite accepted without edits","Turnaround under 10 minutes"],
     guardrails:["Never rewrite in a voice the fellow hasn't approved","Flag non-English profiles for human review — do not guess"],
@@ -60,6 +61,7 @@ const SEED_AGENTS=[
       detail:"Traces show failures cluster when no example bio is supplied. Proposed: (1) require ≥2 of the fellow's own sentences as voice anchors before generating; (2) score each CTA against a 'confident-not-pushy' rubric and regenerate any that fail. Est. +18 pts on voice-match in offline eval."}},
 
   {id:"A3",name:"Post Suggester",tagline:"Scrapes trending topics in a fellow's field and generates draft LinkedIn posts with hooks and CTAs.",description:"",platform:"Manus",status:"Active",category:"Marketing & Content",owner:"James",initials:"JA",model:"—",version:"1.1",
+    usabilityModes:["download-install"],
     objective:"Give a fellow 5–10 credible, on-trend post drafts they can edit and publish in one sitting.",
     successCriteria:["≥2 drafts published per batch","Zero factual corrections needed on published posts","Hook rated strong by owner"],
     guardrails:["Fact-check any claim before it reaches a fellow","Never surface a trend older than 14 days as 'trending'"],
@@ -77,6 +79,7 @@ const SEED_AGENTS=[
     proposedImprovement:null},
 
   {id:"A4",name:"Marketing Scout",tagline:"Scrapes Slack channels and suggests marketing tasks, topics, and content opportunities for the team.",description:"",platform:"Claude",status:"Experimental",category:"Marketing & Content",owner:"Mo",initials:"MO",model:"Claude Sonnet 4.x",version:"0.3",
+    usabilityModes:["download-install"],
     objective:"Surface a weekly shortlist of high-signal marketing tasks mined from internal conversation.",
     successCriteria:["≥3 suggestions actioned per week","Signal-to-noise judged acceptable by the team","No duplicate/stale suggestions"],
     guardrails:["Never surface content from private/DM channels","Cite the source thread for every suggestion"],
@@ -92,6 +95,7 @@ const SEED_AGENTS=[
     proposedImprovement:null},
 
   {id:"A5",name:"Design Agent",tagline:"Claude + MCP integrations for design-system work — component generation, asset management, and design QA.",description:"",platform:"Claude",status:"Experimental",category:"Design & Product",owner:"Aiden",initials:"AI",model:"Claude Opus 4.x",version:"0.2",
+    usabilityModes:["download-install"],
     objective:"Ship design-system components and QA that match the ceramic system without a designer in the loop for the first pass.",
     successCriteria:["Generated component passes design QA checklist","Figma + code stay in sync","Designer edits < 20% of output"],
     guardrails:["Only touch approved design-system tokens","Human sign-off required before merge to main"],
@@ -107,6 +111,7 @@ const SEED_AGENTS=[
     proposedImprovement:null},
 
   {id:"A6",name:"Research Assistant",tagline:"Cursor-based agent for deep research tasks — market analysis, competitive intel, and posting reminders.",description:"",platform:"Cursor",status:"Active",category:"Research & Analysis",owner:"Hager",initials:"HA",model:"—",version:"1.0",
+    usabilityModes:["download-install"],
     objective:"Turn a research brief into a structured, well-sourced findings doc a partner can walk into a call with.",
     successCriteria:["Findings doc used in the call it was made for","≥5 credible sources cited","No major source gaps flagged in review"],
     guardrails:["Cite every claim","Flag when scope exceeds the context window rather than truncating silently"],
@@ -137,16 +142,9 @@ let agents=[],requests=[],nextAgentNum=1,nextReqNum=1;
 const STORE_KEY="utopia_agents_dir_v2";
 
 function persist(){try{localStorage.setItem(STORE_KEY,JSON.stringify({agents,requests,nextAgentNum,nextReqNum}))}catch(e){}}
-function inferredUsabilityModes(a){
-  const type=a.invocation&&a.invocation.type;
-  if(a.id==="A2"&&type==="mock")return["hosted-run","download-install"];
-  if(type==="http"||type==="mock")return["hosted-run"];
-  if(type==="mcp"||type==="runtime")return["prepared-handoff"];
-  return["download-install"];
-}
 function hydrate(){
   try{const s=JSON.parse(localStorage.getItem(STORE_KEY));
-    if(s&&Array.isArray(s.agents)){agents=s.agents.map(a=>Array.isArray(a.usabilityModes)?a:{...a,usabilityModes:inferredUsabilityModes(a)});requests=s.requests;nextAgentNum=s.nextAgentNum;nextReqNum=s.nextReqNum;persist();return}
+    if(s&&Array.isArray(s.agents)){agents=s.agents;requests=s.requests;nextAgentNum=s.nextAgentNum;nextReqNum=s.nextReqNum;return}
   }catch(e){}
   agents=JSON.parse(JSON.stringify(SEED_AGENTS));
   requests=JSON.parse(JSON.stringify(SEED_REQUESTS));
@@ -378,11 +376,11 @@ function readAgentForm(){
     repoUrl:document.getElementById("f-repo").value.trim()
   };
 }
-function validAgent(f){return f.name&&f.tagline&&f.objective&&f.when&&f.sop&&f.category&&f.owner}
+function validAgent(f){return f.name&&f.tagline&&f.objective&&f.when&&f.sop&&f.category&&f.owner&&Array.isArray(f.usabilityModes)&&f.usabilityModes.length>0}
 
 function saveNewAgent(){
   const f=readAgentForm();
-  if(!validAgent(f)){toast("Fill in all required fields (incl. objective)");return}
+  if(!validAgent(f)){toast("Fill in all required fields and select a usability mode");return}
   agents.push(Object.assign({id:"A"+nextAgentNum++,initials:getInitials(f.owner),version:f.version||"1.0",evalHistory:[],changelog:[{version:f.version||"1.0",date:new Date().toISOString().split("T")[0],note:"Registered in directory."}],proposedImprovement:null},f));
   if(state.pendingRequestId){const r=requests.find(x=>x.id===state.pendingRequestId);if(r){r.status="Shipped";r.shippedAgentId="A"+(nextAgentNum-1);}state.pendingRequestId=null}
   persist();closeModal();toast("Agent added: "+f.name);
@@ -392,7 +390,7 @@ function saveNewAgent(){
 function saveEditAgent(id){
   const a=agents.find(x=>x.id===id);if(!a)return;
   const f=readAgentForm();
-  if(!validAgent(f)){toast("Fill in all required fields (incl. objective)");return}
+  if(!validAgent(f)){toast("Fill in all required fields and select a usability mode");return}
   const versionChanged=f.version&&f.version!==a.version;
   Object.assign(a,f,{initials:getInitials(f.owner)});
   if(versionChanged)a.changelog.push({version:f.version,date:new Date().toISOString().split("T")[0],note:"Edited via directory."});
@@ -585,7 +583,7 @@ function renderDetail(a){
         ${canDownload(a)?`<button class="btn btn-sm" onclick="copyAgentPrompt('${a.id}')">Copy prompt</button><button class="btn btn-sm" onclick="copyAgentSkill('${a.id}')">Copy as SKILL.md</button>`:""}
         ${isRunnable(a)&&window.DirectoryAPI&&DirectoryAPI.enabled?`<button class="btn btn-sm btn-primary" onclick="toggleRun('${a.id}')">&#9654; Run here</button>`:""}
       </div>
-      <div class="use-hint">${needsInvokerConfiguration(a)?`${escHtml((a.invocation&&a.invocation.type)||"runtime")} execution is not configured. Use the prepared handoff/export path until an adapter is connected.`:`Available here: ${escHtml(getUsabilityModes(a).join(", "))}. The execution adapter remains ${escHtml((a.invocation&&a.invocation.type)||"link")}.`}</div>
+      <div class="use-hint">${hasUsabilityDefect(a)?`MISCONFIGURED: this agent has no stored usabilityModes. Edit the record before offering access.`:needsInvokerConfiguration(a)?`${escHtml((a.invocation&&a.invocation.type)||"runtime")} execution is not configured. Use the stored prepared handoff/export path until an adapter is connected.`:`Available here: ${escHtml(a.usabilityModes.join(", "))}. The execution adapter remains ${escHtml((a.invocation&&a.invocation.type)||"link")}.`}</div>
       <div id="run-panel" class="run-panel"></div>
     </div>
 
@@ -691,15 +689,12 @@ async function runLoopNow(btn){
 }
 
 // ── Using an agent across platforms (invocation) ──
-function getUsabilityModes(a){
-  if(Array.isArray(a.usabilityModes)&&a.usabilityModes.length)return a.usabilityModes;
-  return inferredUsabilityModes(a);
-}
-function hasUsabilityMode(a,mode){return getUsabilityModes(a).includes(mode)}
+function hasUsabilityDefect(a){return!Array.isArray(a.usabilityModes)||a.usabilityModes.length===0}
+function hasUsabilityMode(a,mode){return!hasUsabilityDefect(a)&&a.usabilityModes.includes(mode)}
 function isRunnable(a){return hasUsabilityMode(a,"hosted-run")&&["mock","http"].includes(a.invocation&&a.invocation.type)}
-function canDownload(a){return hasUsabilityMode(a,"download-install")||hasUsabilityMode(a,"prepared-handoff")||needsInvokerConfiguration(a)}
+function canDownload(a){return hasUsabilityMode(a,"download-install")||hasUsabilityMode(a,"prepared-handoff")}
 function needsInvokerConfiguration(a){return["mcp","runtime"].includes(a.invocation&&a.invocation.type)}
-function invocationTier(a){return getUsabilityModes(a).join(" + ")}
+function invocationTier(a){return hasUsabilityDefect(a)?"misconfigured":a.usabilityModes.join(" + ")}
 function slug(s){return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")}
 
 // The agent definition (four pillars) → a portable system prompt. This is what
@@ -738,8 +733,8 @@ async function runAgentUI(id){
   box.innerHTML='<div class="run-status">Running…</div>';
   try{
     const r=await DirectoryAPI.runAgent(id,inputs);
-    box.innerHTML=`<div class="run-result"><div class="run-result-head">Output <span class="run-via">via ${escHtml(r.via)}</span> <span class="run-trace">&#10003; trace ${escHtml(r.traceId)} recorded</span></div><pre>${escHtml(r.output)}</pre></div>`;
-  }catch(e){box.innerHTML=`<div class="run-status run-err">Run failed: ${escHtml(String(e.message||e))}${e.traceId?`<div>Error trace ${escHtml(e.traceId)} recorded.</div>`:""}</div>`}
+    box.innerHTML=`<div class="run-result"><div class="run-result-head">Output <span class="run-via">via ${escHtml(r.via)}</span> ${r.tracePersisted&&r.traceId?`<span class="run-trace">&#10003; trace ${escHtml(r.traceId)} recorded</span>`:`<span class="run-via">trace persistence disabled</span>`}</div><pre>${escHtml(r.output)}</pre></div>`;
+  }catch(e){box.innerHTML=`<div class="run-status run-err">Run failed: ${escHtml(String(e.message||e))}${e.tracePersisted&&e.traceId?`<div>Error trace ${escHtml(e.traceId)} recorded.</div>`:`<div>Error trace persistence is disabled.</div>`}</div>`}
 }
 
 async function recallContext(id){

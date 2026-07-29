@@ -58,6 +58,9 @@ export function createRouter({ corsOrigin = "*", apiToken = "" } = {}) {
             const body = { error: e.message || "Internal error" };
             if (e.runStatus) body.status = e.runStatus;
             if (e.traceId) body.traceId = e.traceId;
+            if (typeof e.tracePersisted === "boolean") {
+              body.tracePersisted = e.tracePersisted;
+            }
             send(res, e.status || 500, body, cors);
           }
           return;

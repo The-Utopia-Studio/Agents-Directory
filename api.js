@@ -40,6 +40,7 @@ window.DirectoryAPI = (function () {
       error.status = res.status;
       error.runStatus = payload && payload.status;
       error.traceId = payload && payload.traceId;
+      error.tracePersisted = payload && payload.tracePersisted;
       throw error;
     }
     return payload;

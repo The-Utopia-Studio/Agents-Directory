@@ -1,0 +1,21 @@
+{
+  "name": "agents-directory",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "convex:dev": "convex dev",
+    "convex:codegen": "convex codegen",
+    "typecheck": "tsc -p convex/tsconfig.json",
+    "test:convex": "vitest run convex"
+  },
+  "dependencies": {
+    "convex": "^1.21.0"
+  },
+  "devDependencies": {
+    "@edge-runtime/vm": "^5.0.0",
+    "@types/node": "^26.1.2",
+    "convex-test": "^0.0.54",
+    "typescript": "^5.7.0",
+    "vitest": "^4.1.10"
+  }
+}

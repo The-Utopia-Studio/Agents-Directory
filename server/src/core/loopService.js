@@ -3,6 +3,7 @@
 // business rules of the eval -> improve -> approve cycle live here.
 import { bumpVersion } from "./version.js";
 import { getInvoker } from "../invoke/index.js";
+import { assertUsabilityModes } from "./usabilityModes.js";
 
 export function createLoopService({ store, obs, optimizer, memory, verifier, config }) {
   const ns = (agentId) => `agent:${agentId}`;
@@ -11,7 +12,10 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
     // ── agents ──
     async listAgents() { return store.all("agents"); },
     async getAgent(id) { return store.get("agents", id); },
-    async putAgent(agent) { return store.put("agents", agent); },
+    async putAgent(agent) {
+      assertUsabilityModes(agent);
+      return store.put("agents", agent);
+    },
 
     // ── context / memory (the fourth pillar) ──
     async addContext(agentId, item) {
@@ -67,7 +71,8 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
           output: r.output,
           status: "ok",
           via: invoker.name,
-          traceId: trace.id,
+          traceId: trace.id || null,
+          tracePersisted: trace.persisted !== false && Boolean(trace.id),
         };
       } catch (e) {
         const message = String(e.message || e);
@@ -86,7 +91,8 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
             : 502;
         const error = httpError(status, message);
         error.runStatus = "error";
-        error.traceId = trace.id;
+        error.traceId = trace.id || null;
+        error.tracePersisted = trace.persisted !== false && Boolean(trace.id);
         throw error;
       }
     },

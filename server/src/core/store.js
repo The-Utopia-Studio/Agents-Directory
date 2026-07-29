@@ -7,6 +7,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+export const IMMUTABLE_COLLECTIONS = Object.freeze([
+  "traces",
+  "loopRuns",
+  "learnings",
+]);
+
 export function createStore(dataDir) {
   const cache = new Map();       // collection -> Map(id -> doc)
   const writeQueues = new Map(); // collection -> Promise chain
@@ -52,6 +58,11 @@ export function createStore(dataDir) {
     async put(coll, doc) {
       const map = await load(coll);
       const stored = clone(doc);
+      if (IMMUTABLE_COLLECTIONS.includes(coll) && map.has(stored.id)) {
+        throw new Error(
+          `${coll} records are immutable; cannot replace ${stored.id}`,
+        );
+      }
       map.set(stored.id, stored);
       await flush(coll);
       return clone(stored);

@@ -10,7 +10,7 @@ import { createLoopService } from "../src/core/loopService.js";
 import { getObservability } from "../src/observability/index.js";
 import { getOptimizer } from "../src/improve/index.js";
 import { getMemory } from "../src/memory/index.js";
-import { seed } from "../src/scripts/seed.js";
+import { seed, SEED_TRACES } from "../src/scripts/seed.js";
 import { config } from "../src/config.js";
 import { bumpVersion } from "../src/core/version.js";
 
@@ -18,13 +18,14 @@ async function freshService() {
   const dir = await mkdtemp(join(tmpdir(), "adir-"));
   const store = createStore(dir);
   await seed(store);
+  await store.seedIfEmpty("traces", SEED_TRACES);
   const obs = getObservability(config, { store });
   const optimizer = getOptimizer(config);
   const memory = getMemory(config, { store });
   return createLoopService({ store, obs, optimizer, memory, config });
 }
 
-test("seeds six agents and A2 failing traces", async () => {
+test("loads six agents and historical A2 trace fixtures", async () => {
   const svc = await freshService();
   const agents = await svc.listAgents();
   assert.equal(agents.length, 6);
@@ -74,22 +75,29 @@ test("logEval appends to history and moves fleet health", async () => {
   assert.ok(health.coverage > 0);
 });
 
-test("recordTrace round-trips through observability", async () => {
+test("recordTrace does not write to disabled file observability", async () => {
   const svc = await freshService();
-  await svc.recordTrace("A1", { status: "fail", score: 40, failureReason: "test", output: "x" });
+  const result = await svc.recordTrace("A1", {
+    status: "fail",
+    score: 40,
+    failureReason: "test",
+    output: "x",
+  });
   const traces = await svc.listTraces("A1");
-  assert.ok(traces.some((t) => t.failureReason === "test"));
+  assert.equal(result.persisted, false);
+  assert.ok(!traces.some((t) => t.failureReason === "test"));
 });
 
-test("runAgent invokes a runnable agent and records a trace", async () => {
+test("runAgent invokes a runnable agent without file trace persistence", async () => {
   const svc = await freshService();
   const before = (await svc.listTraces("A2")).length;
   const r = await svc.runAgent("A2", { bio: "founder, warm voice" });
   assert.equal(r.status, "ok");
   assert.equal(r.via, "mock");
   assert.ok(r.output.includes("Bio Generator"));
-  assert.ok(r.traceId);
-  assert.equal((await svc.listTraces("A2")).length, before + 1, "the run was recorded as a trace");
+  assert.equal(r.traceId, null);
+  assert.equal(r.tracePersisted, false);
+  assert.equal((await svc.listTraces("A2")).length, before);
 });
 
 test("runAgent refuses link/prompt agents (open them where they live)", async () => {

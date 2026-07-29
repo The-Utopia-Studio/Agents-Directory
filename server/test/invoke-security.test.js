@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
+import { spawnSync } from "node:child_process";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -102,7 +103,35 @@ test("HTTP invocation timeout aborts the in-flight request", async () => {
   );
 });
 
-test("failed HTTP run returns non-2xx and records explicit error trace", async (t) => {
+test("custom transport is rejected outside the Node test runner", () => {
+  const moduleUrl = new URL(
+    "../src/invoke/networkPolicy.js",
+    import.meta.url,
+  ).href;
+  const script = `
+    import { requestJsonEndpoint } from ${JSON.stringify(moduleUrl)};
+    try {
+      await requestJsonEndpoint("https://public.example/run", {}, {
+        transport: async () => ({ statusCode: 200, headers: {}, body: "bypass" })
+      });
+      process.exitCode = 2;
+    } catch (error) {
+      console.log(error.message);
+    }
+  `;
+  const env = { ...process.env };
+  delete env.NODE_ENV;
+  delete env.NODE_TEST_CONTEXT;
+  const child = spawnSync(
+    process.execPath,
+    ["--input-type=module", "--eval", script],
+    { encoding: "utf8", env },
+  );
+  assert.equal(child.status, 0, child.stderr);
+  assert.match(child.stdout, /Custom invocation transport is test-only/);
+});
+
+test("failed HTTP run returns non-2xx while file trace writes are disabled", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "adir-invoke-"));
   const store = createStore(dir);
   const app = await buildApp({ store });
@@ -128,13 +157,8 @@ test("failed HTTP run returns non-2xx and records explicit error trace", async (
   assert.equal(response.status, 400);
   const body = await response.json();
   assert.equal(body.status, "error");
-  assert.ok(body.traceId);
-  const trace = (await app.svc.listTraces("A2")).find(
-    (candidate) => candidate.id === body.traceId,
-  );
-  assert.equal(trace.id, body.traceId);
-  assert.equal(trace.status, "error");
-  assert.equal(trace.metadata.failed, true);
+  assert.equal(body.traceId, undefined);
+  assert.equal(body.tracePersisted, false);
 });
 
 test("usability modes remain separate from the scalar invocation adapter", async () => {
@@ -165,4 +189,6 @@ test("usability modes remain separate from the scalar invocation adapter", async
     appSource,
     /hasUsabilityMode\(a,"hosted-run"\)&&\["mock","http"\]/,
   );
+  assert.doesNotMatch(appSource, /inferredUsabilityModes|getUsabilityModes/);
+  assert.match(appSource, /MISCONFIGURED: this agent has no stored usabilityModes/);
 });
