@@ -88,10 +88,13 @@ export const recordEvalResult = mutation({
         const supportingEvidence = await ctx.db.get(result.evidenceId);
         if (
           !supportingEvidence ||
-          supportingEvidence.agentVersionId !== args.agentVersionId
+          supportingEvidence.agentVersionId !== args.agentVersionId ||
+          !supportingEvidence.eligibleForEvaluation ||
+          (supportingEvidence.source !== "real" &&
+            supportingEvidence.source !== "imported")
         ) {
           throw new Error(
-            "Guardrail evidence must belong to the evaluated version",
+            "Guardrail evidence must be eligible and belong to the evaluated version",
           );
         }
       }
