@@ -28,3 +28,13 @@ export async function requireIdentity(ctx: AuthCtx): Promise<AuthorityActor> {
     email: identity.email,
   };
 }
+
+/**
+ * Central approval policy boundary.
+ *
+ * Authentication is enforced now. The studio approver-role rule is unresolved
+ * and must be added here once its Clerk role model is decided.
+ */
+export async function requireApprover(ctx: AuthCtx): Promise<AuthorityActor> {
+  return await requireIdentity(ctx);
+}
