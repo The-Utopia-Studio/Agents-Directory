@@ -29,6 +29,11 @@ export function registerRoutes(router, svc, engine) {
     svc.putAgent({ ...body, id: params.id })
   );
 
+  // run the agent where it lives (records a trace → feeds the loop)
+  router.post("/api/agents/:id/run", async ({ params, body }) =>
+    reply(201, await svc.runAgent(params.id, (body && body.inputs) || {}))
+  );
+
   // traces (observability write + read)
   router.post("/api/agents/:id/traces", async ({ params, body }) =>
     reply(201, await svc.recordTrace(params.id, body || {}))

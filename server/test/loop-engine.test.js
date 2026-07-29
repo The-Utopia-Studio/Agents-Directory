@@ -12,18 +12,19 @@ import { getOptimizer } from "../src/improve/index.js";
 import { getMemory } from "../src/memory/index.js";
 import { getVerifier } from "../src/verify/index.js";
 import { createLoopEngine } from "../src/loop/engine.js";
-import { seed } from "../src/scripts/seed.js";
+import { seed, SEED_TRACES } from "../src/scripts/seed.js";
 import { config } from "../src/config.js";
 
 async function freshStack(loopOverrides = {}, { verifier: verifierOverride } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "adir-loop-"));
   const store = createStore(dir);
   await seed(store);
+  await store.seedIfEmpty("traces", SEED_TRACES);
   const obs = getObservability(config, { store });
   const optimizer = getOptimizer(config);
   const memory = getMemory(config, { store });
   const verifier = verifierOverride || getVerifier(config);
-  const svc = createLoopService({ store, obs, optimizer, memory, verifier });
+  const svc = createLoopService({ store, obs, optimizer, memory, verifier, config });
   const cfg = { ...config, loop: { ...config.loop, ...loopOverrides } };
   const engine = createLoopEngine({ svc, obs, verifier, config: cfg });
   return { svc, engine, verifier, obs };

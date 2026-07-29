@@ -1,6 +1,7 @@
-// Local observability — traces live in the file store. Zero external setup,
-// so the loop is demonstrable end-to-end offline. Implements the
-// ObservabilityProvider interface (see core/types.js).
+// Local observability reads historical traces from the file store. New file
+// writes are disabled pending a Convex service identity.
+export const FILE_TRACE_WRITES_ENABLED = false;
+
 export function createLocalObservability({ store, lowScoreThreshold = 70 }) {
   const byRecent = (a, b) => (a.ts < b.ts ? 1 : -1);
 
@@ -9,11 +10,21 @@ export function createLocalObservability({ store, lowScoreThreshold = 70 }) {
 
     async health() {
       await store.ready();
-      return { ok: true, detail: "file-backed traces" };
+      return { ok: true, detail: "historical file traces; writes disabled" };
     },
 
     async recordTrace(trace) {
       await store.ready();
+      if (!FILE_TRACE_WRITES_ENABLED) {
+        console.warn(
+          `[observability] file trace write disabled; trace for ${trace.agentId || "(unknown)"} was not persisted`,
+        );
+        return {
+          id: null,
+          status: trace.status || "ok",
+          persisted: false,
+        };
+      }
       const doc = {
         status: "ok",
         ts: new Date().toISOString(),

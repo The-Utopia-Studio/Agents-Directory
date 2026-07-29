@@ -11,6 +11,7 @@
 // ── SEED DATA ──
 const SEED_AGENTS=[
   {id:"A1",name:"LinkedIn Auditor",tagline:"Scrapes and analyzes LinkedIn profiles, then suggests prioritized fixes with suggested rewrites.",description:"",platform:"Claude",status:"Active",category:"Personal Branding",owner:"Sarah",initials:"SA",model:"Claude Opus 4.x",version:"1.2",
+    usabilityModes:["download-install"],
     objective:"Every audited profile leaves with a prioritized, voice-preserving set of fixes the fellow can action same-day.",
     successCriteria:["Fellow applies ≥3 of the suggested fixes","Headline rewrite accepted without edits","Turnaround under 10 minutes"],
     guardrails:["Never rewrite in a voice the fellow hasn't approved","Flag non-English profiles for human review — do not guess"],
@@ -42,6 +43,8 @@ const SEED_AGENTS=[
       {class:"aggressive CTA",acceptableRate:"0%",guardrail:"score CTA against confident-not-pushy rubric"}
     ],
     costPerOutcome:{target:0.03},
+    invocation:{type:"mock"},
+    usabilityModes:["hosted-run","download-install"],
     when:"When a fellow needs a new or refreshed LinkedIn bio.",
     sop:"1. Gather the fellow's current bio, role, and goals\n2. Open Bio Generator project in Claude\n3. Provide context and ask for bio options\n4. Iterate on tone and voice match",
     inputs:["Fellow's current bio","Role description","Target audience"],outputs:["3 bio variations","SEO keyword suggestions"],
@@ -58,6 +61,7 @@ const SEED_AGENTS=[
       detail:"Traces show failures cluster when no example bio is supplied. Proposed: (1) require ≥2 of the fellow's own sentences as voice anchors before generating; (2) score each CTA against a 'confident-not-pushy' rubric and regenerate any that fail. Est. +18 pts on voice-match in offline eval."}},
 
   {id:"A3",name:"Post Suggester",tagline:"Scrapes trending topics in a fellow's field and generates draft LinkedIn posts with hooks and CTAs.",description:"",platform:"Manus",status:"Active",category:"Marketing & Content",owner:"James",initials:"JA",model:"—",version:"1.1",
+    usabilityModes:["download-install"],
     objective:"Give a fellow 5–10 credible, on-trend post drafts they can edit and publish in one sitting.",
     successCriteria:["≥2 drafts published per batch","Zero factual corrections needed on published posts","Hook rated strong by owner"],
     guardrails:["Fact-check any claim before it reaches a fellow","Never surface a trend older than 14 days as 'trending'"],
@@ -75,6 +79,7 @@ const SEED_AGENTS=[
     proposedImprovement:null},
 
   {id:"A4",name:"Marketing Scout",tagline:"Scrapes Slack channels and suggests marketing tasks, topics, and content opportunities for the team.",description:"",platform:"Claude",status:"Experimental",category:"Marketing & Content",owner:"Mo",initials:"MO",model:"Claude Sonnet 4.x",version:"0.3",
+    usabilityModes:["download-install"],
     objective:"Surface a weekly shortlist of high-signal marketing tasks mined from internal conversation.",
     successCriteria:["≥3 suggestions actioned per week","Signal-to-noise judged acceptable by the team","No duplicate/stale suggestions"],
     guardrails:["Never surface content from private/DM channels","Cite the source thread for every suggestion"],
@@ -90,6 +95,7 @@ const SEED_AGENTS=[
     proposedImprovement:null},
 
   {id:"A5",name:"Design Agent",tagline:"Claude + MCP integrations for design-system work — component generation, asset management, and design QA.",description:"",platform:"Claude",status:"Experimental",category:"Design & Product",owner:"Aiden",initials:"AI",model:"Claude Opus 4.x",version:"0.2",
+    usabilityModes:["download-install"],
     objective:"Ship design-system components and QA that match the ceramic system without a designer in the loop for the first pass.",
     successCriteria:["Generated component passes design QA checklist","Figma + code stay in sync","Designer edits < 20% of output"],
     guardrails:["Only touch approved design-system tokens","Human sign-off required before merge to main"],
@@ -105,6 +111,7 @@ const SEED_AGENTS=[
     proposedImprovement:null},
 
   {id:"A6",name:"Research Assistant",tagline:"Cursor-based agent for deep research tasks — market analysis, competitive intel, and posting reminders.",description:"",platform:"Cursor",status:"Active",category:"Research & Analysis",owner:"Hager",initials:"HA",model:"—",version:"1.0",
+    usabilityModes:["download-install"],
     objective:"Turn a research brief into a structured, well-sourced findings doc a partner can walk into a call with.",
     successCriteria:["Findings doc used in the call it was made for","≥5 credible sources cited","No major source gaps flagged in review"],
     guardrails:["Cite every claim","Flag when scope exceeds the context window rather than truncating silently"],
@@ -189,7 +196,7 @@ function fleetHealth(){
 // ── MODAL FORMS ──
 function agentFormHtml(agent){
   const isEdit=!!agent;
-  const a=agent||{name:"",tagline:"",description:"",platform:"Claude",status:"Experimental",category:"",owner:"",model:"",version:"",objective:"",successCriteria:[],guardrails:[],when:"",sop:"",inputs:[],outputs:[],skills:[],tools:[],context:[],accessUrl:"",repoUrl:""};
+  const a=agent||{name:"",tagline:"",description:"",platform:"Claude",status:"Experimental",category:"",owner:"",model:"",version:"",objective:"",successCriteria:[],guardrails:[],when:"",sop:"",inputs:[],outputs:[],skills:[],tools:[],context:[],usabilityModes:["download-install"],accessUrl:"",repoUrl:""};
   const cur=latestEval(a)||{};
   return `
   <div class="modal-header">
@@ -222,6 +229,7 @@ function agentFormHtml(agent){
         <div class="form-group"><label>Inputs</label><input type="text" id="f-inputs" value="${escHtml((a.inputs||[]).join(", "))}" placeholder="e.g. LinkedIn URL, bio text"><div class="hint">Comma-separated</div></div>
         <div class="form-group"><label>Outputs</label><input type="text" id="f-outputs" value="${escHtml((a.outputs||[]).join(", "))}" placeholder="e.g. List of fixes, rewritten bio"><div class="hint">Comma-separated</div></div>
       </div>
+      <div class="form-group"><label>Usability modes</label><div class="check-row">${["hosted-run","download-install","prepared-handoff","approval-queue"].map(mode=>`<label class="check-label"><input type="checkbox" name="f-usability" value="${mode}" ${(a.usabilityModes||[]).includes(mode)?"checked":""}> ${mode}</label>`).join("")}</div><div class="hint">What users can do; separate from the single execution adapter.</div></div>
     </div>
 
     <div class="form-section pillar-scc">
@@ -360,6 +368,7 @@ function readAgentForm(){
     sop:document.getElementById("f-sop").value.trim(),
     inputs:parseCSV(document.getElementById("f-inputs").value),
     outputs:parseCSV(document.getElementById("f-outputs").value),
+    usabilityModes:[...document.querySelectorAll('input[name="f-usability"]:checked')].map(el=>el.value),
     skills:parseCSV(document.getElementById("f-skills").value),
     tools:parseCSV(document.getElementById("f-tools").value),
     context:parseCSV(document.getElementById("f-context").value),
@@ -367,11 +376,11 @@ function readAgentForm(){
     repoUrl:document.getElementById("f-repo").value.trim()
   };
 }
-function validAgent(f){return f.name&&f.tagline&&f.objective&&f.when&&f.sop&&f.category&&f.owner}
+function validAgent(f){return f.name&&f.tagline&&f.objective&&f.when&&f.sop&&f.category&&f.owner&&Array.isArray(f.usabilityModes)&&f.usabilityModes.length>0}
 
 function saveNewAgent(){
   const f=readAgentForm();
-  if(!validAgent(f)){toast("Fill in all required fields (incl. objective)");return}
+  if(!validAgent(f)){toast("Fill in all required fields and select a usability mode");return}
   agents.push(Object.assign({id:"A"+nextAgentNum++,initials:getInitials(f.owner),version:f.version||"1.0",evalHistory:[],changelog:[{version:f.version||"1.0",date:new Date().toISOString().split("T")[0],note:"Registered in directory."}],proposedImprovement:null},f));
   if(state.pendingRequestId){const r=requests.find(x=>x.id===state.pendingRequestId);if(r){r.status="Shipped";r.shippedAgentId="A"+(nextAgentNum-1);}state.pendingRequestId=null}
   persist();closeModal();toast("Agent added: "+f.name);
@@ -381,7 +390,7 @@ function saveNewAgent(){
 function saveEditAgent(id){
   const a=agents.find(x=>x.id===id);if(!a)return;
   const f=readAgentForm();
-  if(!validAgent(f)){toast("Fill in all required fields (incl. objective)");return}
+  if(!validAgent(f)){toast("Fill in all required fields and select a usability mode");return}
   const versionChanged=f.version&&f.version!==a.version;
   Object.assign(a,f,{initials:getInitials(f.owner)});
   if(versionChanged)a.changelog.push({version:f.version,date:new Date().toISOString().split("T")[0],note:"Edited via directory."});
@@ -567,6 +576,17 @@ function renderDetail(a){
       <span class="pill pill-neutral pill-owner"><span class="mini-avatar">${escHtml(a.initials)}</span>${escHtml(a.owner)}</span>
     </div>
 
+    <div class="use-panel">
+      <div class="use-head">Use this agent<span class="use-tier">${invocationTier(a)}</span></div>
+      <div class="use-actions">
+        ${a.accessUrl?`<a class="btn btn-sm" href="${escHtml(a.accessUrl)}" target="_blank" rel="noopener">Open in ${escHtml(a.platform)} &#8599;</a>`:""}
+        ${canDownload(a)?`<button class="btn btn-sm" onclick="copyAgentPrompt('${a.id}')">Copy prompt</button><button class="btn btn-sm" onclick="copyAgentSkill('${a.id}')">Copy as SKILL.md</button>`:""}
+        ${isRunnable(a)&&window.DirectoryAPI&&DirectoryAPI.enabled?`<button class="btn btn-sm btn-primary" onclick="toggleRun('${a.id}')">&#9654; Run here</button>`:""}
+      </div>
+      <div class="use-hint">${hasUsabilityDefect(a)?`MISCONFIGURED: this agent has no stored usabilityModes. Edit the record before offering access.`:needsInvokerConfiguration(a)?`${escHtml((a.invocation&&a.invocation.type)||"runtime")} execution is not configured. Use the stored prepared handoff/export path until an adapter is connected.`:`Available here: ${escHtml(a.usabilityModes.join(", "))}. The execution adapter remains ${escHtml((a.invocation&&a.invocation.type)||"link")}.`}</div>
+      <div id="run-panel" class="run-panel"></div>
+    </div>
+
     ${prop?`<div class="loop-card">
       <div class="loop-head"><span class="loop-badge">● IMPROVEMENT PROPOSED</span><span class="loop-src">${escHtml(a.proposedImprovement.source)} · ${formatDate(a.proposedImprovement.date)}</span></div>
       <div class="loop-summary">${escHtml(a.proposedImprovement.summary)}</div>
@@ -666,6 +686,55 @@ async function runLoopNow(btn){
   try{const r=await DirectoryAPI.runLoop();toast(`Cycle: scanned ${r.scanned}, ${r.jobs.length} job(s) run, $${r.budget.spentUsd} spent`)}
   catch(e){toast("Loop service unreachable")}
   loadAutomations();
+}
+
+// ── Using an agent across platforms (invocation) ──
+function hasUsabilityDefect(a){return!Array.isArray(a.usabilityModes)||a.usabilityModes.length===0}
+function hasUsabilityMode(a,mode){return!hasUsabilityDefect(a)&&a.usabilityModes.includes(mode)}
+function isRunnable(a){return hasUsabilityMode(a,"hosted-run")&&["mock","http"].includes(a.invocation&&a.invocation.type)}
+function canDownload(a){return hasUsabilityMode(a,"download-install")||hasUsabilityMode(a,"prepared-handoff")}
+function needsInvokerConfiguration(a){return["mcp","runtime"].includes(a.invocation&&a.invocation.type)}
+function invocationTier(a){return hasUsabilityDefect(a)?"misconfigured":a.usabilityModes.join(" + ")}
+function slug(s){return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")}
+
+// The agent definition (four pillars) → a portable system prompt. This is what
+// makes an agent usable across platforms: paste it into Claude, Cursor, ChatGPT.
+function buildAgentPrompt(a){
+  const L=[];
+  L.push(`You are ${a.name}. ${a.objective||a.tagline}`);
+  if(a.when)L.push(`\n## When to use\n${a.when}`);
+  if((a.successCriteria||[]).length)L.push(`\n## Success criteria (what good looks like)\n${a.successCriteria.map(s=>"- "+s).join("\n")}`);
+  if((a.guardrails||[]).length)L.push(`\n## Guardrails (must not)\n${a.guardrails.map(s=>"- "+s).join("\n")}`);
+  if((a.skills||[]).length)L.push(`\n## Skills to apply\n${a.skills.map(s=>"- "+s).join("\n")}`);
+  if((a.tools||[]).length)L.push(`\n## Tools you may use\n${a.tools.map(s=>"- "+s).join("\n")}`);
+  if((a.context||[]).length)L.push(`\n## Context to draw on\n${a.context.map(s=>"- "+s).join("\n")}`);
+  if(a.sop)L.push(`\n## Procedure\n${a.sop}`);
+  if((a.inputs||[]).length)L.push(`\n## Inputs\n${a.inputs.map(s=>"- "+s).join("\n")}`);
+  if((a.outputs||[]).length)L.push(`\n## Outputs\n${a.outputs.map(s=>"- "+s).join("\n")}`);
+  return L.join("\n");
+}
+// Export as a SKILL.md (the open cross-vendor standard).
+function buildSkillMd(a){
+  return `---\nname: ${slug(a.name)}\ndescription: ${(a.tagline||a.objective||"").replace(/\n/g," ")}\n---\n\n`+buildAgentPrompt(a)+"\n";
+}
+function copyText(text,msg){(navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(text):Promise.reject()).then(()=>toast(msg)).catch(()=>{const ta=document.createElement("textarea");ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast(msg)}catch(e){toast("Copy failed")}ta.remove()})}
+function copyAgentPrompt(id){const a=agents.find(x=>x.id===id);if(a)copyText(buildAgentPrompt(a),"Prompt copied — paste into any platform")}
+function copyAgentSkill(id){const a=agents.find(x=>x.id===id);if(a)copyText(buildSkillMd(a),"SKILL.md copied")}
+
+function toggleRun(id){
+  const a=agents.find(x=>x.id===id);const box=document.getElementById("run-panel");if(!a||!box)return;
+  if(box.innerHTML){box.innerHTML="";return}
+  const fields=(a.inputs&&a.inputs.length?a.inputs:["input"]).map((inp,i)=>`<div class="run-field"><label>${escHtml(inp)}</label><input id="run-in-${i}" data-k="${escHtml(inp)}" placeholder="${escHtml(inp)}"></div>`).join("");
+  box.innerHTML=`<div class="run-form">${fields}<button class="btn btn-sm btn-primary" onclick="runAgentUI('${id}')">Run &#9654;</button></div><div id="run-out" class="run-out"></div>`;
+}
+async function runAgentUI(id){
+  const box=document.getElementById("run-out");if(!box)return;
+  const inputs={};document.querySelectorAll("#run-panel [data-k]").forEach(el=>{if(el.value.trim())inputs[el.getAttribute("data-k")]=el.value.trim()});
+  box.innerHTML='<div class="run-status">Running…</div>';
+  try{
+    const r=await DirectoryAPI.runAgent(id,inputs);
+    box.innerHTML=`<div class="run-result"><div class="run-result-head">Output <span class="run-via">via ${escHtml(r.via)}</span> ${r.tracePersisted&&r.traceId?`<span class="run-trace">&#10003; trace ${escHtml(r.traceId)} recorded</span>`:`<span class="run-via">trace persistence disabled</span>`}</div><pre>${escHtml(r.output)}</pre></div>`;
+  }catch(e){box.innerHTML=`<div class="run-status run-err">Run failed: ${escHtml(String(e.message||e))}${e.tracePersisted&&e.traceId?`<div>Error trace ${escHtml(e.traceId)} recorded.</div>`:`<div>Error trace persistence is disabled.</div>`}</div>`}
 }
 
 async function recallContext(id){

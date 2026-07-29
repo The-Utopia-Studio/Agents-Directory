@@ -2,15 +2,20 @@
 // the store + the (swappable) observability and optimizer providers. All the
 // business rules of the eval -> improve -> approve cycle live here.
 import { bumpVersion } from "./version.js";
+import { getInvoker } from "../invoke/index.js";
+import { assertUsabilityModes } from "./usabilityModes.js";
 
-export function createLoopService({ store, obs, optimizer, memory, verifier }) {
+export function createLoopService({ store, obs, optimizer, memory, verifier, config }) {
   const ns = (agentId) => `agent:${agentId}`;
 
   const svc = {
     // ── agents ──
     async listAgents() { return store.all("agents"); },
     async getAgent(id) { return store.get("agents", id); },
-    async putAgent(agent) { return store.put("agents", agent); },
+    async putAgent(agent) {
+      assertUsabilityModes(agent);
+      return store.put("agents", agent);
+    },
 
     // ── context / memory (the fourth pillar) ──
     async addContext(agentId, item) {
@@ -39,6 +44,82 @@ export function createLoopService({ store, obs, optimizer, memory, verifier }) {
       return obs.recordTrace({ ...trace, agentId });
     },
     async listTraces(agentId, opts) { return obs.listTraces(agentId, opts); },
+
+    // ── run an agent where it lives, and record the run as a trace ──
+    // This is what makes the directory usable, not a shelf — and every run
+    // feeds observability → the eval loop.
+    async runAgent(agentId, inputs = {}) {
+      const agent = await store.get("agents", agentId);
+      if (!agent) throw httpError(404, `No agent ${agentId}`);
+      const invoker = getInvoker(agent, config);
+      if (!invoker.serverRun) {
+        throw httpError(400, `"${agent.name}" is ${agent.invocation?.type || "link"}-invoked — open it where it lives or use its exported prompt/SKILL.md.`);
+      }
+      const started = Date.now();
+      // The invocation try wraps ONLY the invocation. Trace writes happen
+      // outside it so a failing writer can never be mistaken for a run failure.
+      let result;
+      try {
+        result = await invoker.invoke(agent, inputs);
+      } catch (e) {
+        const message = String(e.message || e);
+        // Trace persistence is secondary; the invocation failure is the truth
+        // the caller needs. A failing writer must not become the reported error.
+        let trace = null;
+        try {
+          trace = await obs.recordTrace({
+            agentId,
+            input: JSON.stringify(inputs),
+            output: "",
+            status: "error",
+            latencyMs: Date.now() - started,
+            failureReason: message,
+            metadata: { via: invoker.name, failed: true },
+          });
+        } catch (persistError) {
+          console.error(
+            `[loop] failed run for ${agentId} could not be traced. invocation error: ${message}; persistence error: ${String(persistError?.message || persistError)}`,
+          );
+        }
+        const status =
+          Number.isInteger(e.status) && e.status >= 400 && e.status <= 599
+            ? e.status
+            : 502;
+        const error = httpError(status, message);
+        error.runStatus = "error";
+        error.traceId = trace?.id || null;
+        error.tracePersisted =
+          Boolean(trace) && trace.persisted !== false && Boolean(trace.id);
+        throw error;
+      }
+
+      // The run succeeded. Tracing it is secondary bookkeeping: if the writer
+      // fails, the output still has to reach the caller as a success.
+      let trace = null;
+      try {
+        trace = await obs.recordTrace({
+          agentId,
+          input: JSON.stringify(inputs),
+          output: result.output,
+          status: "ok",
+          costUsd: result.costUsd,
+          latencyMs: Date.now() - started,
+          metadata: { via: invoker.name },
+        });
+      } catch (persistError) {
+        console.error(
+          `[loop] successful run for ${agentId} could not be traced; persistence error: ${String(persistError?.message || persistError)}`,
+        );
+      }
+      return {
+        output: result.output,
+        status: "ok",
+        via: invoker.name,
+        traceId: trace?.id || null,
+        tracePersisted:
+          Boolean(trace) && trace.persisted !== false && Boolean(trace.id),
+      };
+    },
 
     // ── evals (append-only history on the agent) ──
     async logEval(agentId, record) {

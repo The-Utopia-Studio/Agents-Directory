@@ -306,6 +306,8 @@ body {
 .form-group label { display: block; font-size: 13px; font-weight: var(--font-weight-medium); color: var(--foreground); margin-bottom: 5px; }
 .form-group label .req { color: var(--accent-text); margin-left: 2px; }
 .form-group .hint { font-size: 11px; color: var(--foreground-subtle); margin-top: 3px; }
+.check-row { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.form-group .check-label { display: inline-flex; align-items: center; gap: 5px; margin: 0; font-weight: var(--font-weight-regular); }
 input[type="text"], input[type="url"], input[type="date"], textarea, select {
   width: 100%; padding: 9px 12px; border: 1px solid var(--input); border-radius: var(--radius-control);
   font-size: 14px; font-family: inherit; font-weight: var(--font-weight-body);
@@ -403,6 +405,26 @@ input[type="date"] { color-scheme: dark; }
 .auto-queue { margin-top: 12px; }
 .auto-sub2 { font-family: ui-monospace, monospace; font-size: 10px; text-transform: none; letter-spacing: 0; color: var(--foreground-subtle); }
 .rq-score { flex: 0 0 auto; width: 20px; height: 20px; display: inline-flex; align-items: center; justify-content: center; border-radius: 6px; background: var(--accent-tint); color: var(--accent-text); font-family: ui-monospace, monospace; font-size: 12px; font-weight: 600; }
+
+/* Use this agent (invocation across platforms) */
+.use-panel { background: var(--surface); border: 1px solid var(--border-subtle); border-radius: var(--radius-surface); padding: 16px 18px; margin: 4px 0 20px; }
+.use-head { display: flex; align-items: center; gap: 10px; font-size: 12px; letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--foreground-subtle); margin-bottom: 10px; }
+.use-tier { font-family: ui-monospace, monospace; font-size: 10px; text-transform: none; letter-spacing: 0; color: var(--accent-text); border: 1px solid var(--border-subtle); border-radius: 999px; padding: 1px 8px; }
+.use-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.use-hint { font-size: 12px; color: var(--foreground-subtle); margin-top: 10px; }
+.run-panel:empty { display: none; }
+.run-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border); }
+.run-field { display: flex; flex-direction: column; gap: 4px; flex: 1 1 180px; }
+.run-field label { font-size: 11px; color: var(--foreground-subtle); }
+.run-field input { background: var(--ground); border: 1px solid var(--input); border-radius: var(--radius-control); padding: 7px 10px; color: var(--foreground); font-family: inherit; font-size: 13.5px; }
+.run-field input:focus { outline: none; border-color: var(--ring); }
+.run-out { margin-top: 12px; }
+.run-status { font-size: 13px; color: var(--foreground-subtle); }
+.run-status.run-err { color: var(--warning-text); }
+.run-result-head { font-size: 11px; letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--foreground-subtle); margin-bottom: 6px; display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.run-via { font-family: ui-monospace, monospace; color: var(--accent-text); }
+.run-trace { font-family: ui-monospace, monospace; color: var(--success-text); text-transform: none; letter-spacing: 0; }
+.run-result pre { background: var(--ground); border: 1px solid var(--border-subtle); border-radius: 10px; padding: 12px 14px; font-family: ui-monospace, monospace; font-size: 12.5px; line-height: 1.6; color: var(--foreground); white-space: pre-wrap; overflow-x: auto; margin: 0; }
 
 /* Autonomy + golden cases + failure classes (goals pillar) */
 .pillar-tag { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
