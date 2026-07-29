@@ -96,19 +96,23 @@
  * definition; platforms are interchangeable runtimes. Three tiers:
  *   link    — open where it lives (Claude project, Cursor workspace) + deep link
  *   prompt  — portable: export the definition as a prompt / SKILL.md, paste anywhere
- *   http | mcp | runtime | mock — the server can RUN it and record a trace
+ *   http | mock — the server can run it and record a trace
+ *   mcp | runtime — configuration stubs; prepared handoff only until wired
  * @typedef {Object} Invocation
  * @property {"link"|"prompt"|"http"|"mcp"|"runtime"|"mock"} type
  * @property {string} [url]      deep link (link) or endpoint (http)
- * @property {string} [method]   http method (default POST)
- * @property {Object} [headers]  http headers
+ */
+
+/**
+ * @typedef {"hosted-run"|"download-install"|"prepared-handoff"|"approval-queue"} UsabilityMode
+ * Agent-level UI capabilities. Separate from the scalar Invocation adapter.
  */
 
 /**
  * Invoker — runs an agent where it lives and returns output. Adapters per tier.
  * @typedef {Object} Invoker
  * @property {string} name
- * @property {boolean} serverRun  can the server invoke it? (false for link/prompt)
+ * @property {boolean} serverRun  can the server invoke it now?
  * @property {(agent:Agent, inputs:Object) => Promise<{output:string, costUsd?:number}>} invoke
  */
 

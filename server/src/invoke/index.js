@@ -6,7 +6,9 @@
 //   http          — call an endpoint or webhook (n8n, custom, hosted agent)
 //   mcp           — call via an MCP bridge (port: needs config)
 //   runtime       — run via @studio/ai-runtime (port: sandbox + metered inference)
-//   mock          — canned response for offline demos; records a real trace
+//   mock          — canned response for offline demos
+import { requestJsonEndpoint } from "./networkPolicy.js";
+
 const manual = (type) => ({
   name: type,
   serverRun: false,
@@ -15,22 +17,41 @@ const manual = (type) => ({
   },
 });
 
-function httpInvoker() {
+export function httpInvoker(config = {}) {
   return {
     name: "http",
     serverRun: true,
     async invoke(agent, inputs) {
       const inv = agent.invocation || {};
       if (!inv.url) throw Object.assign(new Error("http invocation needs invocation.url"), { status: 400 });
-      const res = await fetch(inv.url, {
-        method: inv.method || "POST",
-        headers: { "content-type": "application/json", ...(inv.headers || {}) },
-        body: JSON.stringify({ agent: agent.id, objective: agent.objective, inputs }),
+      const res = await requestJsonEndpoint(inv.url, {
+        agent: agent.id,
+        objective: agent.objective,
+        inputs,
+      }, {
+        timeoutMs: config.invoke?.httpTimeoutMs || 10_000,
       });
-      if (!res.ok) throw new Error(`agent endpoint ${res.status}`);
-      const ct = res.headers.get("content-type") || "";
-      const out = ct.includes("json") ? await res.json() : await res.text();
-      return { output: typeof out === "string" ? out : out.output || JSON.stringify(out), costUsd: out.costUsd };
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        throw Object.assign(
+          new Error(`agent endpoint returned ${res.statusCode}`),
+          { status: 502 },
+        );
+      }
+      const contentType = String(res.headers["content-type"] || "");
+      let out = res.body;
+      if (contentType.includes("json") && res.body) {
+        try {
+          out = JSON.parse(res.body);
+        } catch {
+          throw Object.assign(new Error("agent endpoint returned invalid JSON"), { status: 502 });
+        }
+      }
+      return {
+        output:
+          typeof out === "string"
+            ? out
+            : (out && out.output) || JSON.stringify(out),
+      };
     },
   };
 }
@@ -43,21 +64,20 @@ function mockInvoker() {
       const given = Object.entries(inputs || {}).map(([k, v]) => `${k}: ${v}`).join("; ") || "no inputs";
       return {
         output: `[mock run of "${agent.name}"] Given ${given}. Would produce: ${(agent.outputs || []).join(", ") || "the agent's declared outputs"}. (Wire a real runtime — http / mcp / @studio/ai-runtime — to replace this.)`,
-        costUsd: 0.01,
       };
     },
   };
 }
 
 function portStub(kind, hint) {
-  return { name: kind, serverRun: true, async invoke() { throw Object.assign(new Error(`${kind} invocation not configured — ${hint}`), { status: 501 }); } };
+  return { name: kind, serverRun: false, async invoke() { throw Object.assign(new Error(`${kind} invocation not configured — ${hint}`), { status: 501 }); } };
 }
 
 /** Resolve the invoker for an agent from its declared invocation type. */
 export function getInvoker(agent, config) {
   const type = agent?.invocation?.type || "link";
   switch (type) {
-    case "http": return httpInvoker();
+    case "http": return httpInvoker(config);
     case "mock": return mockInvoker();
     case "mcp": return portStub("mcp", "provide an MCP bridge endpoint");
     case "runtime": return portStub("runtime", "wire @studio/ai-runtime (sandbox + metered inference)");

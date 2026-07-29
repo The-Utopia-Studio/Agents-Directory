@@ -52,18 +52,43 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         throw httpError(400, `"${agent.name}" is ${agent.invocation?.type || "link"}-invoked — open it where it lives or use its exported prompt/SKILL.md.`);
       }
       const started = Date.now();
-      let output, status = "ok", failureReason, costUsd;
       try {
         const r = await invoker.invoke(agent, inputs);
-        output = r.output; costUsd = r.costUsd;
+        const trace = await obs.recordTrace({
+          agentId,
+          input: JSON.stringify(inputs),
+          output: r.output,
+          status: "ok",
+          costUsd: r.costUsd,
+          latencyMs: Date.now() - started,
+          metadata: { via: invoker.name },
+        });
+        return {
+          output: r.output,
+          status: "ok",
+          via: invoker.name,
+          traceId: trace.id,
+        };
       } catch (e) {
-        status = "error"; output = String(e.message || e); failureReason = "invoke error";
+        const message = String(e.message || e);
+        const trace = await obs.recordTrace({
+          agentId,
+          input: JSON.stringify(inputs),
+          output: "",
+          status: "error",
+          latencyMs: Date.now() - started,
+          failureReason: message,
+          metadata: { via: invoker.name, failed: true },
+        });
+        const status =
+          Number.isInteger(e.status) && e.status >= 400 && e.status <= 599
+            ? e.status
+            : 502;
+        const error = httpError(status, message);
+        error.runStatus = "error";
+        error.traceId = trace.id;
+        throw error;
       }
-      const trace = await obs.recordTrace({
-        agentId, input: JSON.stringify(inputs), output, status, costUsd,
-        latencyMs: Date.now() - started, failureReason, metadata: { via: invoker.name },
-      });
-      return { output, status, via: invoker.name, traceId: trace.id };
     },
 
     // ── evals (append-only history on the agent) ──

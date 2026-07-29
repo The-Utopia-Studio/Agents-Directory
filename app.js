@@ -43,6 +43,7 @@ const SEED_AGENTS=[
     ],
     costPerOutcome:{target:0.03},
     invocation:{type:"mock"},
+    usabilityModes:["hosted-run","download-install"],
     when:"When a fellow needs a new or refreshed LinkedIn bio.",
     sop:"1. Gather the fellow's current bio, role, and goals\n2. Open Bio Generator project in Claude\n3. Provide context and ask for bio options\n4. Iterate on tone and voice match",
     inputs:["Fellow's current bio","Role description","Target audience"],outputs:["3 bio variations","SEO keyword suggestions"],
@@ -136,9 +137,16 @@ let agents=[],requests=[],nextAgentNum=1,nextReqNum=1;
 const STORE_KEY="utopia_agents_dir_v2";
 
 function persist(){try{localStorage.setItem(STORE_KEY,JSON.stringify({agents,requests,nextAgentNum,nextReqNum}))}catch(e){}}
+function inferredUsabilityModes(a){
+  const type=a.invocation&&a.invocation.type;
+  if(a.id==="A2"&&type==="mock")return["hosted-run","download-install"];
+  if(type==="http"||type==="mock")return["hosted-run"];
+  if(type==="mcp"||type==="runtime")return["prepared-handoff"];
+  return["download-install"];
+}
 function hydrate(){
   try{const s=JSON.parse(localStorage.getItem(STORE_KEY));
-    if(s&&Array.isArray(s.agents)){agents=s.agents;requests=s.requests;nextAgentNum=s.nextAgentNum;nextReqNum=s.nextReqNum;return}
+    if(s&&Array.isArray(s.agents)){agents=s.agents.map(a=>Array.isArray(a.usabilityModes)?a:{...a,usabilityModes:inferredUsabilityModes(a)});requests=s.requests;nextAgentNum=s.nextAgentNum;nextReqNum=s.nextReqNum;persist();return}
   }catch(e){}
   agents=JSON.parse(JSON.stringify(SEED_AGENTS));
   requests=JSON.parse(JSON.stringify(SEED_REQUESTS));
@@ -190,7 +198,7 @@ function fleetHealth(){
 // ── MODAL FORMS ──
 function agentFormHtml(agent){
   const isEdit=!!agent;
-  const a=agent||{name:"",tagline:"",description:"",platform:"Claude",status:"Experimental",category:"",owner:"",model:"",version:"",objective:"",successCriteria:[],guardrails:[],when:"",sop:"",inputs:[],outputs:[],skills:[],tools:[],context:[],accessUrl:"",repoUrl:""};
+  const a=agent||{name:"",tagline:"",description:"",platform:"Claude",status:"Experimental",category:"",owner:"",model:"",version:"",objective:"",successCriteria:[],guardrails:[],when:"",sop:"",inputs:[],outputs:[],skills:[],tools:[],context:[],usabilityModes:["download-install"],accessUrl:"",repoUrl:""};
   const cur=latestEval(a)||{};
   return `
   <div class="modal-header">
@@ -223,6 +231,7 @@ function agentFormHtml(agent){
         <div class="form-group"><label>Inputs</label><input type="text" id="f-inputs" value="${escHtml((a.inputs||[]).join(", "))}" placeholder="e.g. LinkedIn URL, bio text"><div class="hint">Comma-separated</div></div>
         <div class="form-group"><label>Outputs</label><input type="text" id="f-outputs" value="${escHtml((a.outputs||[]).join(", "))}" placeholder="e.g. List of fixes, rewritten bio"><div class="hint">Comma-separated</div></div>
       </div>
+      <div class="form-group"><label>Usability modes</label><div class="check-row">${["hosted-run","download-install","prepared-handoff","approval-queue"].map(mode=>`<label class="check-label"><input type="checkbox" name="f-usability" value="${mode}" ${(a.usabilityModes||[]).includes(mode)?"checked":""}> ${mode}</label>`).join("")}</div><div class="hint">What users can do; separate from the single execution adapter.</div></div>
     </div>
 
     <div class="form-section pillar-scc">
@@ -361,6 +370,7 @@ function readAgentForm(){
     sop:document.getElementById("f-sop").value.trim(),
     inputs:parseCSV(document.getElementById("f-inputs").value),
     outputs:parseCSV(document.getElementById("f-outputs").value),
+    usabilityModes:[...document.querySelectorAll('input[name="f-usability"]:checked')].map(el=>el.value),
     skills:parseCSV(document.getElementById("f-skills").value),
     tools:parseCSV(document.getElementById("f-tools").value),
     context:parseCSV(document.getElementById("f-context").value),
@@ -572,11 +582,10 @@ function renderDetail(a){
       <div class="use-head">Use this agent<span class="use-tier">${invocationTier(a)}</span></div>
       <div class="use-actions">
         ${a.accessUrl?`<a class="btn btn-sm" href="${escHtml(a.accessUrl)}" target="_blank" rel="noopener">Open in ${escHtml(a.platform)} &#8599;</a>`:""}
-        <button class="btn btn-sm" onclick="copyAgentPrompt('${a.id}')">Copy prompt</button>
-        <button class="btn btn-sm" onclick="copyAgentSkill('${a.id}')">Copy as SKILL.md</button>
+        ${canDownload(a)?`<button class="btn btn-sm" onclick="copyAgentPrompt('${a.id}')">Copy prompt</button><button class="btn btn-sm" onclick="copyAgentSkill('${a.id}')">Copy as SKILL.md</button>`:""}
         ${isRunnable(a)&&window.DirectoryAPI&&DirectoryAPI.enabled?`<button class="btn btn-sm btn-primary" onclick="toggleRun('${a.id}')">&#9654; Run here</button>`:""}
       </div>
-      <div class="use-hint">The directory owns the definition; ${escHtml(a.platform)} is just where it runs today &mdash; copy the prompt or SKILL.md to run it anywhere.</div>
+      <div class="use-hint">${needsInvokerConfiguration(a)?`${escHtml((a.invocation&&a.invocation.type)||"runtime")} execution is not configured. Use the prepared handoff/export path until an adapter is connected.`:`Available here: ${escHtml(getUsabilityModes(a).join(", "))}. The execution adapter remains ${escHtml((a.invocation&&a.invocation.type)||"link")}.`}</div>
       <div id="run-panel" class="run-panel"></div>
     </div>
 
@@ -682,8 +691,15 @@ async function runLoopNow(btn){
 }
 
 // ── Using an agent across platforms (invocation) ──
-function isRunnable(a){return["mock","http","mcp","runtime"].includes(a.invocation&&a.invocation.type)}
-function invocationTier(a){const t=(a.invocation&&a.invocation.type)||"link";return{link:"opens where it lives",prompt:"portable prompt",http:"runs from here (endpoint)",mcp:"runs from here (MCP)",runtime:"runs from here (runtime)",mock:"runs from here (demo)"}[t]||"opens where it lives"}
+function getUsabilityModes(a){
+  if(Array.isArray(a.usabilityModes)&&a.usabilityModes.length)return a.usabilityModes;
+  return inferredUsabilityModes(a);
+}
+function hasUsabilityMode(a,mode){return getUsabilityModes(a).includes(mode)}
+function isRunnable(a){return hasUsabilityMode(a,"hosted-run")&&["mock","http"].includes(a.invocation&&a.invocation.type)}
+function canDownload(a){return hasUsabilityMode(a,"download-install")||hasUsabilityMode(a,"prepared-handoff")||needsInvokerConfiguration(a)}
+function needsInvokerConfiguration(a){return["mcp","runtime"].includes(a.invocation&&a.invocation.type)}
+function invocationTier(a){return getUsabilityModes(a).join(" + ")}
 function slug(s){return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")}
 
 // The agent definition (four pillars) → a portable system prompt. This is what
@@ -723,7 +739,7 @@ async function runAgentUI(id){
   try{
     const r=await DirectoryAPI.runAgent(id,inputs);
     box.innerHTML=`<div class="run-result"><div class="run-result-head">Output <span class="run-via">via ${escHtml(r.via)}</span> <span class="run-trace">&#10003; trace ${escHtml(r.traceId)} recorded</span></div><pre>${escHtml(r.output)}</pre></div>`;
-  }catch(e){box.innerHTML=`<div class="run-status run-err">${escHtml(String(e.message||e))}</div>`}
+  }catch(e){box.innerHTML=`<div class="run-status run-err">Run failed: ${escHtml(String(e.message||e))}${e.traceId?`<div>Error trace ${escHtml(e.traceId)} recorded.</div>`:""}</div>`}
 }
 
 async function recallContext(id){

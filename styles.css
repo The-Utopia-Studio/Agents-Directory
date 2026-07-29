@@ -306,6 +306,8 @@ body {
 .form-group label { display: block; font-size: 13px; font-weight: var(--font-weight-medium); color: var(--foreground); margin-bottom: 5px; }
 .form-group label .req { color: var(--accent-text); margin-left: 2px; }
 .form-group .hint { font-size: 11px; color: var(--foreground-subtle); margin-top: 3px; }
+.check-row { display: flex; flex-wrap: wrap; gap: 8px 14px; }
+.form-group .check-label { display: inline-flex; align-items: center; gap: 5px; margin: 0; font-weight: var(--font-weight-regular); }
 input[type="text"], input[type="url"], input[type="date"], textarea, select {
   width: 100%; padding: 9px 12px; border: 1px solid var(--input); border-radius: var(--radius-control);
   font-size: 14px; font-family: inherit; font-weight: var(--font-weight-body);

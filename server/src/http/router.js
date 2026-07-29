@@ -55,7 +55,10 @@ export function createRouter({ corsOrigin = "*", apiToken = "" } = {}) {
             const status = out?.__status || 200;
             send(res, status, out?.__body ?? out, cors);
           } catch (e) {
-            send(res, e.status || 500, { error: e.message || "Internal error" }, cors);
+            const body = { error: e.message || "Internal error" };
+            if (e.runStatus) body.status = e.runStatus;
+            if (e.traceId) body.traceId = e.traceId;
+            send(res, e.status || 500, body, cors);
           }
           return;
         }

@@ -32,8 +32,17 @@ window.DirectoryAPI = (function () {
       headers: Object.keys(headers).length ? headers : undefined,
       body: body ? JSON.stringify(body) : undefined,
     });
-    if (!res.ok) throw new Error(`${method} ${path} -> ${res.status}`);
-    return res.json();
+    const payload = await res.json().catch(() => null);
+    if (!res.ok) {
+      const error = new Error(
+        (payload && payload.error) || `${method} ${path} -> ${res.status}`,
+      );
+      error.status = res.status;
+      error.runStatus = payload && payload.status;
+      error.traceId = payload && payload.traceId;
+      throw error;
+    }
+    return payload;
   }
 
   const api = {
