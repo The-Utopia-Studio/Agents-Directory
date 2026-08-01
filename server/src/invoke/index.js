@@ -10,8 +10,10 @@
 import { requestJsonEndpoint } from "./networkPolicy.js";
 import {
   getRuntimeArtifactMode,
+  getRuntimeInputContract,
   hasRuntimeArtifact,
   loadRuntimeArtifact,
+  resolveRuntimeInputs,
 } from "./runtimeArtifacts.js";
 
 export const RUNTIME_TIMEOUT_MS = 120_000;
@@ -89,6 +91,7 @@ export function runtimeInvoker(config = {}) {
     serverRun: true,
     isConfigured: () => Boolean(anthropic.apiKey),
     canInvoke: (agent) => hasRuntimeArtifact(agent.id),
+    inputContract: (agent) => getRuntimeInputContract(agent.id),
     async invoke(agent, inputs) {
       if (!anthropic.apiKey) {
         throw Object.assign(
@@ -105,23 +108,14 @@ export function runtimeInvoker(config = {}) {
 
       const system = await loadRuntimeArtifact(agent.id);
       const runtimeMode = getRuntimeArtifactMode(agent.id);
-      const fellowName =
-        inputs?.fellowName || inputs?.["Fellow name"];
-      const sourceMaterial =
-        inputs?.sourceMaterial ||
-        inputs?.["All source material and interview answers (required upfront)"];
-      if (runtimeMode === "single-shot") {
-        if (
-          !String(fellowName || "").trim() ||
-          !String(sourceMaterial || "").trim()
-        ) {
-          throw Object.assign(
-            new Error(
-              "Single-shot mode requires the fellow name and all source material/interview answers up front",
-            ),
-            { status: 400 },
-          );
-        }
+      const { values, missing } = resolveRuntimeInputs(agent.id, inputs);
+      if (runtimeMode === "single-shot" && missing.length) {
+        throw Object.assign(
+          new Error(
+            `Single-shot mode needs this material up front and none was supplied: ${missing.join(", ")}`,
+          ),
+          { status: 400 },
+        );
       }
       const runtimeSystem =
         runtimeMode === "single-shot"
@@ -150,7 +144,14 @@ export function runtimeInvoker(config = {}) {
             messages: [
               {
                 role: "user",
-                content: JSON.stringify(inputs || {}, null, 2),
+                // Contract-backed agents send only resolved fields: material
+                // this mode cannot read (URLs, Drive links, file paths) must
+                // not reach the model as if it were readable source.
+                content: JSON.stringify(
+                  runtimeMode === "single-shot" ? values : inputs || {},
+                  null,
+                  2,
+                ),
               },
             ],
           }),

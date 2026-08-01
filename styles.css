@@ -418,6 +418,13 @@ input[type="date"] { color-scheme: dark; }
 .run-field label { font-size: 11px; color: var(--foreground-subtle); }
 .run-field input, .run-field textarea { background: var(--ground); border: 1px solid var(--input); border-radius: var(--radius-control); padding: 7px 10px; color: var(--foreground); font-family: inherit; font-size: 13.5px; }
 .run-field textarea { min-height: 130px; resize: vertical; }
+.run-field-wide { flex-basis: 100%; }
+.run-help { font-size: 11px; color: var(--foreground-subtle); opacity: .8; }
+.run-req { font-family: ui-monospace, monospace; font-size: 10px; color: var(--warning-text); }
+.run-opt { font-family: ui-monospace, monospace; font-size: 10px; color: var(--foreground-subtle); }
+.run-unsupported { flex-basis: 100%; font-size: 12px; color: var(--foreground-subtle); border: 1px dashed var(--border); border-radius: 10px; padding: 10px 14px; }
+.run-unsupported-title { font-size: 10px; letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--warning-text); margin-bottom: 6px; }
+.run-unsupported ul { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 3px; }
 .run-field input:focus, .run-field textarea:focus { outline: none; border-color: var(--ring); }
 .run-out { margin-top: 12px; }
 .run-status { font-size: 13px; color: var(--foreground-subtle); }

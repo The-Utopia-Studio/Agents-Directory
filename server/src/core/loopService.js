@@ -73,6 +73,9 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         serverRun: invoker.serverRun,
         artifactAvailable,
         configured,
+        // Server-owned so the form is keyed by stable field ids, not by the
+        // agent record's editable labels.
+        inputContract: invoker.inputContract ? invoker.inputContract(agent) : null,
         runnable: invoker.serverRun && artifactAvailable && configured,
         unavailableReason: !configured
           ? "Runtime is not configured on the server"

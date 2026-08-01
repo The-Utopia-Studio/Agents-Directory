@@ -16,6 +16,10 @@ import {
   RUNTIME_TIMEOUT_MS,
   runtimeInvoker,
 } from "../src/invoke/index.js";
+import {
+  getRuntimeInputContract,
+  resolveRuntimeInputs,
+} from "../src/invoke/runtimeArtifacts.js";
 import { SEED_AGENTS } from "../src/scripts/seed.js";
 import { createStore } from "../src/core/store.js";
 import { buildApp } from "../src/http/server.js";
@@ -238,9 +242,85 @@ test("single-shot mode rejects incomplete source material before calling Anthrop
       ),
     (error) =>
       error.status === 400 &&
-      /all source material\/interview answers up front/.test(error.message),
+      /none was supplied: Source material/.test(error.message),
   );
   assert.equal(called, false);
+});
+
+test("single-shot inputs resolve by contract alias, not by editable record labels", async () => {
+  const contract = getRuntimeInputContract("A7");
+  assert.deepEqual(
+    contract.fields.map((f) => [f.key, f.required, f.multiline]),
+    [
+      ["fellowName", true, false],
+      ["sourceMaterial", true, true],
+      ["interviewAnswers", false, true],
+    ],
+  );
+  assert.equal(
+    contract.fields.some((f) => "aliases" in f),
+    false,
+  );
+
+  // The exact payload the directory form sent after A7's labels were renamed.
+  const renamedLabels = {
+    "Fellow's name": "Haniyah Umair",
+    "LinkedIn URL": "https://www.linkedin.com/in/example/",
+    "Google Drive folder or pitch deck": "",
+    "pasted text or local file path": "Current role: Agentic Operator Intern.",
+    "short-interview answers": "In her own words: the brief is everything.",
+  };
+  const resolved = resolveRuntimeInputs("A7", renamedLabels);
+  assert.deepEqual(resolved.missing, []);
+  assert.deepEqual(resolved.values, {
+    fellowName: "Haniyah Umair",
+    sourceMaterial: "Current role: Agentic Operator Intern.",
+    interviewAnswers: "In her own words: the brief is everything.",
+  });
+
+  // Unsupported inputs are neither required nor forwarded to the model.
+  assert.deepEqual(
+    contract.unsupported.map((u) => u.label),
+    ["LinkedIn URL", "Google Drive folder or pitch deck", "Local file path"],
+  );
+  assert.deepEqual(
+    resolveRuntimeInputs("A7", {
+      fellowName: "Haniyah Umair",
+      sourceMaterial: "Profile text.",
+    }).missing,
+    [],
+  );
+});
+
+test("single-shot run forwards only contract fields to Anthropic", async () => {
+  let request;
+  const invoker = runtimeInvoker(
+    runtimeConfig({
+      fetch: async (_url, init) => {
+        request = JSON.parse(init.body);
+        return {
+          ok: true,
+          json: async () => ({
+            model: "claude-sonnet-4-6",
+            content: [{ type: "text", text: "Draft bio." }],
+          }),
+        };
+      },
+    }),
+  );
+  await invoker.invoke(
+    { id: "A7", invocation: { type: "runtime", mode: "single-shot" } },
+    {
+      "Fellow's name": "Haniyah Umair",
+      "pasted text or local file path": "Profile text.",
+      "LinkedIn URL": "https://www.linkedin.com/in/example/",
+      "Google Drive folder or pitch deck": "https://drive.google.com/x",
+    },
+  );
+  assert.deepEqual(JSON.parse(request.messages[0].content), {
+    fellowName: "Haniyah Umair",
+    sourceMaterial: "Profile text.",
+  });
 });
 
 test(
@@ -294,7 +374,8 @@ test("missing Anthropic key is a visible non-2xx failure without a key leak", as
   const capability = await fetch(
     `${base}/api/agents/A7/invocation-capability`,
   );
-  assert.deepEqual(await capability.json(), {
+  const { inputContract, ...capabilityFlags } = await capability.json();
+  assert.deepEqual(capabilityFlags, {
     invocationType: "runtime",
     mode: "single-shot",
     serverRun: true,
@@ -303,6 +384,10 @@ test("missing Anthropic key is a visible non-2xx failure without a key leak", as
     runnable: false,
     unavailableReason: "Runtime is not configured on the server",
   });
+  assert.deepEqual(
+    inputContract.fields.map((f) => f.key),
+    ["fellowName", "sourceMaterial", "interviewAnswers"],
+  );
   const response = await fetch(`${base}/api/agents/A7/run`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -392,7 +477,8 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   const capabilityResponse = await fetch(
     `${base}/api/agents/A7/invocation-capability`,
   );
-  assert.deepEqual(await capabilityResponse.json(), {
+  const { inputContract, ...capabilityFlags } = await capabilityResponse.json();
+  assert.deepEqual(capabilityFlags, {
     invocationType: "runtime",
     mode: "single-shot",
     serverRun: true,
@@ -401,6 +487,10 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     runnable: true,
     unavailableReason: null,
   });
+  assert.deepEqual(
+    inputContract.unsupported.map((u) => u.label),
+    ["LinkedIn URL", "Google Drive folder or pitch deck", "Local file path"],
+  );
 
   // This unauthenticated write can alter the store record, but neither field
   // can change the server-owned prompt selected by the A7 artifact registry.
@@ -522,6 +612,7 @@ test("serverRun false stays hidden by capability and rejects run with 400", asyn
     serverRun: false,
     artifactAvailable: true,
     configured: true,
+    inputContract: null,
     runnable: false,
     unavailableReason: null,
   });

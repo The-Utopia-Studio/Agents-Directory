@@ -43,6 +43,16 @@ requires all source material and interview answers in one request. It is not
 the full interactive `/biocraft` agent and has no Chrome, Drive, filesystem,
 HTML-rendering, or conversation tools.
 
+A `runtime` agent also owns its **input contract** server-side, in
+`server/src/invoke/runtimeArtifacts.js`: stable field keys, which fields are
+required, and which inputs the mode cannot read at all. `GET
+/api/agents/:id/invocation-capability` returns it, and the run form is built
+from it. The agent record's `inputs[]` array stays descriptive documentation of
+the full agent — renaming a label there changes the directory copy, not the run
+contract. Inputs listed as unsupported (LinkedIn URL, Drive folder, file path)
+are shown as unavailable, are never required, and are not forwarded to the
+model, since single-shot mode has no tool to fetch them.
+
 ## Architecture
 
 **Convex is the durable authority.** The tables in `convex/schema.ts` are the

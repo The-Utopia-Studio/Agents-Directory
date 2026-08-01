@@ -719,14 +719,19 @@ function isSingleShotRuntime(a){return a.invocation&&a.invocation.type==="runtim
 function invocationTier(a){return hasUsabilityDefect(a)?"misconfigured":a.usabilityModes.join(" + ")}
 function slug(s){return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")}
 
+// Capability (including the server-owned input contract) for the open detail
+// view. The run form is built from this, never from the editable inputs[]
+// labels on the record — renaming a label must not break the run.
+const runCapabilities={};
 async function loadRunCapability(id){
   const a=agents.find(x=>x.id===id),slot=document.getElementById("run-action");
   if(!a||!slot||!hasUsabilityMode(a,"hosted-run")||!(window.DirectoryAPI&&DirectoryAPI.enabled))return;
   try{
     const capability=await DirectoryAPI.invocationCapability(id);
+    runCapabilities[id]=capability;
     if(capability.serverRun&&capability.artifactAvailable&&capability.configured&&capability.runnable)slot.innerHTML=`<button class="btn btn-sm btn-primary" onclick="toggleRun('${id}')">&#9654; ${capability.mode==="single-shot"?"Run single-shot draft":"Run here"}</button>`;
     else if(!capability.configured)slot.innerHTML=`<span class="run-unavailable">${escHtml(capability.unavailableReason||"Runtime unavailable")}</span>`;
-  }catch(e){slot.innerHTML=""}
+  }catch(e){delete runCapabilities[id];slot.innerHTML=""}
 }
 
 // The agent definition (four pillars) → a portable system prompt. This is what
@@ -753,11 +758,24 @@ function copyText(text,msg){(navigator.clipboard&&navigator.clipboard.writeText?
 function copyAgentPrompt(id){const a=agents.find(x=>x.id===id);if(a)copyText(buildAgentPrompt(a),"Prompt copied — paste into any platform")}
 function copyAgentSkill(id){const a=agents.find(x=>x.id===id);if(a)copyText(buildSkillMd(a),"SKILL.md copied")}
 
+function contractField(f,i){
+  const req=f.required?`<span class="run-req">required</span>`:`<span class="run-opt">optional</span>`;
+  const help=f.help?`<div class="run-help">${escHtml(f.help)}</div>`:"";
+  const control=f.multiline?`<textarea id="run-in-${i}" data-k="${escHtml(f.key)}"></textarea>`:`<input id="run-in-${i}" data-k="${escHtml(f.key)}">`;
+  return `<div class="run-field${f.multiline?" run-field-wide":""}"><label for="run-in-${i}">${escHtml(f.label)} ${req}</label>${help}${control}</div>`;
+}
 function toggleRun(id){
   const a=agents.find(x=>x.id===id);const box=document.getElementById("run-panel");if(!a||!box)return;
   if(box.innerHTML){box.innerHTML="";return}
-  const fields=(a.inputs&&a.inputs.length?a.inputs:["input"]).map((inp,i)=>`<div class="run-field"><label>${escHtml(inp)}</label>${inp.startsWith("All source material")?`<textarea id="run-in-${i}" data-k="${escHtml(inp)}" placeholder="${escHtml(inp)}"></textarea>`:`<input id="run-in-${i}" data-k="${escHtml(inp)}" placeholder="${escHtml(inp)}">`}</div>`).join("");
-  box.innerHTML=`<div class="run-form">${fields}<button class="btn btn-sm btn-primary" onclick="runAgentUI('${id}')">Run &#9654;</button></div><div id="run-out" class="run-out"></div>`;
+  const contract=(runCapabilities[id]||{}).inputContract;
+  let fields,unsupported="";
+  if(contract&&contract.fields&&contract.fields.length){
+    fields=contract.fields.map(contractField).join("");
+    if((contract.unsupported||[]).length)unsupported=`<div class="run-unsupported"><div class="run-unsupported-title">Not read in this mode</div><ul>${contract.unsupported.map(u=>`<li>${escHtml(u.label)} — ${escHtml(u.reason)}</li>`).join("")}</ul></div>`;
+  }else{
+    fields=(a.inputs&&a.inputs.length?a.inputs:["input"]).map((inp,i)=>contractField({key:inp,label:inp,required:false,multiline:inp.length>40},i)).join("");
+  }
+  box.innerHTML=`<div class="run-form">${unsupported}${fields}<button class="btn btn-sm btn-primary" onclick="runAgentUI('${id}')">Run &#9654;</button></div><div id="run-out" class="run-out"></div>`;
 }
 async function runAgentUI(id){
   const box=document.getElementById("run-out");if(!box)return;
