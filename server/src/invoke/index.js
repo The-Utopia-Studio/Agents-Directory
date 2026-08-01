@@ -10,6 +10,7 @@
 import { requestJsonEndpoint } from "./networkPolicy.js";
 import {
   getRuntimeArtifactMode,
+  getRuntimeArtifactDescriptor,
   getRuntimeInputContract,
   hasRuntimeArtifact,
   loadRuntimeArtifact,
@@ -91,6 +92,10 @@ export function runtimeInvoker(config = {}) {
     serverRun: true,
     isConfigured: () => Boolean(anthropic.apiKey),
     canInvoke: (agent) => hasRuntimeArtifact(agent.id),
+    artifactDigest: (agent) =>
+      getRuntimeArtifactDescriptor(agent.id)?.artifactDigest || null,
+    artifactDigestAlgorithm: (agent) =>
+      getRuntimeArtifactDescriptor(agent.id)?.artifactDigestAlgorithm || null,
     inputContract: (agent) => getRuntimeInputContract(agent.id),
     async invoke(agent, inputs) {
       if (!anthropic.apiKey) {
@@ -117,10 +122,9 @@ export function runtimeInvoker(config = {}) {
           { status: 400 },
         );
       }
-      const runtimeSystem =
-        runtimeMode === "single-shot"
-          ? `${system}\n\n## Hosted single-shot mode\nThis is not the full interactive Biocraft workflow. You have no Chrome, Google Drive, filesystem, template, or conversation tools. Use only the source material and interview answers supplied in this request. Do not ask follow-up questions or claim to create a file. Return the first-person About bio, spoken event introduction, and suggested headline directly as text.`
-          : system;
+      // The registered file is the effective runtime artifact. Export and ZIP
+      // read this same file, so no adapter-only prompt suffix can fork evidence.
+      const runtimeSystem = system;
       const controller = new AbortController();
       const timer = setTimeout(
         () => controller.abort(new Error("Anthropic generation timed out")),
@@ -209,6 +213,11 @@ export function runtimeInvoker(config = {}) {
 
       return {
         output,
+        artifactDigest:
+          getRuntimeArtifactDescriptor(agent.id)?.artifactDigest || undefined,
+        artifactDigestAlgorithm:
+          getRuntimeArtifactDescriptor(agent.id)?.artifactDigestAlgorithm ||
+          undefined,
         provider: "anthropic",
         modelId: payload.model || model,
         latencyMs,

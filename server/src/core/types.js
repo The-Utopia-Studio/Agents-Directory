@@ -17,6 +17,8 @@
  * @property {number} [outputTokens]
  * @property {number} [totalTokens]
  * @property {string} [agentVersion]    mutable label only; not an approved Convex agentVersionId
+ * @property {string} [artifactDigest]  SHA-256 of server-owned runtime artifact bytes
+ * @property {"sha256"} [artifactDigestAlgorithm]
  * @property {string} [outputDigest]    SHA-256 of output; output text is never stored
  * @property {"sha256"} [outputDigestAlgorithm]
  * @property {string} ts                ISO timestamp
@@ -29,6 +31,7 @@
  * @property {string} agentId
  * @property {string} traceId
  * @property {1|2|3|4|5} rating
+ * @property {string} [notes]  Reviewer judgement of the agent, not run payload.
  * @property {string} createdAt
  */
 
@@ -133,7 +136,9 @@
  * @property {boolean} serverRun  can the server invoke it now?
  * @property {() => boolean} [isConfigured]
  * @property {(agent:Agent) => Promise<boolean>} [canInvoke]
- * @property {(agent:Agent, inputs:Object) => Promise<{output:string, costUsd?:number, provider?:string, modelId?:string, inputTokens?:number, outputTokens?:number, totalTokens?:number, latencyMs?:number}>} invoke
+ * @property {(agent:Agent) => string|null} [artifactDigest]
+ * @property {(agent:Agent) => "sha256"|null} [artifactDigestAlgorithm]
+ * @property {(agent:Agent, inputs:Object) => Promise<{output:string, artifactDigest?:string, artifactDigestAlgorithm?:"sha256", costUsd?:number, provider?:string, modelId?:string, inputTokens?:number, outputTokens?:number, totalTokens?:number, latencyMs?:number}>} invoke
  */
 
 /**

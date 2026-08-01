@@ -374,7 +374,8 @@ test("missing Anthropic key is a visible non-2xx failure without a key leak", as
   const capability = await fetch(
     `${base}/api/agents/A7/invocation-capability`,
   );
-  const { inputContract, ...capabilityFlags } = await capability.json();
+  const { inputContract, installArtifact, ...capabilityFlags } =
+    await capability.json();
   assert.deepEqual(capabilityFlags, {
     invocationType: "runtime",
     mode: "single-shot",
@@ -382,12 +383,16 @@ test("missing Anthropic key is a visible non-2xx failure without a key leak", as
     artifactAvailable: true,
     configured: false,
     runnable: false,
+    feedbackNotes: true,
+    feedbackNotesMaxChars: 2000,
     unavailableReason: "Runtime is not configured on the server",
   });
   assert.deepEqual(
     inputContract.fields.map((f) => f.key),
     ["fellowName", "sourceMaterial", "interviewAnswers"],
   );
+  assert.equal(installArtifact.available, true);
+  assert.equal(installArtifact.kind, "single-shot");
   const response = await fetch(`${base}/api/agents/A7/run`, {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -477,7 +482,8 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   const capabilityResponse = await fetch(
     `${base}/api/agents/A7/invocation-capability`,
   );
-  const { inputContract, ...capabilityFlags } = await capabilityResponse.json();
+  const { inputContract, installArtifact, ...capabilityFlags } =
+    await capabilityResponse.json();
   assert.deepEqual(capabilityFlags, {
     invocationType: "runtime",
     mode: "single-shot",
@@ -485,12 +491,17 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     artifactAvailable: true,
     configured: true,
     runnable: true,
+    feedbackNotes: true,
+    feedbackNotesMaxChars: 2000,
     unavailableReason: null,
   });
   assert.deepEqual(
     inputContract.unsupported.map((u) => u.label),
     ["LinkedIn URL", "Google Drive folder or pitch deck", "Local file path"],
   );
+  assert.equal(installArtifact.available, true);
+  assert.match(installArtifact.artifactDigest, /^[a-f0-9]{64}$/);
+  assert.equal(installArtifact.artifactDigestAlgorithm, "sha256");
 
   // This unauthenticated write can alter the store record, but neither field
   // can change the server-owned prompt selected by the A7 artifact registry.
@@ -526,11 +537,20 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(run.status, "ok");
   assert.equal(run.via, "runtime");
   assert.equal(run.mode, "single-shot");
+  assert.equal(run.agentVersion, "1.0");
+  assert.equal(
+    run.artifactDigest,
+    createHash("sha256").update(request.body.system).digest("hex"),
+  );
+  assert.equal(run.artifactDigestAlgorithm, "sha256");
   assert.equal(run.tracePersisted, true);
   assert.ok(run.traceId);
-  assert.match(request.body.system, /# Biocraft — Fellow Bio Writer/);
-  assert.match(request.body.system, /## Hosted single-shot mode/);
-  assert.match(request.body.system, /This is not the full interactive Biocraft workflow/);
+  assert.match(request.body.system, /# Biocraft — Single-Shot Fellow Bio Draft/);
+  assert.match(request.body.system, /## Mode boundary/);
+  assert.match(
+    request.body.system,
+    /This is not the full interactive `\/biocraft` workflow/,
+  );
   assert.doesNotMatch(request.body.system, /MALICIOUS CLIENT PROMPT/);
   assert.equal(request.body.model, "claude-sonnet-4-6");
   assert.equal(request.body.max_tokens, 4096);
@@ -548,6 +568,8 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(trace.metadata.via, "runtime");
   assert.equal(trace.metadata.mode, "single-shot");
   assert.equal(trace.agentVersion, "1.0");
+  assert.equal(trace.artifactDigest, run.artifactDigest);
+  assert.equal(trace.artifactDigestAlgorithm, "sha256");
   assert.equal("agentVersionId" in trace, false);
   assert.equal("input" in trace, false);
   assert.equal("output" in trace, false);
@@ -563,15 +585,28 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ rating: 5, notes: "Voice matched." }),
+      body: JSON.stringify({
+        rating: 3,
+        notes: 'em dash in the hook; "my founder company" when the source says built for',
+      }),
     },
   );
   assert.equal(feedbackResponse.status, 201);
   const feedback = await feedbackResponse.json();
   assert.equal(feedback.traceId, run.traceId);
-  assert.equal(feedback.rating, 5);
-  assert.equal("notes" in feedback, false);
+  assert.equal(feedback.rating, 3);
+  assert.equal(
+    feedback.notes,
+    'em dash in the hook; "my founder company" when the source says built for',
+  );
   assert.equal((await store.all("feedback")).length, 1);
+  // The reviewer's reasoning lives on the feedback record only — the
+  // metadata-only trace rule still holds.
+  const tracedAfterFeedback = (await store.all("traces")).find(
+    (candidate) => candidate.id === run.traceId,
+  );
+  assert.equal("notes" in tracedAfterFeedback, false);
+  assert.equal("output" in tracedAfterFeedback, false);
 
   const invalidRating = await fetch(
     `${base}/api/agents/A7/traces/${run.traceId}/feedback`,
@@ -591,9 +626,81 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     },
   );
   assert.equal(crossAgent.status, 404);
+
+  const overLongNotes = await fetch(
+    `${base}/api/agents/A7/traces/${run.traceId}/feedback`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rating: 4, notes: "x".repeat(2001) }),
+    },
+  );
+  assert.equal(overLongNotes.status, 400);
+  assert.match((await overLongNotes.json()).error, /2000 characters or fewer/);
+
   assert.equal((await store.all("feedback")).length, 1);
   assert.deepEqual((await app.svc.getAgent("A7")).evalHistory, []);
   assert.deepEqual(await app.svc.fleetHealth(), beforeHealth);
+});
+
+test("feedback notes gate off rejects notes but still accepts the rating", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "adir-feedback-gate-"));
+  const store = createStore(dir);
+  const gated = runtimeConfig({
+    fetch: async () => ({
+      ok: true,
+      json: async () => ({
+        model: "claude-sonnet-4-6",
+        content: [{ type: "text", text: "Draft bio." }],
+      }),
+    }),
+  });
+  const app = await buildApp({
+    store,
+    config: {
+      ...gated,
+      observability: { ...gated.observability, feedbackNotes: false },
+    },
+  });
+  const base = await listen(app, t);
+
+  const capability = await (
+    await fetch(`${base}/api/agents/A7/invocation-capability`)
+  ).json();
+  assert.equal(capability.feedbackNotes, false);
+
+  const run = await (
+    await fetch(`${base}/api/agents/A7/run`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        inputs: { fellowName: "Test Fellow", sourceMaterial: "Profile text." },
+      }),
+    })
+  ).json();
+  assert.ok(run.traceId);
+
+  const withNotes = await fetch(
+    `${base}/api/agents/A7/traces/${run.traceId}/feedback`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rating: 3, notes: "Dropped the job title." }),
+    },
+  );
+  assert.equal(withNotes.status, 400);
+  assert.match((await withNotes.json()).error, /notes are disabled/);
+
+  const ratingOnly = await fetch(
+    `${base}/api/agents/A7/traces/${run.traceId}/feedback`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ rating: 3 }),
+    },
+  );
+  assert.equal(ratingOnly.status, 201);
+  assert.equal("notes" in (await ratingOnly.json()), false);
 });
 
 test("serverRun false stays hidden by capability and rejects run with 400", async (t) => {
@@ -613,6 +720,9 @@ test("serverRun false stays hidden by capability and rejects run with 400", asyn
     artifactAvailable: true,
     configured: true,
     inputContract: null,
+    feedbackNotes: true,
+    feedbackNotesMaxChars: 2000,
+    installArtifact: { available: false },
     runnable: false,
     unavailableReason: null,
   });
@@ -653,6 +763,12 @@ test("usability modes remain separate from the scalar invocation adapter", async
     /capability\.serverRun&&capability\.artifactAvailable&&capability\.configured&&capability\.runnable/,
   );
   assert.match(appSource, /This is not the full \/biocraft agent/);
+  assert.match(appSource, /Copy single-shot SKILL\.md/);
+  assert.match(appSource, /Download single-shot \(\.zip\)/);
+  assert.match(
+    appSource,
+    /capability\.installArtifact&&capability\.installArtifact\.available/,
+  );
   assert.doesNotMatch(appSource, /inferredUsabilityModes|getUsabilityModes/);
   assert.match(appSource, /MISCONFIGURED: this agent has no stored usabilityModes/);
   const langfuseSource = await readFile(

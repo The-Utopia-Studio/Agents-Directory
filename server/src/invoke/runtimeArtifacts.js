@@ -1,4 +1,75 @@
-import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import {
+  lstatSync,
+  readFileSync,
+  readdirSync,
+  realpathSync,
+} from "node:fs";
+import { relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const ARTIFACTS_ROOT = new URL("../artifacts/", import.meta.url);
+
+function snapshotArtifact(directoryUrl, primaryName) {
+  let files;
+  let primary;
+  try {
+    const allowedRoot = realpathSync(fileURLToPath(ARTIFACTS_ROOT));
+    const directory = realpathSync(fileURLToPath(directoryUrl));
+    if (
+      directory !== allowedRoot &&
+      !directory.startsWith(`${allowedRoot}${sep}`)
+    ) {
+      return null;
+    }
+
+    files = [];
+    function walk(current) {
+      const entries = readdirSync(current, { withFileTypes: true });
+      for (const entry of entries.sort((a, b) =>
+        a.name.localeCompare(b.name),
+      )) {
+        const path = resolve(current, entry.name);
+        const name = relative(directory, path).split(sep).join("/");
+        if (!name || name.startsWith("../") || resolve(directory, name) !== path) {
+          return false;
+        }
+        if (entry.isSymbolicLink()) return false;
+        if (entry.isDirectory()) {
+          if (!walk(path)) return false;
+          continue;
+        }
+        if (!entry.isFile() || !lstatSync(path).isFile()) return false;
+        files.push({ name, data: readFileSync(path) });
+      }
+      return true;
+    }
+    if (!walk(directory)) return null;
+
+    primary = files.find((file) => file.name === primaryName);
+    if (!primary) return null;
+  } catch {
+    return null;
+  }
+
+  // Digesting is intentionally outside the resolution catch. Once bytes have
+  // loaded, digest failure is contradictory and must fail boot visibly.
+  const artifactDigest = createHash("sha256")
+    .update(primary.data)
+    .digest("hex");
+  if (!artifactDigest) {
+    throw new Error("Artifact loaded but SHA-256 digest was unavailable");
+  }
+  return {
+    content: primary.data.toString("utf8"),
+    files,
+    artifactDigest,
+    artifactDigestAlgorithm: "sha256",
+  };
+}
+
+const BIOCRAFT_DIRECTORY = new URL("../artifacts/biocraft/", import.meta.url);
+const BIOCRAFT_SNAPSHOT = snapshotArtifact(BIOCRAFT_DIRECTORY, "SKILL.md");
 
 /**
  * The run contract is server-owned. Field keys are stable identifiers, never
@@ -7,8 +78,16 @@ import { readFile } from "node:fs/promises";
  */
 const RUNTIME_ARTIFACTS = Object.freeze({
   A7: Object.freeze({
+    directory: BIOCRAFT_DIRECTORY,
     url: new URL("../artifacts/biocraft/SKILL.md", import.meta.url),
     mode: "single-shot",
+    slug: "biocraft",
+    displayName: "Biocraft single-shot draft",
+    snapshot: BIOCRAFT_SNAPSHOT,
+    descriptions: Object.freeze({
+      "SKILL.md":
+        "The exact single-shot system artifact executed by the hosted runtime.",
+    }),
     inputContract: Object.freeze({
       fields: Object.freeze([
         {
@@ -74,17 +153,47 @@ export async function loadRuntimeArtifact(agentId) {
     error.status = 400;
     throw error;
   }
-  try {
-    return await readFile(artifact.url, "utf8");
-  } catch {
+  if (!artifact.snapshot) {
     const error = new Error(`Server-owned runtime artifact unavailable for ${agentId}`);
     error.status = 503;
     throw error;
   }
+  if (
+    artifact.snapshot.content &&
+    (!artifact.snapshot.artifactDigest ||
+      artifact.snapshot.artifactDigestAlgorithm !== "sha256")
+  ) {
+    const error = new Error(
+      `Runtime artifact for ${agentId} loaded without a SHA-256 digest`,
+    );
+    error.status = 500;
+    throw error;
+  }
+  return artifact.snapshot.content;
 }
 
 export function getRuntimeArtifactMode(agentId) {
   return RUNTIME_ARTIFACTS[agentId]?.mode || null;
+}
+
+/** Shared custody record used by invocation, evaluation metadata, and export. */
+export function getRuntimeArtifactDescriptor(agentId) {
+  const artifact = RUNTIME_ARTIFACTS[agentId];
+  if (!artifact?.snapshot) return null;
+  return {
+    directory: artifact.directory,
+    url: artifact.url,
+    mode: artifact.mode,
+    slug: artifact.slug,
+    displayName: artifact.displayName,
+    artifactDigest: artifact.snapshot.artifactDigest,
+    artifactDigestAlgorithm: artifact.snapshot.artifactDigestAlgorithm,
+    files: artifact.snapshot.files.map((file) => ({
+      name: file.name,
+      data: Buffer.from(file.data),
+    })),
+    descriptions: artifact.descriptions,
+  };
 }
 
 /** Public contract: stable keys, labels, and the inputs this mode cannot read. */

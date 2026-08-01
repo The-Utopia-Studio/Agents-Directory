@@ -602,10 +602,10 @@ function renderDetail(a){
       <div class="use-head">Use this agent<span class="use-tier">${invocationTier(a)}</span></div>
       <div class="use-actions">
         ${a.accessUrl?`<a class="btn btn-sm" href="${escHtml(a.accessUrl)}" target="_blank" rel="noopener">Open in ${escHtml(a.platform)} &#8599;</a>`:""}
-        ${canDownload(a)?`<button class="btn btn-sm" onclick="copyAgentPrompt('${a.id}')">Copy prompt</button><button class="btn btn-sm" onclick="copyAgentSkill('${a.id}')">Copy as SKILL.md</button>`:""}
+        ${canDownload(a)?`${isSingleShotRuntime(a)?"":`<button class="btn btn-sm" onclick="copyAgentPrompt('${a.id}')">Copy prompt</button><button class="btn btn-sm" onclick="copyAgentSkill('${a.id}')">Copy as SKILL.md</button>`}<span id="install-actions"></span>`:""}
         <span id="run-action"></span>
       </div>
-      <div class="use-hint">${hasUsabilityDefect(a)?`MISCONFIGURED: this agent has no stored usabilityModes. Edit the record before offering access.`:isSingleShotRuntime(a)?`Single-shot text draft only. This is not the full /biocraft agent: supply all source material and interview answers up front. No Chrome, Drive, tools, HTML rendering, or follow-up conversation.`:needsInvokerConfiguration(a)?`${escHtml((a.invocation&&a.invocation.type)||"runtime")} execution is not configured. Use the stored prepared handoff/export path until an adapter is connected.`:`Available here: ${escHtml(a.usabilityModes.join(", "))}. The execution adapter remains ${escHtml((a.invocation&&a.invocation.type)||"link")}.`}</div>
+      <div class="use-hint">${hasUsabilityDefect(a)?`MISCONFIGURED: this agent has no stored usabilityModes. Edit the record before offering access.`:isSingleShotRuntime(a)?`Run, Copy as SKILL.md, evaluation, and Download use the same pinned single-shot artifact. This is not the full /biocraft agent: no Chrome, Drive, HTML rendering, or follow-up conversation.`:needsInvokerConfiguration(a)?`${escHtml((a.invocation&&a.invocation.type)||"runtime")} execution is not configured. Use the stored prepared handoff/export path until an adapter is connected.`:`Available here: ${escHtml(a.usabilityModes.join(", "))}. The execution adapter remains ${escHtml((a.invocation&&a.invocation.type)||"link")}.`}</div>
       <div id="run-panel" class="run-panel"></div>
     </div>
 
@@ -724,14 +724,19 @@ function slug(s){return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").repla
 // labels on the record — renaming a label must not break the run.
 const runCapabilities={};
 async function loadRunCapability(id){
-  const a=agents.find(x=>x.id===id),slot=document.getElementById("run-action");
-  if(!a||!slot||!hasUsabilityMode(a,"hosted-run")||!(window.DirectoryAPI&&DirectoryAPI.enabled))return;
+  const a=agents.find(x=>x.id===id),slot=document.getElementById("run-action"),installSlot=document.getElementById("install-actions");
+  if(!a||!(window.DirectoryAPI&&DirectoryAPI.enabled))return;
   try{
     const capability=await DirectoryAPI.invocationCapability(id);
     runCapabilities[id]=capability;
-    if(capability.serverRun&&capability.artifactAvailable&&capability.configured&&capability.runnable)slot.innerHTML=`<button class="btn btn-sm btn-primary" onclick="toggleRun('${id}')">&#9654; ${capability.mode==="single-shot"?"Run single-shot draft":"Run here"}</button>`;
-    else if(!capability.configured)slot.innerHTML=`<span class="run-unavailable">${escHtml(capability.unavailableReason||"Runtime unavailable")}</span>`;
-  }catch(e){delete runCapabilities[id];slot.innerHTML=""}
+    if(slot&&hasUsabilityMode(a,"hosted-run")){
+      if(capability.serverRun&&capability.artifactAvailable&&capability.configured&&capability.runnable)slot.innerHTML=`<button class="btn btn-sm btn-primary" onclick="toggleRun('${id}')">&#9654; ${capability.mode==="single-shot"?"Run single-shot draft":"Run here"}</button>`;
+      else if(!capability.configured)slot.innerHTML=`<span class="run-unavailable">${escHtml(capability.unavailableReason||"Runtime unavailable")}</span>`;
+    }
+    if(installSlot&&hasUsabilityMode(a,"download-install")&&capability.installArtifact&&capability.installArtifact.available){
+      installSlot.innerHTML=`<button class="btn btn-sm" onclick="copyInstallSkill('${id}')">Copy single-shot SKILL.md</button><button class="btn btn-sm" onclick="downloadInstallArtifact('${id}')">Download single-shot (.zip)</button><span class="artifact-pin" title="${escHtml(capability.installArtifact.artifactDigest)}">${escHtml(capability.installArtifact.artifactVersion)} · ${escHtml(capability.installArtifact.artifactDigestAlgorithm)}:${escHtml(capability.installArtifact.shortDigest)}</span>`;
+    }
+  }catch(e){delete runCapabilities[id];if(slot)slot.innerHTML="";if(installSlot)installSlot.innerHTML=""}
 }
 
 // The agent definition (four pillars) → a portable system prompt. This is what
@@ -757,6 +762,21 @@ function buildSkillMd(a){
 function copyText(text,msg){(navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(text):Promise.reject()).then(()=>toast(msg)).catch(()=>{const ta=document.createElement("textarea");ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast(msg)}catch(e){toast("Copy failed")}ta.remove()})}
 function copyAgentPrompt(id){const a=agents.find(x=>x.id===id);if(a)copyText(buildAgentPrompt(a),"Prompt copied — paste into any platform")}
 function copyAgentSkill(id){const a=agents.find(x=>x.id===id);if(a)copyText(buildSkillMd(a),"SKILL.md copied")}
+async function copyInstallSkill(id){
+  try{
+    const artifact=await DirectoryAPI.installSkill(id);
+    copyText(artifact.content,`Single-shot SKILL.md copied · ${artifact.artifactDigestAlgorithm}:${artifact.artifactDigest.slice(0,7)}`);
+  }catch(e){toast(`Single-shot export failed: ${String(e.message||e)}`)}
+}
+async function downloadInstallArtifact(id){
+  try{
+    const artifact=await DirectoryAPI.downloadInstallArtifact(id);
+    const url=URL.createObjectURL(artifact.blob),a=document.createElement("a");
+    a.href=url;a.download=artifact.filename;document.body.appendChild(a);a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(url),1000);
+    toast(`Downloaded ${artifact.filename}`);
+  }catch(e){toast(`Download failed: ${String(e.message||e)}`)}
+}
 
 function contractField(f,i){
   const req=f.required?`<span class="run-req">required</span>`:`<span class="run-opt">optional</span>`;
@@ -783,7 +803,9 @@ async function runAgentUI(id){
   box.innerHTML='<div class="run-status">Running…</div>';
   try{
     const r=await DirectoryAPI.runAgent(id,inputs);
-    const feedback=r.tracePersisted&&r.traceId?`<div class="run-feedback" data-trace-id="${escHtml(r.traceId)}"><div class="run-feedback-title">Feedback rating</div><div class="run-feedback-stars" role="radiogroup" aria-label="Rate this run">${[1,2,3,4,5].map(n=>`<label title="${n} star${n===1?"":"s"}"><input type="radio" name="run-rating" value="${n}"><span>&#9733;</span></label>`).join("")}</div><button class="btn btn-sm" onclick="submitRunFeedback('${id}',this)">Submit rating</button><div class="run-feedback-status"></div></div>`:"";
+    const cap=runCapabilities[id]||{};
+    const notesBox=cap.feedbackNotes===false?"":`<label class="run-feedback-notes-label" for="run-feedback-notes">Why this rating — what was wrong or right</label><textarea id="run-feedback-notes" class="run-feedback-notes" maxlength="${Number(cap.feedbackNotesMaxChars)||2000}" placeholder="Specific defects, fabrications, or things it got right."></textarea>`;
+    const feedback=r.tracePersisted&&r.traceId?`<div class="run-feedback" data-trace-id="${escHtml(r.traceId)}"><div class="run-feedback-title">Rate this run</div><div class="run-feedback-stars" role="radiogroup" aria-label="Rate this run">${[1,2,3,4,5].map(n=>`<label title="${n} star${n===1?"":"s"}"><input type="radio" name="run-rating" value="${n}"><span>&#9733;</span></label>`).join("")}</div>${notesBox}<button class="btn btn-sm" onclick="submitRunFeedback('${id}',this)">Submit feedback</button><div class="run-feedback-status"></div></div>`:"";
     box.innerHTML=`<div class="run-result"><div class="run-result-head">Output <span class="run-via">via ${escHtml(r.mode==="single-shot"?"single-shot runtime":r.via)}</span> ${r.tracePersisted&&r.traceId?`<span class="run-trace">&#10003; metadata trace ${escHtml(r.traceId)} recorded</span>`:`<span class="run-via">trace not persisted</span>`}</div><pre>${escHtml(r.output)}</pre>${feedback}</div>`;
   }catch(e){box.innerHTML=`<div class="run-status run-err">Run failed: ${escHtml(String(e.message||e))}${e.tracePersisted&&e.traceId?`<div>Error trace ${escHtml(e.traceId)} recorded.</div>`:`<div>Error trace persistence is disabled.</div>`}</div>`}
 }
@@ -793,11 +815,13 @@ async function submitRunFeedback(id,button){
   const selected=form.querySelector('input[name="run-rating"]:checked');
   const status=form.querySelector(".run-feedback-status");
   if(!selected){status.textContent="Choose 1–5 stars.";return}
+  const notesEl=form.querySelector(".run-feedback-notes");
+  const notes=notesEl?notesEl.value.trim():"";
   button.disabled=true;status.textContent="Saving feedback…";
   try{
-    await DirectoryAPI.submitFeedback(id,form.dataset.traceId,{rating:Number(selected.value)});
-    form.querySelectorAll("input,button").forEach(el=>el.disabled=true);
-    status.textContent="Rating saved.";
+    await DirectoryAPI.submitFeedback(id,form.dataset.traceId,{rating:Number(selected.value),...(notes?{notes}:{})});
+    form.querySelectorAll("input,textarea,button").forEach(el=>el.disabled=true);
+    status.textContent=notes?"Rating and notes saved.":"Rating saved (no notes).";
   }catch(e){button.disabled=false;status.textContent=`Feedback failed: ${String(e.message||e)}`}
 }
 

@@ -41,6 +41,11 @@ export const config = {
   observability: {
     provider: env.OBS_PROVIDER || "local",
     lowScoreThreshold: Number(env.OBS_LOW_SCORE || 70),
+    // Reviewer judgement of the agent, stored on the feedback record and never
+    // on the trace. On by default: a rating without a reason is not actionable.
+    // Set FEEDBACK_NOTES=false to accept ratings only.
+    feedbackNotes: env.FEEDBACK_NOTES !== "false",
+    feedbackNotesMaxChars: Number(env.FEEDBACK_NOTES_MAX_CHARS || 2000),
     langfuse: {
       host: env.LANGFUSE_HOST || "https://cloud.langfuse.com",
       publicKey: env.LANGFUSE_PUBLIC_KEY || "",

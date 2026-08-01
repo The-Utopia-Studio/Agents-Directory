@@ -46,6 +46,19 @@ window.DirectoryAPI = (function () {
     return payload;
   }
 
+  async function download(path) {
+    const headers = token ? { authorization: "Bearer " + token } : undefined;
+    const res = await fetch(base + path, { headers });
+    if (!res.ok) {
+      const payload = await res.json().catch(() => null);
+      throw new Error((payload && payload.error) || `GET ${path} -> ${res.status}`);
+    }
+    const disposition = res.headers.get("content-disposition") || "";
+    const filename =
+      disposition.match(/filename="([^"]+)"/)?.[1] || "agent-artifact.zip";
+    return { blob: await res.blob(), filename };
+  }
+
   const api = {
     base,
     enabled: false,
@@ -75,6 +88,10 @@ window.DirectoryAPI = (function () {
     runAgent: (id, inputs) => j("POST", `/api/agents/${id}/run`, { inputs }),
     invocationCapability: (id) =>
       j("GET", `/api/agents/${id}/invocation-capability`),
+    installSkill: (id) =>
+      j("GET", `/api/agents/${id}/install-artifact/skill`),
+    downloadInstallArtifact: (id) =>
+      download(`/api/agents/${id}/install-artifact/download`),
     submitFeedback: (id, traceId, feedback) =>
       j("POST", `/api/agents/${id}/traces/${encodeURIComponent(traceId)}/feedback`, feedback),
     // Loop / automations (the heartbeat)

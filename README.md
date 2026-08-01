@@ -31,7 +31,7 @@ concepts.
 | Tier | What it means | Backed by |
 |------|---------------|-----------|
 | **Open** | Deep-link out to where the agent already lives; the server does not run it. | `invocation.type` of `link` / `prompt` (not server-run) |
-| **Export** | Copy the agent's prompt, or copy it as a `SKILL.md`, and run it yourself. | `usabilityModes` including `download-install` / `prepared-handoff`; the front-end's **Copy prompt** / **Copy as SKILL.md** buttons |
+| **Export** | Copy the evaluated `SKILL.md`, or download its complete server-owned artifact folder as a ZIP. | `usabilityModes` including `download-install` / `prepared-handoff`; resolvable runtime artifacts add **Copy single-shot SKILL.md** and **Download single-shot (.zip)** |
 | **Hosted-run** | The server invokes the agent and attempts to record a trace of the run. | `usabilityModes` including `hosted-run` **and** a server-run adapter (`mock`, `http`, or `runtime`) |
 
 The invocation adapters that exist today: `link` / `prompt` (manual, not
@@ -47,11 +47,45 @@ A `runtime` agent also owns its **input contract** server-side, in
 `server/src/invoke/runtimeArtifacts.js`: stable field keys, which fields are
 required, and which inputs the mode cannot read at all. `GET
 /api/agents/:id/invocation-capability` returns it, and the run form is built
-from it. The agent record's `inputs[]` array stays descriptive documentation of
-the full agent — renaming a label there changes the directory copy, not the run
-contract. Inputs listed as unsupported (LinkedIn URL, Drive folder, file path)
+from it. The agent record's `inputs[]` array stays descriptive directory copy;
+renaming a label there does not change the runtime contract. Inputs listed as
+unsupported (LinkedIn URL, Drive folder, file path)
 are shown as unavailable, are never required, and are not forwarded to the
 model, since single-shot mode has no tool to fetch them.
+
+### Runtime-bound exports and ZIP installs
+
+A7 has one artifact: the single-shot `server/src/artifacts/biocraft/` directory
+registered in `server/src/invoke/runtimeArtifacts.js`. Anthropic executes that
+`SKILL.md` verbatim; Copy as SKILL.md reads the same file; Download zips the
+same directory. The full Chrome/Drive `/biocraft` workflow is not exported
+behind A7.
+
+At boot the server computes `artifactDigest` as SHA-256 over the exact
+`SKILL.md` bytes it caches and executes. `artifactDigestAlgorithm` is always
+`sha256`. The same pair is returned with Copy as SKILL.md, written to
+`MANIFEST.md`, attached to runtime traces and the capability response, shown in
+the UI, and used in the ZIP filename. The filename also derives its version
+from the current agent record, so a loop version bump automatically changes
+subsequent downloads (for example,
+`A7-biocraft-v1.1-<digest-prefix>.zip`).
+
+`server/src/artifacts/installArtifacts.js` resolves through the runtime
+registry; it has no separate artifact map. The browser sends only the agent ID.
+Directories must resolve below the approved artifact root, and symlinks and
+unsafe ZIP entry names fail closed. Download renders only when the record has
+`download-install` and that runtime directory resolves.
+
+Each ZIP contains the runtime directory plus a generated root `MANIFEST.md`
+with the single-shot limitation, agent/display/version identifiers, artifact
+digest and algorithm, file inventory and hashes, current record guardrails and
+success criteria, install instructions, and the
+output/rating/artifactDigest/artifactDigestAlgorithm return protocol.
+
+There is no fake or fallback identifier. If the runtime artifact cannot be
+resolved at boot, it is not runnable or downloadable. If its bytes load but a
+SHA-256 digest is unavailable, the server treats that as an internal error
+rather than returning `unknown`.
 
 ## Architecture
 
@@ -149,13 +183,20 @@ off, it is off.
   an internally authorized `runtime` trace marked `source: "real"`; those runs
   persist metadata only: status, provider, model, token counts, latency, cost
   when returned, the mutable agent version label, and a SHA-256 output digest.
-  Inputs, outputs, and free-text feedback are not stored. Client-posted traces
-  and mock/HTTP runs remain a visible no-op. Historical file traces can still
-  be read.
-- **Runtime traces have no approved `agentVersionId`.** A7 resolves through a
-  server-owned file registry, not a Convex-approved version. Its metadata trace
-  cannot support evaluation or promotion until Railway is wired to Convex under
-  **TUS-2327**.
+  Inputs and outputs are not stored. Client-posted traces and mock/HTTP runs
+  remain a visible no-op. Historical file traces can still be read.
+- **Reviewer feedback notes are stored, on the feedback record only.** A star
+  rating carries a free-text `notes` field explaining the score — a reviewer's
+  judgement of the agent, not run payload about the fellow. It is appended to
+  the separate `feedback` collection, never to the trace, and never to
+  `evalHistory`. Notes are capped at `FEEDBACK_NOTES_MAX_CHARS` (2000) and can
+  be turned off for a deployment with `FEEDBACK_NOTES=false`, which rejects
+  posted notes with 400 while still accepting the rating.
+- **Runtime traces have no approved `agentVersionId`.** A7 traces carry the same
+  `artifactDigest` and `artifactDigestAlgorithm: "sha256"` used by
+  run/copy/download plus the mutable directory version label, but the artifact
+  is still not a Convex-approved version. It cannot support authoritative
+  promotion until Railway is wired to Convex under **TUS-2327**.
 - **No auth provider is configured (no Clerk).** There is no `auth.config.ts`.
   Against a real deployment, `ctx.auth.getUserIdentity()` returns nothing, so
   every authority mutation — evidence inserts, approvals — fails closed with a

@@ -24,6 +24,7 @@ export function createRouter({ corsOrigin = "*", apiToken = "" } = {}) {
           "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
           // authorization must be listed so browser preflight allows Bearer tokens
           "access-control-allow-headers": "content-type, authorization",
+          "access-control-expose-headers": "content-disposition, x-artifact-digest, x-artifact-digest-algorithm",
         };
         if (req.method === "OPTIONS") { res.writeHead(204, cors); return res.end(); }
 
@@ -53,7 +54,11 @@ export function createRouter({ corsOrigin = "*", apiToken = "" } = {}) {
             const body = await readJson(req);
             const out = await r.handler({ params, query, body, req });
             const status = out?.__status || 200;
-            send(res, status, out?.__body ?? out, cors);
+            if (out?.__binary) {
+              sendBinary(res, status, out.__body, out.__headers, cors);
+            } else {
+              send(res, status, out?.__body ?? out, cors);
+            }
           } catch (e) {
             const body = { error: e.message || "Internal error" };
             if (e.runStatus) body.status = e.runStatus;
@@ -90,5 +95,24 @@ function send(res, status, body, cors) {
   res.end(JSON.stringify(body));
 }
 
+function sendBinary(res, status, body, headers = {}, cors) {
+  const data = Buffer.isBuffer(body) ? body : Buffer.from(body);
+  res.writeHead(status, {
+    "content-type": "application/octet-stream",
+    "content-length": data.length,
+    ...headers,
+    ...cors,
+  });
+  res.end(data);
+}
+
 /** Helper for handlers that need a non-200 status. */
 export const reply = (status, body) => ({ __status: status, __body: body });
+
+/** Fixed server-owned download. Callers never supply filesystem paths. */
+export const binaryReply = (body, headers = {}, status = 200) => ({
+  __status: status,
+  __body: body,
+  __headers: headers,
+  __binary: true,
+});

@@ -411,6 +411,8 @@ input[type="date"] { color-scheme: dark; }
 .use-head { display: flex; align-items: center; gap: 10px; font-size: 12px; letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--foreground-subtle); margin-bottom: 10px; }
 .use-tier { font-family: ui-monospace, monospace; font-size: 10px; text-transform: none; letter-spacing: 0; color: var(--accent-text); border: 1px solid var(--border-subtle); border-radius: 999px; padding: 1px 8px; }
 .use-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.use-actions #install-actions { display: contents; }
+.artifact-pin { align-self: center; font-family: ui-monospace, monospace; font-size: 10px; color: var(--foreground-subtle); }
 .use-hint { font-size: 12px; color: var(--foreground-subtle); margin-top: 10px; }
 .run-panel:empty { display: none; }
 .run-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border); }
@@ -437,6 +439,10 @@ input[type="date"] { color-scheme: dark; }
 .run-feedback { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--border-subtle); border-radius: 10px; background: var(--ground); }
 .run-feedback-title { font-size: 11px; font-weight: 600; letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--foreground-subtle); }
 .run-feedback-stars { display: flex; gap: 3px; margin: 8px 0; }
+.run-feedback-notes-label { display: block; font-size: 11px; color: var(--foreground-subtle); margin-bottom: 4px; }
+.run-feedback-notes { display: block; width: 100%; box-sizing: border-box; min-height: 84px; resize: vertical; background: var(--background); border: 1px solid var(--input); border-radius: var(--radius-control); padding: 8px 10px; margin-bottom: 10px; color: var(--foreground); font-family: inherit; font-size: 13px; line-height: 1.5; }
+.run-feedback-notes:focus { outline: none; border-color: var(--ring); }
+.run-feedback-notes:disabled { opacity: .7; }
 .run-feedback-stars input { position: absolute; opacity: 0; pointer-events: none; }
 .run-feedback-stars span { cursor: pointer; font-size: 24px; line-height: 1; color: var(--border); }
 .run-feedback-stars label:has(input:checked) span,

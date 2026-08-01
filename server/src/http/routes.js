@@ -1,6 +1,6 @@
 // REST surface. Thin — each route delegates to the loop service. This is the
 // contract the front-end's api.js talks to.
-import { reply } from "./router.js";
+import { binaryReply, reply } from "./router.js";
 
 export function registerRoutes(router, svc, engine) {
   // health / status of the wired providers
@@ -28,6 +28,18 @@ export function registerRoutes(router, svc, engine) {
   router.get("/api/agents/:id/invocation-capability", async ({ params }) =>
     svc.getInvocationCapability(params.id)
   );
+  router.get("/api/agents/:id/install-artifact/skill", async ({ params }) =>
+    svc.getInstallSkill(params.id)
+  );
+  router.get("/api/agents/:id/install-artifact/download", async ({ params }) => {
+    const artifact = await svc.getInstallArtifactZip(params.id);
+    return binaryReply(artifact.data, {
+      "content-type": "application/zip",
+      "content-disposition": `attachment; filename="${artifact.filename}"`,
+      "x-artifact-digest": artifact.artifactDigest,
+      "x-artifact-digest-algorithm": artifact.artifactDigestAlgorithm,
+    });
+  });
   router.put("/api/agents/:id", async ({ params, body }) =>
     svc.putAgent({ ...body, id: params.id })
   );

@@ -5,6 +5,11 @@ import { createHash } from "node:crypto";
 import { bumpVersion } from "./version.js";
 import { getInvoker } from "../invoke/index.js";
 import { assertUsabilityModes } from "./usabilityModes.js";
+import {
+  buildInstallArtifactZip,
+  getInstallArtifactCapability,
+  loadInstallSkill,
+} from "../artifacts/installArtifacts.js";
 
 function outputDigest(output) {
   return createHash("sha256").update(String(output)).digest("hex");
@@ -36,6 +41,12 @@ function metadataOnlyTrace(agentId, trace) {
       ? { totalTokens: trace.totalTokens }
       : {}),
     ...(trace.agentVersion ? { agentVersion: trace.agentVersion } : {}),
+    ...(trace.artifactDigest
+      ? {
+          artifactDigest: trace.artifactDigest,
+          artifactDigestAlgorithm: trace.artifactDigestAlgorithm,
+        }
+      : {}),
     ...(trace.outputDigest
       ? {
           outputDigest: trace.outputDigest,
@@ -67,6 +78,7 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       const configured = invoker.isConfigured
         ? invoker.isConfigured()
         : true;
+      const installArtifact = await getInstallArtifactCapability(agent);
       return {
         invocationType: agent.invocation?.type || "link",
         mode: invoker.mode || agent.invocation?.mode || null,
@@ -76,6 +88,9 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         // Server-owned so the form is keyed by stable field ids, not by the
         // agent record's editable labels.
         inputContract: invoker.inputContract ? invoker.inputContract(agent) : null,
+        feedbackNotes: config?.observability?.feedbackNotes !== false,
+        feedbackNotesMaxChars: config?.observability?.feedbackNotesMaxChars || 2000,
+        installArtifact,
         runnable: invoker.serverRun && artifactAvailable && configured,
         unavailableReason: !configured
           ? "Runtime is not configured on the server"
@@ -83,6 +98,16 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
             ? "Server-owned runtime artifact is unavailable"
             : null,
       };
+    },
+    async getInstallSkill(agentId) {
+      const agent = await store.get("agents", agentId);
+      if (!agent) throw httpError(404, `No agent ${agentId}`);
+      return loadInstallSkill(agent);
+    },
+    async getInstallArtifactZip(agentId) {
+      const agent = await store.get("agents", agentId);
+      if (!agent) throw httpError(404, `No agent ${agentId}`);
+      return buildInstallArtifactZip(agent);
     },
 
     // ── context / memory (the fourth pillar) ──
@@ -125,10 +150,22 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
         throw httpError(400, "Feedback rating must be an integer from 1 to 5");
       }
+      const notesEnabled = config?.observability?.feedbackNotes !== false;
+      const maxChars = config?.observability?.feedbackNotesMaxChars || 2000;
+      const notes = String(feedback?.notes || "").trim();
+      if (notes && !notesEnabled) {
+        throw httpError(400, "Feedback notes are disabled on this deployment");
+      }
+      if (notes.length > maxChars) {
+        throw httpError(400, `Feedback notes must be ${maxChars} characters or fewer`);
+      }
       return store.append("feedback", {
         agentId,
         traceId,
         rating,
+        // Lives here, not on the trace: this is the reviewer's judgement of the
+        // agent, which the metadata-only trace rule was never meant to cover.
+        ...(notes ? { notes } : {}),
         createdAt: new Date().toISOString(),
       });
     },
@@ -140,6 +177,23 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       const agent = await store.get("agents", agentId);
       if (!agent) throw httpError(404, `No agent ${agentId}`);
       const invoker = getInvoker(agent, config);
+      const artifactDigest =
+        typeof invoker.artifactDigest === "function"
+          ? invoker.artifactDigest(agent)
+          : null;
+      const artifactDigestAlgorithm =
+        typeof invoker.artifactDigestAlgorithm === "function"
+          ? invoker.artifactDigestAlgorithm(agent)
+          : null;
+      if (
+        (artifactDigest && artifactDigestAlgorithm !== "sha256") ||
+        (!artifactDigest && artifactDigestAlgorithm)
+      ) {
+        throw httpError(
+          500,
+          `Runtime artifact for ${agentId} has an invalid digest reference`,
+        );
+      }
       if (!invoker.serverRun) {
         throw httpError(400, `"${agent.name}" is ${agent.invocation?.type || "link"}-invoked — open it where it lives or use its exported prompt/SKILL.md.`);
       }
@@ -169,6 +223,9 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
             ...(invoker.provider ? { provider: invoker.provider } : {}),
             ...(invoker.modelId ? { modelId: invoker.modelId } : {}),
             agentVersion: agent.version,
+            ...(artifactDigest
+              ? { artifactDigest, artifactDigestAlgorithm }
+              : {}),
             metadata: {
               via: invoker.name,
               mode: invoker.mode,
@@ -219,6 +276,13 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
             ? { totalTokens: result.totalTokens }
             : {}),
           agentVersion: agent.version,
+          ...(result.artifactDigest || artifactDigest
+            ? {
+                artifactDigest: result.artifactDigest || artifactDigest,
+                artifactDigestAlgorithm:
+                  result.artifactDigestAlgorithm || artifactDigestAlgorithm,
+              }
+            : {}),
           outputDigest: outputDigest(result.output),
           metadata: { via: invoker.name, mode: invoker.mode },
         }), { persistRuntime: invoker.name === "runtime" });
@@ -232,6 +296,10 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         status: "ok",
         via: invoker.name,
         mode: invoker.mode || null,
+        agentVersion: agent.version,
+        artifactDigest: result.artifactDigest || artifactDigest || null,
+        artifactDigestAlgorithm:
+          result.artifactDigestAlgorithm || artifactDigestAlgorithm || null,
         traceId: trace?.id || null,
         tracePersisted:
           Boolean(trace) && trace.persisted !== false && Boolean(trace.id),
