@@ -51,6 +51,11 @@ export const SEED_AGENTS = [
     skills: ["company-research", "competitive-analysis"], tools: ["Web search"], context: ["Brief", "Market notes"],
     evalHistory: [{ date: "2026-07-05", status: "Performing well", score: 84, notes: "Strong synthesis.", knownIssues: "Misses niche sources." }],
     changelog: [{ version: "1.0", date: "2026-06-28", note: "Initial build." }], proposedImprovement: null },
+  { id: "A7", name: "Biocraft single-shot draft", objective: "Draft a LinkedIn About bio, spoken event introduction, and headline from complete source material supplied in one request.", version: "1.0",
+    invocation: { type: "runtime", mode: "single-shot", artifact: "biocraft/SKILL.md" },
+    usabilityModes: ["hosted-run", "download-install"],
+    skills: ["biocraft", "personal-branding", "copywriting"], tools: [], context: ["Complete fellow source material supplied up front"],
+    evalHistory: [], changelog: [{ version: "1.0", date: "2026-08-01", note: "Stateless single-shot draft mode using a server-owned SKILL.md." }], proposedImprovement: null },
 ];
 
 // Synthetic failing traces for A2 — the loop's raw material.
@@ -65,6 +70,22 @@ export const SEED_TRACES = [
 export async function seed(store) {
   await store.ready();
   const a = await store.seedIfEmpty("agents", SEED_AGENTS);
+  const seededA7 = SEED_AGENTS.find((agent) => agent.id === "A7");
+  const storedA7 = await store.get("agents", "A7");
+  if (!storedA7) {
+    await store.put("agents", seededA7);
+  } else if (
+    storedA7.name === "/biocraft" ||
+    storedA7.invocation?.mode !== "single-shot"
+  ) {
+    await store.put("agents", {
+      ...storedA7,
+      name: seededA7.name,
+      objective: seededA7.objective,
+      invocation: seededA7.invocation,
+      context: seededA7.context,
+    });
+  }
   const usabilityModesBackfilled = await backfillStoredUsabilityModes(store);
   return { agents: a, usabilityModesBackfilled };
 }

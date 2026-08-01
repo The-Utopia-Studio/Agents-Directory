@@ -9,6 +9,7 @@ import { join } from "node:path";
 
 export const IMMUTABLE_COLLECTIONS = Object.freeze([
   "traces",
+  "feedback",
   "loopRuns",
   "learnings",
 ]);

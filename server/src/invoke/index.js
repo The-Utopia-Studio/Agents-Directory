@@ -5,9 +5,16 @@
 //   link / prompt — not server-run (open where it lives / paste the exported prompt)
 //   http          — call an endpoint or webhook (n8n, custom, hosted agent)
 //   mcp           — call via an MCP bridge (port: needs config)
-//   runtime       — run via @studio/ai-runtime (port: sandbox + metered inference)
+//   runtime       — load a server-owned skill artifact and invoke Anthropic
 //   mock          — canned response for offline demos
 import { requestJsonEndpoint } from "./networkPolicy.js";
+import {
+  getRuntimeArtifactMode,
+  hasRuntimeArtifact,
+  loadRuntimeArtifact,
+} from "./runtimeArtifacts.js";
+
+export const RUNTIME_TIMEOUT_MS = 120_000;
 
 const manual = (type) => ({
   name: type,
@@ -69,6 +76,159 @@ function mockInvoker() {
   };
 }
 
+export function runtimeInvoker(config = {}) {
+  const anthropic = config.runtime?.anthropic || {};
+  const model = anthropic.model || "claude-sonnet-4-6";
+  const timeoutMs = anthropic.timeoutMs || RUNTIME_TIMEOUT_MS;
+  const fetchImpl = anthropic.fetch || globalThis.fetch;
+  return {
+    name: "runtime",
+    mode: "single-shot",
+    provider: "anthropic",
+    modelId: model,
+    serverRun: true,
+    isConfigured: () => Boolean(anthropic.apiKey),
+    canInvoke: (agent) => hasRuntimeArtifact(agent.id),
+    async invoke(agent, inputs) {
+      if (!anthropic.apiKey) {
+        throw Object.assign(
+          new Error("Runtime selected but ANTHROPIC_API_KEY is unset"),
+          { status: 503 },
+        );
+      }
+      if (fetchImpl !== globalThis.fetch && !process.env.NODE_TEST_CONTEXT) {
+        throw Object.assign(
+          new Error("Custom runtime transport is test-only"),
+          { status: 500 },
+        );
+      }
+
+      const system = await loadRuntimeArtifact(agent.id);
+      const runtimeMode = getRuntimeArtifactMode(agent.id);
+      const fellowName =
+        inputs?.fellowName || inputs?.["Fellow name"];
+      const sourceMaterial =
+        inputs?.sourceMaterial ||
+        inputs?.["All source material and interview answers (required upfront)"];
+      if (runtimeMode === "single-shot") {
+        if (
+          !String(fellowName || "").trim() ||
+          !String(sourceMaterial || "").trim()
+        ) {
+          throw Object.assign(
+            new Error(
+              "Single-shot mode requires the fellow name and all source material/interview answers up front",
+            ),
+            { status: 400 },
+          );
+        }
+      }
+      const runtimeSystem =
+        runtimeMode === "single-shot"
+          ? `${system}\n\n## Hosted single-shot mode\nThis is not the full interactive Biocraft workflow. You have no Chrome, Google Drive, filesystem, template, or conversation tools. Use only the source material and interview answers supplied in this request. Do not ask follow-up questions or claim to create a file. Return the first-person About bio, spoken event introduction, and suggested headline directly as text.`
+          : system;
+      const controller = new AbortController();
+      const timer = setTimeout(
+        () => controller.abort(new Error("Anthropic generation timed out")),
+        timeoutMs,
+      );
+      const started = Date.now();
+      let response;
+      let payload;
+      try {
+        response = await fetchImpl("https://api.anthropic.com/v1/messages", {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            "anthropic-version": "2023-06-01",
+            "x-api-key": anthropic.apiKey,
+          },
+          body: JSON.stringify({
+            model,
+            max_tokens: 4096,
+            system: runtimeSystem,
+            messages: [
+              {
+                role: "user",
+                content: JSON.stringify(inputs || {}, null, 2),
+              },
+            ],
+          }),
+          signal: controller.signal,
+        });
+        if (!response.ok) {
+          throw Object.assign(
+            new Error(`Anthropic Messages API returned ${response.status}`),
+            { status: 502, runtimeSafe: true },
+          );
+        }
+        try {
+          payload = await response.json();
+        } catch {
+          throw Object.assign(
+            new Error("Anthropic Messages API returned invalid JSON"),
+            { status: 502, runtimeSafe: true },
+          );
+        }
+      } catch (error) {
+        if (controller.signal.aborted) {
+          throw Object.assign(new Error("Anthropic generation timed out"), {
+            status: 504,
+          });
+        }
+        if (error.runtimeSafe) throw error;
+        throw Object.assign(
+          new Error("Anthropic Messages API request failed"),
+          { status: 502 },
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+      const latencyMs = Date.now() - started;
+
+      if (
+        payload.stop_reason === "refusal" ||
+        payload.content?.some?.((block) => block.type === "refusal")
+      ) {
+        throw Object.assign(new Error("Anthropic refused the runtime request"), {
+          status: 502,
+        });
+      }
+      const output = (payload.content || [])
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("\n")
+        .trim();
+      if (!output) {
+        throw Object.assign(
+          new Error("Anthropic Messages API returned no text output"),
+          { status: 502 },
+        );
+      }
+
+      return {
+        output,
+        provider: "anthropic",
+        modelId: payload.model || model,
+        latencyMs,
+        ...(typeof payload.usage?.input_tokens === "number"
+          ? { inputTokens: payload.usage.input_tokens }
+          : {}),
+        ...(typeof payload.usage?.output_tokens === "number"
+          ? { outputTokens: payload.usage.output_tokens }
+          : {}),
+        ...(typeof payload.usage?.input_tokens === "number" &&
+        typeof payload.usage?.output_tokens === "number"
+          ? {
+              totalTokens:
+                payload.usage.input_tokens + payload.usage.output_tokens,
+            }
+          : {}),
+      };
+    },
+  };
+}
+
 function portStub(kind, hint) {
   return { name: kind, serverRun: false, async invoke() { throw Object.assign(new Error(`${kind} invocation not configured — ${hint}`), { status: 501 }); } };
 }
@@ -80,7 +240,7 @@ export function getInvoker(agent, config) {
     case "http": return httpInvoker(config);
     case "mock": return mockInvoker();
     case "mcp": return portStub("mcp", "provide an MCP bridge endpoint");
-    case "runtime": return portStub("runtime", "wire @studio/ai-runtime (sandbox + metered inference)");
+    case "runtime": return runtimeInvoker(config);
     case "prompt":
     case "link":
     default: return manual(type);

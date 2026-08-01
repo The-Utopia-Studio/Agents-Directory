@@ -25,6 +25,9 @@ export function registerRoutes(router, svc, engine) {
     const a = await svc.getAgent(params.id);
     return a || reply(404, { error: "Not found" });
   });
+  router.get("/api/agents/:id/invocation-capability", async ({ params }) =>
+    svc.getInvocationCapability(params.id)
+  );
   router.put("/api/agents/:id", async ({ params, body }) =>
     svc.putAgent({ ...body, id: params.id })
   );
@@ -41,6 +44,9 @@ export function registerRoutes(router, svc, engine) {
   router.get("/api/agents/:id/traces", async ({ params, query }) => ({
     traces: await svc.listTraces(params.id, { limit: Number(query.limit) || 50 }),
   }));
+  router.post("/api/agents/:id/traces/:traceId/feedback", async ({ params, body }) =>
+    reply(201, await svc.recordFeedback(params.id, params.traceId, body || {}))
+  );
 
   // evals (append-only)
   router.post("/api/agents/:id/evals", async ({ params, body }) =>

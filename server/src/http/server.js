@@ -16,14 +16,15 @@ import { registerRoutes } from "./routes.js";
 import { seed } from "../scripts/seed.js";
 
 export async function buildApp(overrides = {}) {
-  const store = overrides.store || createStore(config.dataDir);
+  const appConfig = overrides.config || config;
+  const store = overrides.store || createStore(appConfig.dataDir);
   await seed(store); // idempotent
-  const obs = overrides.obs || getObservability(config, { store });
-  const optimizer = overrides.optimizer || getOptimizer(config);
-  const memory = overrides.memory || getMemory(config, { store });
-  const verifier = overrides.verifier || getVerifier(config);
-  const svc = createLoopService({ store, obs, optimizer, memory, verifier, config });
-  const engine = overrides.engine || createLoopEngine({ svc, obs, verifier, config });
+  const obs = overrides.obs || getObservability(appConfig, { store });
+  const optimizer = overrides.optimizer || getOptimizer(appConfig);
+  const memory = overrides.memory || getMemory(appConfig, { store });
+  const verifier = overrides.verifier || getVerifier(appConfig);
+  const svc = createLoopService({ store, obs, optimizer, memory, verifier, config: appConfig });
+  const engine = overrides.engine || createLoopEngine({ svc, obs, verifier, config: appConfig });
 
   // Seed each agent's context[] into memory once (marker in the store), so the
   // static Context list becomes live recall the first time the service runs.
@@ -36,7 +37,7 @@ export async function buildApp(overrides = {}) {
     }
   }
 
-  const router = createRouter({ corsOrigin: config.corsOrigin, apiToken: config.apiToken });
+  const router = createRouter({ corsOrigin: appConfig.corsOrigin, apiToken: appConfig.apiToken });
   registerRoutes(router, svc, engine);
   return { svc, engine, handler: router.handler() };
 }

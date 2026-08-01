@@ -27,17 +27,29 @@ export function createLangfuseObservability({ host, publicKey, secretKey, lowSco
   /** Map a Langfuse trace object onto our Trace shape. */
   function normalize(t) {
     const score = t.scores?.find?.((s) => typeof s.value === "number")?.value;
-    const status = t.level === "ERROR" ? "error" : score != null && score < lowScoreThreshold ? "fail" : "ok";
+    const status =
+      t.metadata?.status ||
+      (t.level === "ERROR"
+        ? "error"
+        : score != null && score < lowScoreThreshold
+          ? "fail"
+          : "ok");
     return {
       id: t.id,
       agentId: t.metadata?.agentId || t.name,
-      input: typeof t.input === "string" ? t.input : JSON.stringify(t.input ?? ""),
-      output: typeof t.output === "string" ? t.output : JSON.stringify(t.output ?? ""),
       status,
       score: score != null ? Math.round(score) : undefined,
-      latencyMs: t.latency,
-      costUsd: t.totalCost,
-      failureReason: t.metadata?.failureReason,
+      latencyMs: t.metadata?.latencyMs ?? t.latency,
+      costUsd: t.metadata?.costUsd ?? t.totalCost,
+      source: t.metadata?.source,
+      provider: t.metadata?.provider,
+      modelId: t.metadata?.modelId,
+      inputTokens: t.metadata?.inputTokens,
+      outputTokens: t.metadata?.outputTokens,
+      totalTokens: t.metadata?.totalTokens,
+      agentVersion: t.metadata?.agentVersion,
+      outputDigest: t.metadata?.outputDigest,
+      outputDigestAlgorithm: t.metadata?.outputDigestAlgorithm,
       ts: t.timestamp,
       metadata: t.metadata,
     };
@@ -68,10 +80,23 @@ export function createLangfuseObservability({ host, publicKey, secretKey, lowSco
             body: {
               id,
               name: trace.agentId,
-              input: trace.input,
-              output: trace.output,
               timestamp: trace.ts || new Date().toISOString(),
-              metadata: { agentId: trace.agentId, failureReason: trace.failureReason, ...trace.metadata },
+              metadata: {
+                agentId: trace.agentId,
+                status: trace.status,
+                source: trace.source,
+                provider: trace.provider,
+                modelId: trace.modelId,
+                inputTokens: trace.inputTokens,
+                outputTokens: trace.outputTokens,
+                totalTokens: trace.totalTokens,
+                latencyMs: trace.latencyMs,
+                costUsd: trace.costUsd,
+                agentVersion: trace.agentVersion,
+                outputDigest: trace.outputDigest,
+                outputDigestAlgorithm: trace.outputDigestAlgorithm,
+                ...trace.metadata,
+              },
             },
           }],
         }),

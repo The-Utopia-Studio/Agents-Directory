@@ -25,10 +25,10 @@ async function freshService() {
   return createLoopService({ store, obs, optimizer, memory, config });
 }
 
-test("loads six agents and historical A2 trace fixtures", async () => {
+test("loads seven agents and historical A2 trace fixtures", async () => {
   const svc = await freshService();
   const agents = await svc.listAgents();
-  assert.equal(agents.length, 6);
+  assert.equal(agents.length, 7);
   const failing = await svc.listTraces("A2");
   assert.ok(failing.length >= 5);
 });
@@ -71,7 +71,7 @@ test("logEval appends to history and moves fleet health", async () => {
   const a4 = await svc.getAgent("A4");
   assert.equal(a4.evalHistory.at(-1).score, 90);
   const health = await svc.fleetHealth();
-  assert.equal(health.total, 6);
+  assert.equal(health.total, 7);
   assert.ok(health.coverage > 0);
 });
 
@@ -79,6 +79,9 @@ test("recordTrace does not write to disabled file observability", async () => {
   const svc = await freshService();
   const result = await svc.recordTrace("A1", {
     status: "fail",
+    source: "real",
+    provider: "anthropic",
+    metadata: { via: "runtime" },
     score: 40,
     failureReason: "test",
     output: "x",
@@ -98,6 +101,36 @@ test("runAgent invokes a runnable agent without file trace persistence", async (
   assert.equal(r.traceId, null);
   assert.equal(r.tracePersisted, false);
   assert.equal((await svc.listTraces("A2")).length, before);
+});
+
+test("mock runs remain explicitly distinguishable from real runtime traces", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "adir-mock-source-"));
+  const store = createStore(dir);
+  await seed(store);
+  let recorded;
+  const baseObs = getObservability(config, { store });
+  const obs = {
+    ...baseObs,
+    async recordTrace(trace) {
+      recorded = trace;
+      return { ...trace, id: "mock-trace", persisted: true };
+    },
+  };
+  const svc = createLoopService({
+    store,
+    obs,
+    optimizer: getOptimizer(config),
+    memory: getMemory(config, { store }),
+    config,
+  });
+  await svc.runAgent("A2", { bio: "founder" });
+  assert.equal(recorded.source, "mock");
+  assert.equal(recorded.metadata.via, "mock");
+  assert.equal("provider" in recorded, false);
+  assert.equal("modelId" in recorded, false);
+  assert.equal("input" in recorded, false);
+  assert.equal("output" in recorded, false);
+  assert.match(recorded.outputDigest, /^[a-f0-9]{64}$/);
 });
 
 // Same wiring as freshService, but every trace write throws — the case where

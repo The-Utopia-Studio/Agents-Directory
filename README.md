@@ -32,12 +32,16 @@ concepts.
 |------|---------------|-----------|
 | **Open** | Deep-link out to where the agent already lives; the server does not run it. | `invocation.type` of `link` / `prompt` (not server-run) |
 | **Export** | Copy the agent's prompt, or copy it as a `SKILL.md`, and run it yourself. | `usabilityModes` including `download-install` / `prepared-handoff`; the front-end's **Copy prompt** / **Copy as SKILL.md** buttons |
-| **Hosted-run** | The server invokes the agent and attempts to record a trace of the run. | `usabilityModes` including `hosted-run` **and** a server-run adapter (`mock` or `http`) |
+| **Hosted-run** | The server invokes the agent and attempts to record a trace of the run. | `usabilityModes` including `hosted-run` **and** a server-run adapter (`mock`, `http`, or `runtime`) |
 
 The invocation adapters that exist today: `link` / `prompt` (manual, not
 server-run), `http` (call an endpoint, with SSRF-guarded fetch), `mock` (canned
-offline response), and `mcp` / `runtime` (port stubs that fail closed with 501
-until configured).
+offline response), `runtime` (Anthropic Messages API using a server-owned skill
+artifact), and `mcp` (a port stub that fails closed with 501 until configured).
+The only registered runtime artifact is **Biocraft single-shot draft**: it
+requires all source material and interview answers in one request. It is not
+the full interactive `/biocraft` agent and has no Chrome, Drive, filesystem,
+HTML-rendering, or conversation tools.
 
 ## Architecture
 
@@ -102,6 +106,23 @@ npm start  --prefix server # node src/http/server.js
 and is git-ignored. `.env.example` ships a placeholder (`CONVEX_URL=`) only —
 never put a real deployment URL in a committed file. `.gitignore` ignores all
 `.env.*` except `.env.example`, and ignores `convex/_generated/`.
+Biocraft single-shot hosted runs additionally require `ANTHROPIC_API_KEY` in
+`server/.env`; `server/.env.example` contains the empty placeholder.
+
+**Live Anthropic smoke test** (from `server/`, with Railway env injected). The
+test name is case-sensitive; a lowercase `biocraft` pattern matches **nothing**
+and Node still exits 0 — that is not a pass.
+
+```sh
+# cwd: server/
+RUN_LIVE_ANTHROPIC_TESTS=true npx @railway/cli run -- npm test -- test/invoke-security.test.js --test-name-pattern="live Biocraft"
+```
+
+Expect a real run to take seconds (API latency), not ~185ms. A genuine pass
+prints `✔ live Biocraft single-shot runtime returns generated bio text`. A
+gated skip prints `﹣ … # SKIP` with `tests 1 · pass 0 · skipped 1`. If you
+see `tests 4 · pass 4` in ~200ms and no line naming that test, the pattern
+matched zero tests — re-check the spelling.
 
 ## Current limitations
 
@@ -113,10 +134,18 @@ off, it is off.
   still reads and writes `localStorage`, and the loop service keeps its own
   approve/reject path. Convex is exercised only through `convex-test`; wiring it
   into the app is tracked in **TUS-2327**.
-- **Trace writes are disabled.** `FILE_TRACE_WRITES_ENABLED` is `false` in
-  `server/src/observability/localAdapter.js`. Runs execute, but `recordTrace`
-  is a visible no-op — nothing durable is recorded. Historical file traces can
-  still be read.
+- **General file trace writes are disabled.** `FILE_TRACE_WRITES_ENABLED` is
+  `false` in `server/src/observability/localAdapter.js`. The only exception is
+  an internally authorized `runtime` trace marked `source: "real"`; those runs
+  persist metadata only: status, provider, model, token counts, latency, cost
+  when returned, the mutable agent version label, and a SHA-256 output digest.
+  Inputs, outputs, and free-text feedback are not stored. Client-posted traces
+  and mock/HTTP runs remain a visible no-op. Historical file traces can still
+  be read.
+- **Runtime traces have no approved `agentVersionId`.** A7 resolves through a
+  server-owned file registry, not a Convex-approved version. Its metadata trace
+  cannot support evaluation or promotion until Railway is wired to Convex under
+  **TUS-2327**.
 - **No auth provider is configured (no Clerk).** There is no `auth.config.ts`.
   Against a real deployment, `ctx.auth.getUserIdentity()` returns nothing, so
   every authority mutation — evidence inserts, approvals — fails closed with a

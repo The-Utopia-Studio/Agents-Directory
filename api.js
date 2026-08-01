@@ -73,6 +73,10 @@ window.DirectoryAPI = (function () {
     recallContext: (id, q) => j("GET", `/api/agents/${id}/context/search?q=${encodeURIComponent(q)}`),
     // Run an agent where it lives (records a trace)
     runAgent: (id, inputs) => j("POST", `/api/agents/${id}/run`, { inputs }),
+    invocationCapability: (id) =>
+      j("GET", `/api/agents/${id}/invocation-capability`),
+    submitFeedback: (id, traceId, feedback) =>
+      j("POST", `/api/agents/${id}/traces/${encodeURIComponent(traceId)}/feedback`, feedback),
     // Loop / automations (the heartbeat)
     runLoop: () => j("POST", "/api/loop/run"),
     loopInbox: () => j("GET", "/api/loop/inbox"),

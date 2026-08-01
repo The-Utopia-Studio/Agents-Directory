@@ -126,6 +126,21 @@ const SEED_AGENTS=[
       {date:"2026-07-05",status:"Performing well",score:84,notes:"Strong on synthesis. Sometimes misses niche sources.",knownIssues:"Cursor context window can limit very large research scopes.",by:"Hager",traceUrl:""}
     ],
     changelog:[{version:"1.0",date:"2026-06-28",note:"Initial build."}],
+    proposedImprovement:null},
+
+  {id:"A7",name:"Biocraft single-shot draft",tagline:"A stateless text-only draft mode inspired by /biocraft. It requires all source material up front and has no Chrome or Drive tools.",description:"This is not the full /biocraft agent. It makes one Anthropic call with no conversation state, browser tools, Drive tools, or HTML rendering.",platform:"Claude",status:"Experimental",category:"Personal Branding",owner:"Sarah",initials:"SA",model:"Claude Sonnet 4.6",version:"1.0",
+    objective:"Draft a LinkedIn About bio, spoken event introduction, and headline from complete source material supplied in one request.",
+    successCriteria:["LinkedIn About stays within 2,600 characters","Headline stays within 220 characters","Every fact and metric is grounded in supplied material"],
+    guardrails:["Never fabricate a metric, achievement, or credential","No AI cliché, emoji, exclamation points, or em dashes"],
+    autonomyLevel:"L1",
+    invocation:{type:"runtime",mode:"single-shot",artifact:"biocraft/SKILL.md"},
+    usabilityModes:["hosted-run","download-install"],
+    when:"When all source material and interview answers are already available for a single drafting pass. Use the full /biocraft workflow when Chrome, Drive, or follow-up questions are required.",
+    sop:"1. Gather the fellow's name, source material, achievements, mission, skills, contact preference, and exclusions before starting\n2. Paste everything into the single source-material field\n3. Run one text-only draft\n4. Review every claim before using the output",
+    inputs:["Fellow name","All source material and interview answers (required upfront)"],outputs:["Draft LinkedIn About bio","Draft spoken event introduction","Draft suggested headline"],
+    skills:["biocraft","personal-branding","copywriting"],tools:[],context:["Complete fellow source material supplied up front"],
+    accessUrl:"",repoUrl:"",evalHistory:[],
+    changelog:[{version:"1.0",date:"2026-08-01",note:"Stateless single-shot draft mode using a server-owned SKILL.md."}],
     proposedImprovement:null}
 ];
 
@@ -144,7 +159,14 @@ const STORE_KEY="utopia_agents_dir_v2";
 function persist(){try{localStorage.setItem(STORE_KEY,JSON.stringify({agents,requests,nextAgentNum,nextReqNum}))}catch(e){}}
 function hydrate(){
   try{const s=JSON.parse(localStorage.getItem(STORE_KEY));
-    if(s&&Array.isArray(s.agents)){agents=s.agents;requests=s.requests;nextAgentNum=s.nextAgentNum;nextReqNum=s.nextReqNum;return}
+    if(s&&Array.isArray(s.agents)){
+      agents=s.agents;requests=s.requests;nextAgentNum=s.nextAgentNum;nextReqNum=s.nextReqNum;
+      const seededA7=SEED_AGENTS.find(a=>a.id==="A7"),index=agents.findIndex(a=>a.id==="A7");
+      let changed=false;
+      if(index<0){agents.push(JSON.parse(JSON.stringify(seededA7)));changed=true}
+      else if(agents[index].name==="/biocraft"||!agents[index].invocation||agents[index].invocation.mode!=="single-shot"){const prior=agents[index];agents[index]={...JSON.parse(JSON.stringify(seededA7)),evalHistory:prior.evalHistory||[],proposedImprovement:prior.proposedImprovement||null};changed=true}
+      nextAgentNum=Math.max(Number(nextAgentNum)||1,8);if(changed)persist();return
+    }
   }catch(e){}
   agents=JSON.parse(JSON.stringify(SEED_AGENTS));
   requests=JSON.parse(JSON.stringify(SEED_REQUESTS));
@@ -581,9 +603,9 @@ function renderDetail(a){
       <div class="use-actions">
         ${a.accessUrl?`<a class="btn btn-sm" href="${escHtml(a.accessUrl)}" target="_blank" rel="noopener">Open in ${escHtml(a.platform)} &#8599;</a>`:""}
         ${canDownload(a)?`<button class="btn btn-sm" onclick="copyAgentPrompt('${a.id}')">Copy prompt</button><button class="btn btn-sm" onclick="copyAgentSkill('${a.id}')">Copy as SKILL.md</button>`:""}
-        ${isRunnable(a)&&window.DirectoryAPI&&DirectoryAPI.enabled?`<button class="btn btn-sm btn-primary" onclick="toggleRun('${a.id}')">&#9654; Run here</button>`:""}
+        <span id="run-action"></span>
       </div>
-      <div class="use-hint">${hasUsabilityDefect(a)?`MISCONFIGURED: this agent has no stored usabilityModes. Edit the record before offering access.`:needsInvokerConfiguration(a)?`${escHtml((a.invocation&&a.invocation.type)||"runtime")} execution is not configured. Use the stored prepared handoff/export path until an adapter is connected.`:`Available here: ${escHtml(a.usabilityModes.join(", "))}. The execution adapter remains ${escHtml((a.invocation&&a.invocation.type)||"link")}.`}</div>
+      <div class="use-hint">${hasUsabilityDefect(a)?`MISCONFIGURED: this agent has no stored usabilityModes. Edit the record before offering access.`:isSingleShotRuntime(a)?`Single-shot text draft only. This is not the full /biocraft agent: supply all source material and interview answers up front. No Chrome, Drive, tools, HTML rendering, or follow-up conversation.`:needsInvokerConfiguration(a)?`${escHtml((a.invocation&&a.invocation.type)||"runtime")} execution is not configured. Use the stored prepared handoff/export path until an adapter is connected.`:`Available here: ${escHtml(a.usabilityModes.join(", "))}. The execution adapter remains ${escHtml((a.invocation&&a.invocation.type)||"link")}.`}</div>
       <div id="run-panel" class="run-panel"></div>
     </div>
 
@@ -650,7 +672,7 @@ function renderDetail(a){
 
 function render(){
   const app=document.getElementById("app");
-  if(state.view==="detail"&&state.agent){const fresh=agents.find(x=>x.id===state.agent.id);if(fresh)state.agent=fresh;app.innerHTML=renderDetail(state.agent);return}
+  if(state.view==="detail"&&state.agent){const fresh=agents.find(x=>x.id===state.agent.id);if(fresh)state.agent=fresh;app.innerHTML=renderDetail(state.agent);loadRunCapability(state.agent.id);return}
   app.innerHTML=state.subTab==="agents"?renderAgentsList():renderRequests();
   if(state.subTab==="agents"&&window.DirectoryAPI&&DirectoryAPI.enabled)loadAutomations();
 }
@@ -691,11 +713,21 @@ async function runLoopNow(btn){
 // ── Using an agent across platforms (invocation) ──
 function hasUsabilityDefect(a){return!Array.isArray(a.usabilityModes)||a.usabilityModes.length===0}
 function hasUsabilityMode(a,mode){return!hasUsabilityDefect(a)&&a.usabilityModes.includes(mode)}
-function isRunnable(a){return hasUsabilityMode(a,"hosted-run")&&["mock","http"].includes(a.invocation&&a.invocation.type)}
 function canDownload(a){return hasUsabilityMode(a,"download-install")||hasUsabilityMode(a,"prepared-handoff")}
-function needsInvokerConfiguration(a){return["mcp","runtime"].includes(a.invocation&&a.invocation.type)}
+function needsInvokerConfiguration(a){return(a.invocation&&a.invocation.type)==="mcp"}
+function isSingleShotRuntime(a){return a.invocation&&a.invocation.type==="runtime"&&a.invocation.mode==="single-shot"}
 function invocationTier(a){return hasUsabilityDefect(a)?"misconfigured":a.usabilityModes.join(" + ")}
 function slug(s){return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")}
+
+async function loadRunCapability(id){
+  const a=agents.find(x=>x.id===id),slot=document.getElementById("run-action");
+  if(!a||!slot||!hasUsabilityMode(a,"hosted-run")||!(window.DirectoryAPI&&DirectoryAPI.enabled))return;
+  try{
+    const capability=await DirectoryAPI.invocationCapability(id);
+    if(capability.serverRun&&capability.artifactAvailable&&capability.configured&&capability.runnable)slot.innerHTML=`<button class="btn btn-sm btn-primary" onclick="toggleRun('${id}')">&#9654; ${capability.mode==="single-shot"?"Run single-shot draft":"Run here"}</button>`;
+    else if(!capability.configured)slot.innerHTML=`<span class="run-unavailable">${escHtml(capability.unavailableReason||"Runtime unavailable")}</span>`;
+  }catch(e){slot.innerHTML=""}
+}
 
 // The agent definition (four pillars) → a portable system prompt. This is what
 // makes an agent usable across platforms: paste it into Claude, Cursor, ChatGPT.
@@ -724,7 +756,7 @@ function copyAgentSkill(id){const a=agents.find(x=>x.id===id);if(a)copyText(buil
 function toggleRun(id){
   const a=agents.find(x=>x.id===id);const box=document.getElementById("run-panel");if(!a||!box)return;
   if(box.innerHTML){box.innerHTML="";return}
-  const fields=(a.inputs&&a.inputs.length?a.inputs:["input"]).map((inp,i)=>`<div class="run-field"><label>${escHtml(inp)}</label><input id="run-in-${i}" data-k="${escHtml(inp)}" placeholder="${escHtml(inp)}"></div>`).join("");
+  const fields=(a.inputs&&a.inputs.length?a.inputs:["input"]).map((inp,i)=>`<div class="run-field"><label>${escHtml(inp)}</label>${inp.startsWith("All source material")?`<textarea id="run-in-${i}" data-k="${escHtml(inp)}" placeholder="${escHtml(inp)}"></textarea>`:`<input id="run-in-${i}" data-k="${escHtml(inp)}" placeholder="${escHtml(inp)}">`}</div>`).join("");
   box.innerHTML=`<div class="run-form">${fields}<button class="btn btn-sm btn-primary" onclick="runAgentUI('${id}')">Run &#9654;</button></div><div id="run-out" class="run-out"></div>`;
 }
 async function runAgentUI(id){
@@ -733,8 +765,22 @@ async function runAgentUI(id){
   box.innerHTML='<div class="run-status">Running…</div>';
   try{
     const r=await DirectoryAPI.runAgent(id,inputs);
-    box.innerHTML=`<div class="run-result"><div class="run-result-head">Output <span class="run-via">via ${escHtml(r.via)}</span> ${r.tracePersisted&&r.traceId?`<span class="run-trace">&#10003; trace ${escHtml(r.traceId)} recorded</span>`:`<span class="run-via">trace persistence disabled</span>`}</div><pre>${escHtml(r.output)}</pre></div>`;
+    const feedback=r.tracePersisted&&r.traceId?`<div class="run-feedback" data-trace-id="${escHtml(r.traceId)}"><div class="run-feedback-title">Feedback rating</div><div class="run-feedback-stars" role="radiogroup" aria-label="Rate this run">${[1,2,3,4,5].map(n=>`<label title="${n} star${n===1?"":"s"}"><input type="radio" name="run-rating" value="${n}"><span>&#9733;</span></label>`).join("")}</div><button class="btn btn-sm" onclick="submitRunFeedback('${id}',this)">Submit rating</button><div class="run-feedback-status"></div></div>`:"";
+    box.innerHTML=`<div class="run-result"><div class="run-result-head">Output <span class="run-via">via ${escHtml(r.mode==="single-shot"?"single-shot runtime":r.via)}</span> ${r.tracePersisted&&r.traceId?`<span class="run-trace">&#10003; metadata trace ${escHtml(r.traceId)} recorded</span>`:`<span class="run-via">trace not persisted</span>`}</div><pre>${escHtml(r.output)}</pre>${feedback}</div>`;
   }catch(e){box.innerHTML=`<div class="run-status run-err">Run failed: ${escHtml(String(e.message||e))}${e.tracePersisted&&e.traceId?`<div>Error trace ${escHtml(e.traceId)} recorded.</div>`:`<div>Error trace persistence is disabled.</div>`}</div>`}
+}
+
+async function submitRunFeedback(id,button){
+  const form=button&&button.closest(".run-feedback");if(!form)return;
+  const selected=form.querySelector('input[name="run-rating"]:checked');
+  const status=form.querySelector(".run-feedback-status");
+  if(!selected){status.textContent="Choose 1–5 stars.";return}
+  button.disabled=true;status.textContent="Saving feedback…";
+  try{
+    await DirectoryAPI.submitFeedback(id,form.dataset.traceId,{rating:Number(selected.value)});
+    form.querySelectorAll("input,button").forEach(el=>el.disabled=true);
+    status.textContent="Rating saved.";
+  }catch(e){button.disabled=false;status.textContent=`Feedback failed: ${String(e.message||e)}`}
 }
 
 async function recallContext(id){

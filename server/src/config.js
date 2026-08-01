@@ -30,6 +30,14 @@ export const config = {
   // When unset/empty, all routes stay open (local + zero-secrets deploy).
   apiToken: env.API_TOKEN || "",
 
+  runtime: {
+    anthropic: {
+      apiKey: env.ANTHROPIC_API_KEY || "",
+      model: "claude-sonnet-4-6",
+      timeoutMs: 120_000,
+    },
+  },
+
   observability: {
     provider: env.OBS_PROVIDER || "local",
     lowScoreThreshold: Number(env.OBS_LOW_SCORE || 70),

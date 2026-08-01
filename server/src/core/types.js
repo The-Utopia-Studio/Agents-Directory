@@ -6,15 +6,30 @@
  * @typedef {Object} Trace  A single agent run.
  * @property {string} id
  * @property {string} agentId
- * @property {string} [input]
- * @property {string} [output]
  * @property {"ok"|"fail"|"error"} status
  * @property {number} [score]           0–100, if scored at run time
  * @property {number} [latencyMs]
  * @property {number} [costUsd]
- * @property {string} [failureReason]   short tag — what the optimizer clusters on
+ * @property {"real"|"mock"|"demo"|"imported"} [source]
+ * @property {string} [provider]
+ * @property {string} [modelId]
+ * @property {number} [inputTokens]
+ * @property {number} [outputTokens]
+ * @property {number} [totalTokens]
+ * @property {string} [agentVersion]    mutable label only; not an approved Convex agentVersionId
+ * @property {string} [outputDigest]    SHA-256 of output; output text is never stored
+ * @property {"sha256"} [outputDigestAlgorithm]
  * @property {string} ts                ISO timestamp
  * @property {Object} [metadata]
+ */
+
+/**
+ * @typedef {Object} TraceFeedback  One human rating of one persisted run.
+ * @property {string} id
+ * @property {string} agentId
+ * @property {string} traceId
+ * @property {1|2|3|4|5} rating
+ * @property {string} createdAt
  */
 
 /**
@@ -69,7 +84,7 @@
  * @property {string} id
  * @property {string} name
  * @property {string} objective
- * @property {string} [prompt]          current system prompt, if tracked here
+ * @property {string} [prompt]          export/display text only; runtimes never execute it
  * @property {string} version
  * @property {string[]} [skills]
  * @property {string[]} [tools]
@@ -96,11 +111,13 @@
  * definition; platforms are interchangeable runtimes. Three tiers:
  *   link    — open where it lives (Claude project, Cursor workspace) + deep link
  *   prompt  — portable: export the definition as a prompt / SKILL.md, paste anywhere
- *   http | mock — the server can run it and record a trace
- *   mcp | runtime — configuration stubs; prepared handoff only until wired
+ *   http | mock | runtime — the server can run it and record a trace
+ *   mcp — configuration stub; prepared handoff only until wired
  * @typedef {Object} Invocation
  * @property {"link"|"prompt"|"http"|"mcp"|"runtime"|"mock"} type
+ * @property {"single-shot"} [mode]
  * @property {string} [url]      deep link (link) or endpoint (http)
+ * @property {string} [artifact] descriptive server-owned artifact pointer
  */
 
 /**
@@ -112,8 +129,11 @@
  * Invoker — runs an agent where it lives and returns output. Adapters per tier.
  * @typedef {Object} Invoker
  * @property {string} name
+ * @property {"single-shot"} [mode]
  * @property {boolean} serverRun  can the server invoke it now?
- * @property {(agent:Agent, inputs:Object) => Promise<{output:string, costUsd?:number}>} invoke
+ * @property {() => boolean} [isConfigured]
+ * @property {(agent:Agent) => Promise<boolean>} [canInvoke]
+ * @property {(agent:Agent, inputs:Object) => Promise<{output:string, costUsd?:number, provider?:string, modelId?:string, inputTokens?:number, outputTokens?:number, totalTokens?:number, latencyMs?:number}>} invoke
  */
 
 /**

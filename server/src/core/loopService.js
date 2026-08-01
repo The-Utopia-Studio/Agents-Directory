@@ -1,9 +1,50 @@
 // The loop, as one service. Routes call these methods; the methods orchestrate
 // the store + the (swappable) observability and optimizer providers. All the
 // business rules of the eval -> improve -> approve cycle live here.
+import { createHash } from "node:crypto";
 import { bumpVersion } from "./version.js";
 import { getInvoker } from "../invoke/index.js";
 import { assertUsabilityModes } from "./usabilityModes.js";
+
+function outputDigest(output) {
+  return createHash("sha256").update(String(output)).digest("hex");
+}
+
+function metadataOnlyTrace(agentId, trace) {
+  const metadata = {
+    ...(trace.metadata?.via ? { via: trace.metadata.via } : {}),
+    ...(trace.metadata?.mode ? { mode: trace.metadata.mode } : {}),
+    ...(trace.metadata?.failed === true ? { failed: true } : {}),
+  };
+  return {
+    agentId,
+    status: trace.status,
+    ...(typeof trace.latencyMs === "number"
+      ? { latencyMs: trace.latencyMs }
+      : {}),
+    ...(typeof trace.costUsd === "number" ? { costUsd: trace.costUsd } : {}),
+    ...(trace.source ? { source: trace.source } : {}),
+    ...(trace.provider ? { provider: trace.provider } : {}),
+    ...(trace.modelId ? { modelId: trace.modelId } : {}),
+    ...(typeof trace.inputTokens === "number"
+      ? { inputTokens: trace.inputTokens }
+      : {}),
+    ...(typeof trace.outputTokens === "number"
+      ? { outputTokens: trace.outputTokens }
+      : {}),
+    ...(typeof trace.totalTokens === "number"
+      ? { totalTokens: trace.totalTokens }
+      : {}),
+    ...(trace.agentVersion ? { agentVersion: trace.agentVersion } : {}),
+    ...(trace.outputDigest
+      ? {
+          outputDigest: trace.outputDigest,
+          outputDigestAlgorithm: "sha256",
+        }
+      : {}),
+    ...(Object.keys(metadata).length ? { metadata } : {}),
+  };
+}
 
 export function createLoopService({ store, obs, optimizer, memory, verifier, config }) {
   const ns = (agentId) => `agent:${agentId}`;
@@ -15,6 +56,30 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
     async putAgent(agent) {
       assertUsabilityModes(agent);
       return store.put("agents", agent);
+    },
+    async getInvocationCapability(agentId) {
+      const agent = await store.get("agents", agentId);
+      if (!agent) throw httpError(404, `No agent ${agentId}`);
+      const invoker = getInvoker(agent, config);
+      const artifactAvailable = invoker.canInvoke
+        ? await invoker.canInvoke(agent)
+        : true;
+      const configured = invoker.isConfigured
+        ? invoker.isConfigured()
+        : true;
+      return {
+        invocationType: agent.invocation?.type || "link",
+        mode: invoker.mode || agent.invocation?.mode || null,
+        serverRun: invoker.serverRun,
+        artifactAvailable,
+        configured,
+        runnable: invoker.serverRun && artifactAvailable && configured,
+        unavailableReason: !configured
+          ? "Runtime is not configured on the server"
+          : !artifactAvailable
+            ? "Server-owned runtime artifact is unavailable"
+            : null,
+      };
     },
 
     // ── context / memory (the fourth pillar) ──
@@ -41,9 +106,29 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
 
     // ── traces (observability) ──
     async recordTrace(agentId, trace) {
-      return obs.recordTrace({ ...trace, agentId });
+      return obs.recordTrace(metadataOnlyTrace(agentId, trace));
     },
     async listTraces(agentId, opts) { return obs.listTraces(agentId, opts); },
+    async recordFeedback(agentId, traceId, feedback) {
+      let trace = await store.get("traces", traceId);
+      if (!trace) {
+        const providerTraces = await obs.listTraces(agentId, { limit: 100 });
+        trace = providerTraces.find((candidate) => candidate.id === traceId);
+      }
+      if (!trace || trace.agentId !== agentId) {
+        throw httpError(404, "Trace not found");
+      }
+      const rating = Number(feedback?.rating);
+      if (!Number.isInteger(rating) || rating < 1 || rating > 5) {
+        throw httpError(400, "Feedback rating must be an integer from 1 to 5");
+      }
+      return store.append("feedback", {
+        agentId,
+        traceId,
+        rating,
+        createdAt: new Date().toISOString(),
+      });
+    },
 
     // ── run an agent where it lives, and record the run as a trace ──
     // This is what makes the directory usable, not a shelf — and every run
@@ -54,6 +139,12 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       const invoker = getInvoker(agent, config);
       if (!invoker.serverRun) {
         throw httpError(400, `"${agent.name}" is ${agent.invocation?.type || "link"}-invoked — open it where it lives or use its exported prompt/SKILL.md.`);
+      }
+      if (invoker.isConfigured && !invoker.isConfigured()) {
+        throw httpError(503, "Runtime is not configured on the server");
+      }
+      if (invoker.canInvoke && !(await invoker.canInvoke(agent))) {
+        throw httpError(503, `Runtime artifact unavailable for ${agentId}`);
       }
       const started = Date.now();
       // The invocation try wraps ONLY the invocation. Trace writes happen
@@ -67,15 +158,20 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         // the caller needs. A failing writer must not become the reported error.
         let trace = null;
         try {
-          trace = await obs.recordTrace({
+          trace = await obs.recordTrace(metadataOnlyTrace(agentId, {
             agentId,
-            input: JSON.stringify(inputs),
-            output: "",
             status: "error",
             latencyMs: Date.now() - started,
-            failureReason: message,
-            metadata: { via: invoker.name, failed: true },
-          });
+            source: invoker.name === "mock" ? "mock" : "real",
+            ...(invoker.provider ? { provider: invoker.provider } : {}),
+            ...(invoker.modelId ? { modelId: invoker.modelId } : {}),
+            agentVersion: agent.version,
+            metadata: {
+              via: invoker.name,
+              mode: invoker.mode,
+              failed: true,
+            },
+          }), { persistRuntime: invoker.name === "runtime" });
         } catch (persistError) {
           console.error(
             `[loop] failed run for ${agentId} could not be traced. invocation error: ${message}; persistence error: ${String(persistError?.message || persistError)}`,
@@ -97,15 +193,32 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       // fails, the output still has to reach the caller as a success.
       let trace = null;
       try {
-        trace = await obs.recordTrace({
+        trace = await obs.recordTrace(metadataOnlyTrace(agentId, {
           agentId,
-          input: JSON.stringify(inputs),
-          output: result.output,
           status: "ok",
-          costUsd: result.costUsd,
-          latencyMs: Date.now() - started,
-          metadata: { via: invoker.name },
-        });
+          latencyMs:
+            typeof result.latencyMs === "number"
+              ? result.latencyMs
+              : Date.now() - started,
+          source: invoker.name === "mock" ? "mock" : "real",
+          ...(typeof result.costUsd === "number"
+            ? { costUsd: result.costUsd }
+            : {}),
+          ...(result.provider ? { provider: result.provider } : {}),
+          ...(result.modelId ? { modelId: result.modelId } : {}),
+          ...(typeof result.inputTokens === "number"
+            ? { inputTokens: result.inputTokens }
+            : {}),
+          ...(typeof result.outputTokens === "number"
+            ? { outputTokens: result.outputTokens }
+            : {}),
+          ...(typeof result.totalTokens === "number"
+            ? { totalTokens: result.totalTokens }
+            : {}),
+          agentVersion: agent.version,
+          outputDigest: outputDigest(result.output),
+          metadata: { via: invoker.name, mode: invoker.mode },
+        }), { persistRuntime: invoker.name === "runtime" });
       } catch (persistError) {
         console.error(
           `[loop] successful run for ${agentId} could not be traced; persistence error: ${String(persistError?.message || persistError)}`,
@@ -115,6 +228,7 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         output: result.output,
         status: "ok",
         via: invoker.name,
+        mode: invoker.mode || null,
         traceId: trace?.id || null,
         tracePersisted:
           Boolean(trace) && trace.persisted !== false && Boolean(trace.id),
