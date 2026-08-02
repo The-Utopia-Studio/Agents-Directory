@@ -3,6 +3,10 @@
 // is selected here by name so the rest of the code never hard-codes one.
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
+import {
+  isRailwayEnvironment,
+  resolveDataDir,
+} from "./core/dataDir.js";
 
 function loadDotEnv() {
   try {
@@ -18,13 +22,17 @@ function loadDotEnv() {
 loadDotEnv();
 
 const env = process.env;
-const dataDir = env.DATA_DIR
-  ? env.DATA_DIR
-  : fileURLToPath(new URL("../data/", import.meta.url));
+// On Railway this throws at import if DATA_DIR is unset — before listen —
+// so a missing volume config can never look like a healthy deploy.
+const dataDir = resolveDataDir(env);
+const requirePersistentDataDir = isRailwayEnvironment(env);
 
 export const config = {
   port: Number(env.PORT || 8790),
   dataDir,
+  // True on Railway: the store root must already exist (volume mount) and is
+  // never created on the ephemeral container filesystem.
+  requirePersistentDataDir,
   corsOrigin: env.CORS_ORIGIN || "*",
   // Optional shared secret. When set, the router requires Authorization: Bearer.
   // When unset/empty, all routes stay open (local + zero-secrets deploy).

@@ -14,13 +14,18 @@ export const IMMUTABLE_COLLECTIONS = Object.freeze([
   "learnings",
 ]);
 
-export function createStore(dataDir) {
+export function createStore(dataDir, { createIfMissing = true } = {}) {
   const cache = new Map();       // collection -> Map(id -> doc)
   const writeQueues = new Map(); // collection -> Promise chain
   let ready = null;
 
   async function init() {
-    await mkdir(dataDir, { recursive: true });
+    // On Railway, assertDataDirReady has already verified the volume mount.
+    // Creating the root here would paper over a missing volume on ephemeral
+    // disk, so createIfMissing is false when persistence is required.
+    if (createIfMissing) {
+      await mkdir(dataDir, { recursive: true });
+    }
   }
 
   function file(coll) { return join(dataDir, `${coll}.json`); }

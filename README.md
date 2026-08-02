@@ -75,6 +75,21 @@ authoritative in pinned `AGENT.md`, and the brief surfaces its status-integrity
 rule that `Not reproducible` must not silently become `Verified`. The agent
 runs in Codex; there is no endpoint.
 
+A registry entry is only half of it: the agent must also exist in the store, or
+`/api/agents/:id/invocation-capability` returns 404 and there is nothing to
+attach the button to. `seedIfEmpty` is a first-boot path and will not touch a
+store that already has records, which is how A8 shipped a registered brief that
+no deploy could reach. `upsertServerOwnedAgents` in `server/src/scripts/seed.js`
+closes that gap on every boot: any seed agent with a registered runtime or
+handoff artifact is inserted if absent, and never overwritten if present, so a
+directory edit survives a restart.
+
+When that capability request fails, the detail view now renders the reason in
+the slot the button would have occupied — "Engagement brief unavailable — A8 is
+not registered on the server." A blank slot is indistinguishable from an agent
+that legitimately offers nothing, and reading a correct 404 then rendering
+nothing costs a manual API audit to discover what the server already said.
+
 The invocation adapters that exist today: `link` / `prompt` (manual, not
 server-run), `http` (call an endpoint, with SSRF-guarded fetch), `mock` (canned
 offline response), `runtime` (Anthropic Messages API using a server-owned skill
@@ -109,19 +124,19 @@ At boot the server computes `artifactDigest` as SHA-256 over the exact
 the UI, and used in the ZIP filename.
 
 The artifact declares its own stable, paste-surviving frontmatter label:
-`artifact_version: biocraft-singleshot-v2`. Runtime parses that label from the
+`artifact_version: biocraft-singleshot-v3`. Runtime parses that label from the
 same bytes; it is not duplicated in configuration. Copy does not prepend or
 alter anything, so re-hashing a pasted copy produces the recorded digest. ZIP
 filenames use the label directly, for example
-`A7-biocraft-singleshot-v2-<digest-prefix>.zip`.
+`A7-biocraft-singleshot-v3-<digest-prefix>.zip`.
 
-The same frontmatter also declares `guardrails` and `success_criteria`. The
-manifest reports those, never the mutable directory record, so what a reviewer
-is held to is covered by the digest and cannot drift from the executed prompt.
-Those lists are required: if either is missing or empty, `snapshotArtifact`
-throws at module load and the server process does not start. A regression test
-spawns that import path and asserts a non-zero exit — the guard is not a
-warning and must not be refactored into one silently.
+The same frontmatter also declares `guardrails`, `success_criteria`, and
+`checks`. The manifest reports the first two, never the mutable directory
+record, so what a reviewer is held to is covered by the digest and cannot drift
+from the executed prompt. All three lists are required; unknown check names
+also fail boot. A regression test spawns that import path and asserts a
+non-zero exit — the guard is not a warning and must not be refactored into one
+silently.
 
 ### v1 → v2 behaviour change (not byte-only)
 
@@ -138,6 +153,29 @@ An earlier claim that “model-facing prose is unchanged” was wrong. Ratings
 returned against `biocraft-singleshot-v1` are **not comparable** to ratings
 against `biocraft-singleshot-v2`. When any of these bytes change again,
 `artifact_version` must change with them.
+
+### v2 → v3 behaviour change
+
+`biocraft-singleshot-v3` incorporates Sarah's owner-approved bio method:
+positioning before drafting; 3–5 isolated hook candidates; Context → Proof →
+optional Method body structure; 5–8 keywords integrated into sentences; one
+explicit CTA in the final LinkedIn About paragraph; and a final specificity
+cut. The mobile-fold hook limit changes from 300 to **200 characters**. The
+About CTA is required, while a CTA in the third-person event introduction
+remains prohibited.
+
+The runtime now executes the artifact's three deterministic `checks:` after
+Anthropic returns: hook ≤200, no delimiter-separated keyword run in the About,
+and an explicit CTA in its final paragraph. A failed check returns 502 instead
+of presenting the output as a successful run. Ratings against v2 are **not
+comparable** to ratings against v3.
+
+The directory record mirrors the artifact's four success criteria and ten
+guardrails for display. Server seed refreshes those fields on boot, and the
+browser refreshes its localStorage A7 copy during hydration, so the UI cannot
+silently retain v2's 300-character rule. Sarah's browser/scheduler actions do
+not enter the prompt: the record SOP tells a human to paste the About into
+LinkedIn, check the fold on a phone, and set a 2–3 month refresh reminder.
 
 `server/src/artifacts/installArtifacts.js` resolves through the runtime
 registry; it has no separate artifact map. The browser sends only the agent ID.
@@ -245,6 +283,16 @@ matched zero tests — re-check the spelling.
 These are deliberate and known. Nothing here is aspirational — if a thing is
 off, it is off.
 
+- **On Railway, `DATA_DIR` must be `/data`.** Container disk is ephemeral.
+  The loop service detects Railway via `RAILWAY_ENVIRONMENT` /
+  `RAILWAY_SERVICE_ID` and refuses to start unless `DATA_DIR` is exactly
+  `/data` and that path already exists and is writable (a Volume mounted
+  there). It will not accept `/tmp` or any other directory, and will not
+  `mkdir` `/data` on ephemeral storage — either would look like persistence
+  while wiping traces, feedback, and loop history on every deploy. First
+  boot against an empty volume runs `seedIfEmpty`; later boots are no-ops
+  for seeding, and new server-owned agents still need the explicit upsert.
+  Dashboard steps: `docs/DEPLOYMENT.md`.
 - **The Convex authority layer is not yet wired to the running app.** Approvals
   in the live product do **not** go through `reviews.ts` today — the front-end
   still reads and writes `localStorage`, and the loop service keeps its own

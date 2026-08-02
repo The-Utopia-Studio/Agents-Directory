@@ -19,11 +19,30 @@ import {
 import {
   getRuntimeInputContract,
   resolveRuntimeInputs,
+  validateRuntimeArtifactOutput,
 } from "../src/invoke/runtimeArtifacts.js";
 import { SEED_AGENTS } from "../src/scripts/seed.js";
 import { createStore } from "../src/core/store.js";
 import { buildApp } from "../src/http/server.js";
 import { config } from "../src/config.js";
+
+const VALID_BIOCRAFT_OUTPUT = `### LinkedIn About
+
+I help venture teams turn complex ideas into practical tools.
+
+I have spent two years building workflow systems for early-stage teams.
+
+One delivery validated 167 acceptance criteria across five working screens.
+
+If your venture team needs a clearer path from idea to build, reach out.
+
+### Spoken event introduction
+
+Test Fellow builds grounded workflow systems for venture teams.
+
+### Suggested headline
+
+Agentic workflow builder for venture teams`;
 
 test("HTTP invocation rejects local, encoded, private, and metadata targets", async () => {
   assert.deepEqual(SAFE_INVOCATION_HEADERS, {
@@ -292,6 +311,79 @@ test("single-shot inputs resolve by contract alias, not by editable record label
   );
 });
 
+test("Biocraft v3 mechanical checks reject hook, keyword-run, and CTA regressions", () => {
+  assert.deepEqual(
+    validateRuntimeArtifactOutput("A7", VALID_BIOCRAFT_OUTPUT),
+    [],
+  );
+
+  const longHook = VALID_BIOCRAFT_OUTPUT.replace(
+    "I help venture teams turn complex ideas into practical tools.",
+    `I ${"help venture teams ship grounded systems ".repeat(7)}`,
+  );
+  assert.match(
+    validateRuntimeArtifactOutput("A7", longHook).join("; "),
+    /hook is \d+ characters; maximum is 200/,
+  );
+
+  const keywordRun = VALID_BIOCRAFT_OUTPUT.replace(
+    "One delivery validated 167 acceptance criteria across five working screens.",
+    "n8n · AI automation · Agentic systems · LLMs",
+  );
+  assert.deepEqual(validateRuntimeArtifactOutput("A7", keywordRun), [
+    "LinkedIn About contains a delimiter-separated keyword run",
+  ]);
+
+  const noAboutCta = VALID_BIOCRAFT_OUTPUT.replace(
+    "If your venture team needs a clearer path from idea to build, reach out.",
+    "The work stays grounded in the supplied evidence.",
+  ).replace(
+    "Test Fellow builds grounded workflow systems for venture teams.",
+    "Test Fellow builds grounded workflow systems for venture teams. Reach out.",
+  );
+  assert.deepEqual(validateRuntimeArtifactOutput("A7", noAboutCta), [
+    "LinkedIn About final paragraph has no explicit CTA",
+  ]);
+});
+
+test("runtime refuses an Anthropic output that fails a declared mechanical check", async () => {
+  const invoker = runtimeInvoker(
+    runtimeConfig({
+      fetch: async () => ({
+        ok: true,
+        json: async () => ({
+          model: "claude-sonnet-4-6",
+          content: [
+            {
+              type: "text",
+              text: VALID_BIOCRAFT_OUTPUT.replace(
+                "If your venture team needs a clearer path from idea to build, reach out.",
+                "The work stays grounded in supplied evidence.",
+              ),
+            },
+          ],
+        }),
+      }),
+    }),
+  );
+
+  await assert.rejects(
+    () =>
+      invoker.invoke(
+        { id: "A7", invocation: { type: "runtime", mode: "single-shot" } },
+        {
+          fellowName: "Test Fellow",
+          sourceMaterial: "Grounded source material.",
+        },
+      ),
+    (error) => {
+      assert.equal(error.status, 502);
+      assert.match(error.message, /final paragraph has no explicit CTA/);
+      return true;
+    },
+  );
+});
+
 test("single-shot run forwards only contract fields to Anthropic", async () => {
   let request;
   const invoker = runtimeInvoker(
@@ -302,7 +394,7 @@ test("single-shot run forwards only contract fields to Anthropic", async () => {
           ok: true,
           json: async () => ({
             model: "claude-sonnet-4-6",
-            content: [{ type: "text", text: "Draft bio." }],
+            content: [{ type: "text", text: VALID_BIOCRAFT_OUTPUT }],
           }),
         };
       },
@@ -468,7 +560,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
             content: [
               {
                 type: "text",
-                text: "Test Fellow builds practical tools for venture teams.",
+                text: VALID_BIOCRAFT_OUTPUT,
               },
             ],
             usage: { input_tokens: 2345, output_tokens: 17 },
@@ -504,7 +596,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     ["LinkedIn URL", "Google Drive folder or pitch deck", "Local file path"],
   );
   assert.equal(installArtifact.available, true);
-  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v2");
+  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v3");
   assert.match(installArtifact.artifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(installArtifact.artifactDigestAlgorithm, "sha256");
 
@@ -537,13 +629,13 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   const run = await response.json();
   assert.equal(
     run.output,
-    "Test Fellow builds practical tools for venture teams.",
+    VALID_BIOCRAFT_OUTPUT,
   );
   assert.equal(run.status, "ok");
   assert.equal(run.via, "runtime");
   assert.equal(run.mode, "single-shot");
   assert.equal(run.agentVersion, "1.0");
-  assert.equal(run.artifactVersion, "biocraft-singleshot-v2");
+  assert.equal(run.artifactVersion, "biocraft-singleshot-v3");
   assert.equal(
     run.artifactDigest,
     createHash("sha256").update(request.body.system).digest("hex"),
@@ -574,7 +666,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(trace.metadata.via, "runtime");
   assert.equal(trace.metadata.mode, "single-shot");
   assert.equal(trace.agentVersion, "1.0");
-  assert.equal(trace.artifactVersion, "biocraft-singleshot-v2");
+  assert.equal(trace.artifactVersion, "biocraft-singleshot-v3");
   assert.equal(trace.artifactDigest, run.artifactDigest);
   assert.equal(trace.artifactDigestAlgorithm, "sha256");
   assert.equal("agentVersionId" in trace, false);
@@ -658,7 +750,7 @@ test("feedback notes gate off rejects notes but still accepts the rating", async
       ok: true,
       json: async () => ({
         model: "claude-sonnet-4-6",
-        content: [{ type: "text", text: "Draft bio." }],
+        content: [{ type: "text", text: VALID_BIOCRAFT_OUTPUT }],
       }),
     }),
   });
@@ -771,6 +863,13 @@ test("usability modes remain separate from the scalar invocation adapter", async
     /capability\.serverRun&&capability\.artifactAvailable&&capability\.configured&&capability\.runnable/,
   );
   assert.match(appSource, /This is not the full \/biocraft agent/);
+  assert.match(appSource, /LinkedIn About hook is 200 characters or fewer/);
+  assert.match(
+    appSource,
+    /Do not add a CTA to the third-person event introduction/,
+  );
+  assert.match(appSource, /check the fold on a phone/);
+  assert.match(appSource, /refresh the bio in 2–3 months/);
   assert.match(appSource, /Copy single-shot SKILL\.md/);
   assert.match(appSource, /Download single-shot \(\.zip\)/);
   assert.match(appSource, /const install=capability\.installArtifact;/);
@@ -786,6 +885,18 @@ test("usability modes remain separate from the scalar invocation adapter", async
     appSource,
     /function canHandoff\(a\)\{return hasUsabilityMode\(a,"prepared-handoff"\)\}/,
   );
+  // A capability request that fails must say so. Blanking the slots renders an
+  // agent that offers nothing, identical to an agent that legitimately has
+  // nothing, and only a manual API audit tells the two apart.
+  assert.doesNotMatch(
+    appSource,
+    /catch\(e\)\{[^}]*handoffSlot\.innerHTML=""/,
+  );
+  assert.match(
+    appSource,
+    /is not registered on the server\./,
+  );
+  assert.match(appSource, /\$\{label\} unavailable — \$\{escHtml\(detail\)\}/);
   // The client must not reassemble a skill file from directory metadata.
   assert.doesNotMatch(appSource, /function buildSkillMd/);
   assert.doesNotMatch(appSource, /copyAgentSkill/);

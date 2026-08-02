@@ -416,11 +416,13 @@ Railway Docker build uses 20. Local `npm start` needs ≥18.
 
 **Railway ephemeral filesystem:** container disk is **not durable**. Redeploy / restart / scale-to-zero → **`./data` is wiped** → service re-seeds from scratch (looks “fresh” every time).
 
-**Fixes (pick one later):**
+**Required fix on Railway:**
 
-1. Attach a **Railway Volume** mounted at e.g. `/data` and set `DATA_DIR=/data`  
-2. Swap the store adapter to Postgres/Convex (already the architectural direction in `AGENTS.md`)  
-3. Accept ephemeral demo data for a first smoke deploy
+1. Attach a **Railway Volume** mounted at `/data`
+2. Set `DATA_DIR=/data` on the loop service
+3. Redeploy — boot **fails closed** if `DATA_DIR` is unset or the mount is missing/unwritable (no silent mkdir onto ephemeral disk)
+
+See `docs/DEPLOYMENT.md` § Railway volume. Longer-term, swap the store adapter to Postgres/Convex (architectural direction in `AGENTS.md`).
 
 ---
 
@@ -443,15 +445,20 @@ Do these in order.
 5. **Generate a public domain**  
    Settings → Networking → Generate domain. Copy `https://<service>.up.railway.app`.
 
+5b. **Attach a Volume** (Settings → Volumes → Add Volume)  
+   Mount path: `/data`. Without this the service exits on boot rather than
+   writing evidence to ephemeral disk.
+
 6. **Environment variables (zero-secrets first)**  
    Minimum recommended:
+   - `DATA_DIR` = `/data` *(must match the volume mount; required on Railway)*  
    - `CORS_ORIGIN` = `*` *(or your Vercel origin once known)*  
    Leave providers unset (defaults = local/heuristic).  
    Do **not** set `PORT` (Railway injects it).  
    Do **not** set `LOOP_AUTOAPPLY=true` for first deploy.
 
 7. **Deploy / wait for healthy**  
-   Verify in Railway logs: `[loop] listening on :<port> obs=local(ok) optimizer=heuristic memory=local`  
+   Verify in Railway logs: `[loop] listening on :<port> dataDir=/data (Railway volume required) obs=local(ok) …`  
    Verify in browser or curl:  
    `curl -s https://<service>.up.railway.app/api/health` → `"ok":true`.
 
@@ -469,7 +476,10 @@ Do these in order.
    - “Propose improvement” toast should mention the live optimizer source (e.g. `heuristic`), not only the offline stub.  
    - DevTools Network: requests to `https://<railway>/api/...` return 200.
 
-10. **(Optional later)** Tighten `CORS_ORIGIN` to the exact Vercel origin; add a Volume + `DATA_DIR`; then keys for Supermemory/Langfuse/GEPA one at a time.
+10. **Attach the volume before treating evidence as real.** Settings → Volumes →
+    mount `/data`, set `DATA_DIR=/data`, redeploy. Without this the process now
+    refuses to start on Railway rather than writing to ephemeral disk. Then add
+    keys for Supermemory/Langfuse/GEPA one at a time.
 
 ---
 
@@ -481,7 +491,7 @@ Do these in order.
 | **No public domain** | Health works internally, browser can’t reach | Enable public networking / generate domain |
 | **Front-end still on localhost:8790** | Automations never appear; Network tab shows failed calls to localhost | Set `directory_api_base` or `DIRECTORY_API_BASE` to Railway HTTPS URL |
 | **CORS mismatch** | Browser blocks with CORS error after you set a wrong single origin | Align `CORS_ORIGIN` exactly with `https://….vercel.app`, or use `*` for smoke test |
-| **Ephemeral data loss** | Agents/traces/proposals reset every redeploy | Expected without a volume; mount volume or migrate store |
+| **Ephemeral data loss / boot refuse** | Deploy crash-loops with `DATA_DIR must be set` or `missing or not mounted` | Attach Volume at `/data`, set `DATA_DIR=/data`, redeploy. Do not mkdir `/data` in the image. |
 | **Agent ID mismatch** | Propose/approve 404 for custom UI agents | Server only has seeded A1–A6 until you PUT agents; localStorage and server are separate |
 | **Docker `wget` HEALTHCHECK** | Container marked unhealthy on hosts that use Dockerfile HEALTHCHECK | Railway uses HTTP `healthcheckPath` instead; ignore unless a different host fails |
 | **HTTPS mixed content** | Page on HTTPS calling `http://…` blocked | Always use Railway’s `https://` URL |

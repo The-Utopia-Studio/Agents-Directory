@@ -130,13 +130,13 @@ const SEED_AGENTS=[
 
   {id:"A7",name:"Biocraft single-shot draft",tagline:"A stateless text-only draft mode inspired by /biocraft. It requires all source material up front and has no Chrome or Drive tools.",description:"This is not the full /biocraft agent. It makes one Anthropic call with no conversation state, browser tools, Drive tools, or HTML rendering.",platform:"Claude",status:"Experimental",category:"Personal Branding",owner:"Sarah",initials:"SA",model:"Claude Sonnet 4.6",version:"1.0",
     objective:"Draft a LinkedIn About bio, spoken event introduction, and headline from complete source material supplied in one request.",
-    successCriteria:["LinkedIn About stays within 2,600 characters","Headline stays within 220 characters","Every fact and metric is grounded in supplied material"],
-    guardrails:["Never fabricate a metric, achievement, or credential","No AI cliché, emoji, exclamation points, or em dashes"],
+    successCriteria:["LinkedIn About hook is 200 characters or fewer","Full LinkedIn About text is 2,600 characters or fewer","Suggested LinkedIn headline is 220 characters or fewer","Spoken event introduction reads aloud in 20 to 30 seconds"],
+    guardrails:["Never fabricate or alter a metric, achievement, employer relationship, credential, quote, role, or job title.","Distinguish work done for a company from founding or owning that company.","Preserve qualifiers such as Intern, Participant, and Apprenticeship.","Do not use an em dash or a double hyphen as an em-dash substitute.","Do not use emoji, exclamation points, hedging, or unnecessary passive voice.","Remove AI cliche and these terms on sight: utilize, leverage, facilitate, innovative, robust, seamless, cutting-edge, unlock, elevate, passionate, synergy, game-changer, revolutionize, revolutionary.","Do not use \"it is not X, it is Y\" contrast framing.","Do not report or annotate character counts. The host validates limits; a model-generated count is not evidence.","If a supplied quote is not grounded clearly enough to attribute, omit it.","Do not add a CTA to the third-person event introduction. The required CTA belongs only in the LinkedIn About."],
     autonomyLevel:"L1",
     invocation:{type:"runtime",mode:"single-shot",artifact:"biocraft/SKILL.md"},
     usabilityModes:["hosted-run","download-install"],
-    when:"When all source material and interview answers are already available for a single drafting pass. Use the full /biocraft workflow when Chrome, Drive, or follow-up questions are required.",
-    sop:"1. Gather the fellow's name, source material, achievements, mission, skills, contact preference, and exclusions before starting\n2. Paste everything into the single source-material field\n3. Run one text-only draft\n4. Review every claim before using the output",
+    when:"When creating or updating a fellow's LinkedIn bio, spoken event introduction, or headline from complete supplied material. After drafting, check the LinkedIn About fold on a phone and refresh the bio every 2–3 months.",
+    sop:"1. Gather the fellow's name, source material, achievements, mission, skills, contact preference, and exclusions before starting\n2. Paste everything into the single source-material field\n3. Run one text-only draft\n4. Review every claim before using the output\n5. Paste the About into LinkedIn and check the fold on a phone; the hook should fit before “See more”\n6. Set a reminder to refresh the bio in 2–3 months",
     inputs:["Fellow name","All source material and interview answers (required upfront)"],outputs:["Draft LinkedIn About bio","Draft spoken event introduction","Draft suggested headline"],
     skills:["biocraft","personal-branding","copywriting"],tools:[],context:["Complete fellow source material supplied up front"],
     accessUrl:"",repoUrl:"",evalHistory:[],
@@ -164,7 +164,13 @@ function hydrate(){
       const seededA7=SEED_AGENTS.find(a=>a.id==="A7"),index=agents.findIndex(a=>a.id==="A7");
       let changed=false;
       if(index<0){agents.push(JSON.parse(JSON.stringify(seededA7)));changed=true}
-      else if(agents[index].name==="/biocraft"||!agents[index].invocation||agents[index].invocation.mode!=="single-shot"){const prior=agents[index];agents[index]={...JSON.parse(JSON.stringify(seededA7)),evalHistory:prior.evalHistory||[],proposedImprovement:prior.proposedImprovement||null};changed=true}
+      else{
+        const prior=agents[index],fields=["name","tagline","description","owner","objective","successCriteria","guardrails","invocation","usabilityModes","when","sop","inputs","outputs","skills","tools","context"];
+        if(fields.some(key=>JSON.stringify(prior[key])!==JSON.stringify(seededA7[key]))){
+          agents[index]={...prior,...Object.fromEntries(fields.map(key=>[key,JSON.parse(JSON.stringify(seededA7[key]))]))};
+          changed=true;
+        }
+      }
       nextAgentNum=Math.max(Number(nextAgentNum)||1,8);if(changed)persist();return
     }
   }catch(e){}
@@ -737,7 +743,11 @@ function slug(s){return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").repla
 const runCapabilities={};
 async function loadRunCapability(id){
   const a=agents.find(x=>x.id===id),slot=document.getElementById("run-action"),installSlot=document.getElementById("install-actions"),handoffSlot=document.getElementById("handoff-actions");
-  if(!a||!(window.DirectoryAPI&&DirectoryAPI.enabled))return;
+  if(!a)return;
+  if(!(window.DirectoryAPI&&DirectoryAPI.enabled)){
+    showCapabilityFailure(a,{slot,installSlot,handoffSlot},"this page is running without a directory server, and every one of these artifacts is server-owned.");
+    return;
+  }
   try{
     const capability=await DirectoryAPI.invocationCapability(id);
     runCapabilities[id]=capability;
@@ -758,7 +768,22 @@ async function loadRunCapability(id){
       if(handoff&&handoff.available)handoffSlot.innerHTML=`<button class="btn btn-sm" onclick="copyHandoffBriefing('${id}')">Copy engagement brief</button><span class="artifact-pin">The agent lives at <a href="${escHtml(handoff.repoUrl)}" target="_blank" rel="noopener">${escHtml(handoff.repoUrl)}</a> · <strong>${escHtml(handoff.briefVersion)}</strong> · commit <code>${escHtml(handoff.commitSha)}</code></span>`;
       else handoffSlot.innerHTML=`<span class="run-unavailable">${escHtml((handoff&&handoff.reason)||"No pinned handoff package is registered for this agent.")}</span>`;
     }
-  }catch(e){delete runCapabilities[id];if(slot)slot.innerHTML="";if(installSlot)installSlot.innerHTML="";if(handoffSlot)handoffSlot.innerHTML=""}
+  }catch(e){
+    // An empty slot where a request failed is indistinguishable from an agent
+    // that legitimately offers nothing, which forces a hand audit of the API to
+    // find out which happened. Render the reason the server actually gave.
+    delete runCapabilities[id];
+    const detail=e&&e.status===404?`${id} is not registered on the server.`:String((e&&e.message)||e);
+    showCapabilityFailure(a,{slot,installSlot,handoffSlot},detail);
+  }
+}
+
+// Same slots, same wording, whether the request failed or was never attempted.
+function showCapabilityFailure(a,slots,detail){
+  const note=(label)=>`<span class="run-unavailable">${label} unavailable — ${escHtml(detail)}</span>`;
+  if(slots.slot&&hasUsabilityMode(a,"hosted-run"))slots.slot.innerHTML=note("Run");
+  if(slots.installSlot&&canInstall(a))slots.installSlot.innerHTML=note("Install artifact");
+  if(slots.handoffSlot&&canHandoff(a))slots.handoffSlot.innerHTML=note("Engagement brief");
 }
 
 // The agent definition (four pillars) → a portable system prompt. This is what

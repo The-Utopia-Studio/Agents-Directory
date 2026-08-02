@@ -12,6 +12,24 @@ import { buildApp } from "../src/http/server.js";
 import { runtimeInvoker } from "../src/invoke/index.js";
 import { config } from "../src/config.js";
 
+const VALID_OUTPUT = `### LinkedIn About
+
+I help venture teams turn complex ideas into practical tools.
+
+I build grounded workflow systems for early-stage teams.
+
+One delivery validated 167 acceptance criteria across five screens.
+
+If your team needs a clearer path from idea to build, reach out.
+
+### Spoken event introduction
+
+Test Fellow builds grounded workflow systems for venture teams.
+
+### Suggested headline
+
+Workflow builder for venture teams`;
+
 const ARTIFACTS_ROOT = join(
   dirname(fileURLToPath(import.meta.url)),
   "../src/artifacts",
@@ -96,14 +114,14 @@ test("A7 copy export is byte-for-byte the system artifact runtime executes", asy
   assert.equal(exported.kind, "single-shot");
   assert.equal(exported.artifactDigest, expectedDigest);
   assert.equal(exported.artifactDigestAlgorithm, "sha256");
-  assert.equal(exported.artifactVersion, "biocraft-singleshot-v2");
+  assert.equal(exported.artifactVersion, "biocraft-singleshot-v3");
   assert.equal(
     exported.filename,
-    `A7-biocraft-singleshot-v2-${expectedDigest.slice(0, 7)}-SKILL.md`,
+    `A7-biocraft-singleshot-v3-${expectedDigest.slice(0, 7)}-SKILL.md`,
   );
   assert.match(
     exported.content,
-    /^artifact_version: biocraft-singleshot-v2$/m,
+    /^artifact_version: biocraft-singleshot-v3$/m,
   );
   assert.doesNotMatch(exported.content, /artifact-(?:commit|digest):/);
   assert.match(exported.content, /## Mode boundary/);
@@ -124,7 +142,7 @@ test("A7 copy export is byte-for-byte the system artifact runtime executes", asy
             ok: true,
             json: async () => ({
               model: "claude-sonnet-4-6",
-              content: [{ type: "text", text: "Draft bio." }],
+              content: [{ type: "text", text: VALID_OUTPUT }],
             }),
           };
         },
@@ -173,7 +191,7 @@ test("A7 ZIP contains the runtime folder and follows the evaluated version", asy
   assert.equal(response.headers.get("x-artifact-digest"), expectedDigest);
   assert.equal(
     response.headers.get("content-disposition"),
-    `attachment; filename="A7-biocraft-singleshot-v2-${expectedDigest.slice(0, 7)}.zip"`,
+    `attachment; filename="A7-biocraft-singleshot-v3-${expectedDigest.slice(0, 7)}.zip"`,
   );
   const manifest = files.get("MANIFEST.md").toString();
   assert.match(manifest, /Agent name: Biocraft single-shot draft/);
@@ -184,7 +202,7 @@ test("A7 ZIP contains the runtime folder and follows the evaluated version", asy
   // appears only as a cross-reference, in prose that says so.
   assert.match(
     manifest,
-    /\*\*Artifact version — quote this when returning a result:\*\*\n`biocraft-singleshot-v2`/,
+    /\*\*Artifact version — quote this when returning a result:\*\*\n`biocraft-singleshot-v3`/,
   );
   assert.match(
     manifest,
@@ -206,16 +224,24 @@ test("A7 ZIP contains the runtime folder and follows the evaluated version", asy
   assert.doesNotMatch(manifest, /Directory-record criterion/);
   assert.match(manifest, /Never fabricate or alter a metric/);
   assert.match(manifest, /Preserve qualifiers such as Intern/);
-  assert.match(manifest, /LinkedIn About hook is 300 characters or fewer/);
+  assert.match(manifest, /LinkedIn About hook is 200 characters or fewer/);
   assert.match(manifest, /Spoken event introduction reads aloud in 20 to 30/);
+  assert.match(
+    manifest,
+    /Do not add a CTA to the third-person event introduction/,
+  );
   const guardrailBullets = manifest
     .split("## Guardrails")[1]
     .split("## Success criteria")[0]
     .match(/^- /gm);
-  assert.equal(guardrailBullets.length, 9);
+  assert.equal(guardrailBullets.length, 10);
   // The frontmatter declaration and the prose the model reads must stay in step.
   const skillGuardrails = skill.split("\n## Guardrails\n")[1];
   assert.equal(skillGuardrails.match(/^\d+\. /gm).length, guardrailBullets.length);
+  assert.match(skill, /^checks:\n(?:  - .+\n){3}/m);
+  assert.match(skill, /about_hook_max_200_characters/);
+  assert.match(skill, /about_has_no_delimiter_separated_keyword_run/);
+  assert.match(skill, /about_final_paragraph_has_cta/);
 
   // The count in the sentence must match the list it introduces.
   const returnBlock = manifest.split("## Return a result")[1];
@@ -250,7 +276,7 @@ artifact_version: boot-fail-v0
     {
       name: "guardrails missing",
       body: `${baseFrontmatter}success_criteria:
-  - LinkedIn About hook is 300 characters or fewer
+  - LinkedIn About hook is 200 characters or fewer
 ---\n\n# Fixture\n`,
     },
     {
@@ -263,7 +289,7 @@ artifact_version: boot-fail-v0
       name: "guardrails empty",
       body: `${baseFrontmatter}guardrails:
 success_criteria:
-  - LinkedIn About hook is 300 characters or fewer
+  - LinkedIn About hook is 200 characters or fewer
 ---\n\n# Fixture\n`,
     },
     {
@@ -292,6 +318,40 @@ success_criteria:
       false,
       `${fixture.name}: must not continue after the throw`,
     );
+  }
+});
+
+test("boot aborts when mechanical checks are missing or unknown", async () => {
+  const base = `---
+name: boot-fail-check-fixture
+description: Fixture for check validation.
+artifact-mode: single-shot
+artifact_version: boot-fail-check-v0
+guardrails:
+  - Never fabricate a metric
+success_criteria:
+  - LinkedIn About hook is 200 characters or fewer
+`;
+  const cases = [
+    {
+      name: "missing checks",
+      body: `${base}---\n\n# Fixture\n`,
+      expected: /Artifact loaded without frontmatter checks/,
+    },
+    {
+      name: "unknown check",
+      body: `${base}checks:
+  - check_that_no_runtime_implements
+---\n\n# Fixture\n`,
+      expected: /unknown runtime check.*check_that_no_runtime_implements/,
+    },
+  ];
+
+  for (const fixture of cases) {
+    const result = await spawnBootWithSkill(fixture.body);
+    assert.notEqual(result.status, 0, `${fixture.name}: process must exit non-zero`);
+    assert.match(result.stderr, fixture.expected);
+    assert.equal(/boot-continued/.test(result.stdout), false);
   }
 });
 

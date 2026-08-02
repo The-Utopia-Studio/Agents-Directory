@@ -25,7 +25,44 @@ Zero runtime dependencies + a `Dockerfile`, so it runs on any container host.
 1. New Project → Deploy from GitHub repo → this repo.
 2. Set the service **Root Directory** to `server`.
 3. Railway reads `server/railway.json` (Dockerfile build, health check at `/api/health`).
-4. Add environment variables (below). Deploy. Copy the public URL.
+4. **Attach a volume** (required for durable evidence — see below).
+5. Add environment variables (below). Deploy. Copy the public URL.
+
+#### Railway volume — durable `DATA_DIR` (required on Railway)
+
+Container disk is ephemeral. Without a volume, every deploy wipes traces,
+feedback, scores, and loop history, and the improvement loop can never
+accumulate evidence. On Railway the process **refuses to start** unless
+`DATA_DIR` points at an existing writable mount — it will not fall back to
+image-local storage. On Railway, `DATA_DIR` must be exactly `/data` (not
+`/tmp` or another writable path); the app cannot prove a mount is a volume,
+but it can refuse configuration that redirects persistence elsewhere.
+
+In the Railway dashboard, on the **loop service** (Root Directory = `server`):
+
+1. **Settings → Volumes → Add Volume**
+2. **Mount path:** `/data` (must match `DATA_DIR`)
+3. **Variables → New Variable**
+   - Name: `DATA_DIR`
+   - Value: `/data`
+4. Redeploy.
+
+| Setting | Value |
+|---|---|
+| Service | the loop/`server` service (not the static front-end) |
+| Volume mount path | `/data` |
+| Env var | `DATA_DIR=/data` |
+
+**First boot with an empty volume:** the mount path exists and is empty.
+`seedIfEmpty` writes the catalogue agents (including A7 and A8). Seed is
+idempotent: a later deploy against a volume that already has `agents.json`
+does **not** re-seed. New server-owned agents still need the explicit upsert
+in `seed.js` (`upsertServerOwnedAgents`) — a seed entry alone will not reach
+a non-empty volume (that is how A8 stayed missing until the upsert).
+
+**Missing volume or unset `DATA_DIR`:** boot exits non-zero with an explicit
+error. Do not “fix” that by letting the app `mkdir` `/data` on ephemeral
+disk — that recreates the silent-wipe bug.
 
 ### Render (alternative)
 - The repo includes `render.yaml` (a blueprint). New → Blueprint → pick the repo.
@@ -49,6 +86,7 @@ same setup.
 
 | Variable | Example | Secret? | Notes |
 |---|---|---|---|
+| `DATA_DIR` | `/data` | no | **Required on Railway.** Must be exactly `/data`. Boot fails if unset, anything else (e.g. `/tmp`), missing, or unwritable. |
 | `MEMORY_PROVIDER` | `supermemory` | no | `local` (default) · `supermemory` · `activeloop` |
 | `SUPERMEMORY_API_KEY` | `sk-…` | **yes** | from the Supermemory console |
 | `ACTIVELOOP_TOKEN` | `…` | **yes** | Utopia Deep Lake org (if using activeloop) |

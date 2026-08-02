@@ -9,6 +9,11 @@ import { relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ARTIFACTS_ROOT = new URL("../artifacts/", import.meta.url);
+const RUNTIME_CHECKS = new Set([
+  "about_hook_max_200_characters",
+  "about_has_no_delimiter_separated_keyword_run",
+  "about_final_paragraph_has_cta",
+]);
 
 /** Exported so the boot-failure test can assert the same throw the module uses at import. */
 export function snapshotArtifact(directoryUrl, primaryName) {
@@ -76,11 +81,21 @@ export function snapshotArtifact(directoryUrl, primaryName) {
   }
   const guardrails = frontmatterList(frontmatter, "guardrails");
   const successCriteria = frontmatterList(frontmatter, "success_criteria");
+  const checks = frontmatterList(frontmatter, "checks");
   // Declared beside the prompt so the manifest, the digest, and the executed
   // bytes cannot disagree. Absence is a defect, not an empty section.
   if (!guardrails.length || !successCriteria.length) {
     throw new Error(
       "Artifact loaded without frontmatter guardrails and success_criteria",
+    );
+  }
+  if (!checks.length) {
+    throw new Error("Artifact loaded without frontmatter checks");
+  }
+  const unknownChecks = checks.filter((check) => !RUNTIME_CHECKS.has(check));
+  if (unknownChecks.length) {
+    throw new Error(
+      `Artifact loaded with unknown runtime check(s): ${unknownChecks.join(", ")}`,
     );
   }
   return {
@@ -89,6 +104,7 @@ export function snapshotArtifact(directoryUrl, primaryName) {
     artifactVersion,
     guardrails,
     successCriteria,
+    checks,
     artifactDigest,
     artifactDigestAlgorithm: "sha256",
   };
@@ -227,6 +243,7 @@ export function getRuntimeArtifactDescriptor(agentId) {
     artifactVersion: artifact.snapshot.artifactVersion,
     guardrails: [...artifact.snapshot.guardrails],
     successCriteria: [...artifact.snapshot.successCriteria],
+    checks: [...artifact.snapshot.checks],
     artifactDigest: artifact.snapshot.artifactDigest,
     artifactDigestAlgorithm: artifact.snapshot.artifactDigestAlgorithm,
     files: artifact.snapshot.files.map((file) => ({
@@ -235,6 +252,68 @@ export function getRuntimeArtifactDescriptor(agentId) {
     })),
     descriptions: artifact.descriptions,
   };
+}
+
+function markdownSection(output, heading) {
+  const escaped = heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return String(output)
+    .match(
+      new RegExp(
+        `^###\\s+${escaped}\\s*$\\n([\\s\\S]*?)(?=^###\\s+|(?![\\s\\S]))`,
+        "m",
+      ),
+    )?.[1]
+    ?.trim();
+}
+
+function visibleText(markdown) {
+  return String(markdown)
+    .replace(/\[([^\]]+)\]\([^)]+\)/g, "$1")
+    .replace(/[*_`#>]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/**
+ * Execute the checks declared in the same server-owned bytes used as the
+ * system prompt. This prevents a `checks:` block from being documentation
+ * that the runtime silently ignores.
+ */
+export function validateRuntimeArtifactOutput(agentId, output) {
+  const artifact = RUNTIME_ARTIFACTS[agentId];
+  const checks = artifact?.snapshot?.checks || [];
+  if (!checks.length) return [];
+
+  const failures = [];
+  const about = markdownSection(output, "LinkedIn About");
+  if (!about) {
+    return ["LinkedIn About section is missing or not labelled exactly"];
+  }
+  const paragraphs = about.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
+  const hook = visibleText(paragraphs[0] || "");
+  const finalParagraph = visibleText(paragraphs.at(-1) || "");
+
+  if (
+    checks.includes("about_hook_max_200_characters") &&
+    hook.length > 200
+  ) {
+    failures.push(`LinkedIn About hook is ${hook.length} characters; maximum is 200`);
+  }
+  if (
+    checks.includes("about_has_no_delimiter_separated_keyword_run") &&
+    /(?:[·|•][^·|•\n]*){2,}/.test(about)
+  ) {
+    failures.push("LinkedIn About contains a delimiter-separated keyword run");
+  }
+  if (
+    checks.includes("about_final_paragraph_has_cta") &&
+    !/\b(?:open to|reach out|contact me|email me|message me|send me|dm me|connect with me|let'?s (?:connect|talk)|get in touch|hear from you|find me at|work with me)\b/i.test(
+      finalParagraph,
+    )
+  ) {
+    failures.push("LinkedIn About final paragraph has no explicit CTA");
+  }
+  return failures;
 }
 
 /** Public contract: stable keys, labels, and the inputs this mode cannot read. */

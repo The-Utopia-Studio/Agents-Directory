@@ -15,6 +15,7 @@ import {
   hasRuntimeArtifact,
   loadRuntimeArtifact,
   resolveRuntimeInputs,
+  validateRuntimeArtifactOutput,
 } from "./runtimeArtifacts.js";
 
 export const RUNTIME_TIMEOUT_MS = 120_000;
@@ -210,6 +211,15 @@ export function runtimeInvoker(config = {}) {
         throw Object.assign(
           new Error("Anthropic Messages API returned no text output"),
           { status: 502 },
+        );
+      }
+      const checkFailures = validateRuntimeArtifactOutput(agent.id, output);
+      if (checkFailures.length) {
+        throw Object.assign(
+          new Error(
+            `Runtime output failed mechanical checks: ${checkFailures.join("; ")}`,
+          ),
+          { status: 502, runtimeSafe: true },
         );
       }
 

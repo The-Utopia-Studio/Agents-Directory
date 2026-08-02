@@ -13,6 +13,33 @@ async function tempStore() {
   return createStore(dir);
 }
 
+test("an already-populated store still gains agents whose artifact the server owns", async () => {
+  const store = await tempStore();
+  // seedIfEmpty is a no-op here, which is exactly how A8 stayed missing from a
+  // live deploy while its handoff brief was registered and unreachable.
+  await store.seedIfEmpty("agents", [
+    { id: "A1", invocation: { type: "link" }, usabilityModes: ["download-install"] },
+  ]);
+
+  const first = await seed(store);
+  assert.deepEqual(first.serverOwnedAgentsAdded, ["A7", "A8"]);
+
+  const app = await buildApp({ store });
+  const capability = await app.svc.getInvocationCapability("A8");
+  assert.equal(capability.handoff.available, true);
+  assert.equal(capability.handoff.kind, "briefing");
+  // prepared-handoff is not an install tier: no ZIP, no pinned SKILL.md.
+  assert.equal(capability.installArtifact.available, false);
+  assert.equal(capability.serverRun, false);
+
+  // Idempotent, and it must not revert an edit made through the directory.
+  const edited = { ...(await store.get("agents", "A8")), name: "UX&QA (renamed)" };
+  await store.put("agents", edited);
+  const second = await seed(store);
+  assert.deepEqual(second.serverOwnedAgentsAdded, []);
+  assert.equal((await store.get("agents", "A8")).name, "UX&QA (renamed)");
+});
+
 test("server backfills stored usability modes without client inference", async () => {
   const store = await tempStore();
   await store.seedIfEmpty("agents", [
@@ -36,6 +63,39 @@ test("server backfills stored usability modes without client inference", async (
     () => app.svc.putAgent({ ...agent, usabilityModes: [] }),
     /requires a non-empty, valid usabilityModes array/,
   );
+});
+
+test("server refreshes A7 display contract to match Biocraft v3", async () => {
+  const store = await tempStore();
+  await store.seedIfEmpty("agents", [
+    {
+      id: "A7",
+      name: "Biocraft single-shot draft",
+      version: "1.0",
+      invocation: { type: "runtime", mode: "single-shot" },
+      usabilityModes: ["hosted-run", "download-install"],
+      successCriteria: ["LinkedIn About hook is 300 characters or fewer"],
+      guardrails: ["stale v2 display guardrail"],
+      when: "stale",
+      sop: "stale",
+    },
+  ]);
+
+  await seed(store);
+  const a7 = await store.get("agents", "A7");
+  assert.equal(a7.successCriteria.length, 4);
+  assert.equal(
+    a7.successCriteria[0],
+    "LinkedIn About hook is 200 characters or fewer",
+  );
+  assert.equal(a7.guardrails.length, 10);
+  assert.match(
+    a7.guardrails.at(-1),
+    /CTA belongs only in the LinkedIn About/,
+  );
+  assert.match(a7.when, /refresh the bio every 2–3 months/);
+  assert.match(a7.sop, /check the fold on a phone/);
+  assert.match(a7.sop, /Set a reminder to refresh the bio in 2–3 months/);
 });
 
 test("file trace writes are a visible no-op and persist no raw input", async () => {

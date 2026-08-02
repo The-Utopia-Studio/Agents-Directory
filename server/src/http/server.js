@@ -4,6 +4,7 @@
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
 import { config } from "../config.js";
+import { assertDataDirReady } from "../core/dataDir.js";
 import { createStore } from "../core/store.js";
 import { createLoopService } from "../core/loopService.js";
 import { getObservability } from "../observability/index.js";
@@ -17,8 +18,22 @@ import { seed } from "../scripts/seed.js";
 
 export async function buildApp(overrides = {}) {
   const appConfig = overrides.config || config;
-  const store = overrides.store || createStore(appConfig.dataDir);
-  await seed(store); // idempotent
+  // Tests and callers that inject a store own their own temp directory; skip
+  // the volume check for those. Production always goes through createStore.
+  if (!overrides.store) {
+    await assertDataDirReady(appConfig.dataDir, {
+      requireExisting: Boolean(appConfig.requirePersistentDataDir),
+    });
+  }
+  const store =
+    overrides.store ||
+    createStore(appConfig.dataDir, {
+      createIfMissing: !appConfig.requirePersistentDataDir,
+    });
+  // seedIfEmpty is a first-boot path only. On a volume that already has
+  // agents.json it is a no-op; new server-owned agents (A7, A8, …) still need
+  // the explicit upsert inside seed(), not a seed entry alone.
+  await seed(store);
   const obs = overrides.obs || getObservability(appConfig, { store });
   const optimizer = overrides.optimizer || getOptimizer(appConfig);
   const memory = overrides.memory || getMemory(appConfig, { store });
@@ -49,6 +64,8 @@ export async function start() {
   const h = await svc.health();
   console.log(
     `[loop] listening on :${config.port}  ` +
+    `dataDir=${config.dataDir}` +
+    `${config.requirePersistentDataDir ? " (Railway volume required)" : ""}  ` +
     `obs=${h.observability.provider}(${h.observability.ok ? "ok" : "down"}) ` +
     `optimizer=${h.optimizer.provider} memory=${h.memory.provider}`
   );
