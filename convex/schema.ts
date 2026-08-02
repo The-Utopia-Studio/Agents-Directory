@@ -15,6 +15,7 @@ import {
   executionContract,
   guardrailDefinition,
   guardrailResult,
+  importProvenance,
   invocation,
   optimisableUnit,
   outcomeContract,
@@ -28,6 +29,7 @@ import {
   rubricCriterion,
   rubricCriterionResult,
   runner,
+  sourcePin,
   toolItem,
   usabilityMode,
   versionState,
@@ -60,6 +62,7 @@ export default defineSchema({
     accessUrl: v.optional(v.string()),
     repoUrl: v.optional(v.string()),
     currentApprovedVersionId: v.optional(v.id("agentVersions")),
+    importProvenance: v.optional(importProvenance),
     createdBy: actorIdentity,
     createdAt: v.number(),
   })
@@ -74,6 +77,8 @@ export default defineSchema({
     state: versionState,
     basedOnVersionId: v.optional(v.id("agentVersions")),
     artifact: v.optional(artifactReference),
+    sourcePin: v.optional(sourcePin),
+    importProvenance: v.optional(importProvenance),
     createdBy: actorIdentity,
     createdAt: v.number(),
   })

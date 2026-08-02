@@ -94,6 +94,44 @@ export const getApprovedVersion = query({
   },
 });
 
+const DIRECTORY_PILOT_DISPLAY_IDS = new Set(["A7", "A8"]);
+
+/**
+ * Phase 4 read-only pilot. This deliberately returns only imported A7/A8
+ * records and their governed versions; it is not a catalogue query or cutover.
+ */
+export const listGovernedDirectoryPilot = query({
+  args: {},
+  handler: async (ctx) => {
+    const importedAgents = (await ctx.db.query("agents").collect())
+      .filter(
+        (agent) =>
+          DIRECTORY_PILOT_DISPLAY_IDS.has(agent.displayId) &&
+          Boolean(agent.importProvenance),
+      )
+      .sort((a, b) => a.displayId.localeCompare(b.displayId));
+
+    return await Promise.all(
+      importedAgents.map(async (agent) => {
+        const versions = await ctx.db
+          .query("agentVersions")
+          .withIndex("by_agentId", (q) => q.eq("agentId", agent._id))
+          .collect();
+        const governedVersions = versions
+          .filter((version) => Boolean(version.importProvenance))
+          .sort((a, b) => b.createdAt - a.createdAt);
+        const version =
+          governedVersions.find(
+            (candidate) => candidate._id === agent.currentApprovedVersionId,
+          ) ??
+          governedVersions[0] ??
+          null;
+        return { agent, version };
+      }),
+    );
+  },
+});
+
 export const registerAgent = mutation({
   args: registrationFields,
   handler: async (ctx, args) => {

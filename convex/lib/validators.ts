@@ -3,6 +3,7 @@ import { v } from "convex/values";
 
 export const platform = v.union(
   v.literal("Claude"),
+  v.literal("Codex"),
   v.literal("Cursor"),
   v.literal("Manus"),
   v.literal("ChatGPT"),
@@ -107,6 +108,10 @@ export const outcomeContract = v.object({
 export const optimisableUnit = v.union(
   v.object({ kind: v.literal("not-safely-changeable") }),
   v.object({
+    kind: v.literal("artifact"),
+    pointer: v.string(),
+  }),
+  v.object({
     kind: v.literal("artifact-section"),
     pointer: v.string(),
   }),
@@ -130,6 +135,22 @@ export const artifactReference = v.object({
   locator: v.string(),
   declaredDigest: v.string(),
   declaredDigestAlgorithm: v.literal("sha256"),
+});
+
+export const sourcePin = v.object({
+  kind: v.literal("git-commit"),
+  repoUrl: v.string(),
+  commitSha: v.string(),
+  // The type forces the truth into the row: a commit SHA cannot be mistaken
+  // for the content digest required by artifactReference.
+  isContentDigest: v.literal(false),
+});
+
+export const importProvenance = v.object({
+  manifestDigest: v.string(),
+  sourceExportDigest: v.string(),
+  importedAt: v.number(),
+  legacyCreatorClaimed: v.literal(false),
 });
 
 export const versionState = v.union(

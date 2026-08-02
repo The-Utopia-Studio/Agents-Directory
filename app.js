@@ -171,6 +171,33 @@ const SEED_REQUESTS=[
 let agents=[],requests=[],nextAgentNum=1,nextReqNum=1;
 const STORE_KEY="utopia_agents_dir_v2";
 let migrationReview=null;
+// Phase 4 is a display-only overlay. The legacy `agents` array remains the
+// local write target; governed reads must never be persisted back into it.
+let governedPilotById=new Map();
+
+function displayedAgents(){
+  return agents.map(agent=>governedPilotById.get(agent.id)||agent);
+}
+
+async function loadGovernedDirectoryPilot(){
+  if(!(window.ConvexDirectory&&ConvexDirectory.enabled))return false;
+  try{
+    const result=await ConvexDirectory.read(agents);
+    const overlaid=result&&result.succeeded&&Array.isArray(result.agents)?result.agents:agents;
+    governedPilotById=new Map(
+      overlaid
+        .filter(agent=>agent&&agent.governedInConvex===true)
+        .map(agent=>[agent.id,agent]),
+    );
+    render();
+    return Boolean(result&&result.succeeded);
+  }catch(_error){
+    // Preserve the complete local directory and make no governance claim.
+    governedPilotById=new Map();
+    render();
+    return false;
+  }
+}
 
 // Agent ids are ONE namespace shared with the loop service. A browser that
 // mints an id the service already owns does not just mislabel a card: evals,
@@ -241,7 +268,7 @@ async function refreshReservedAgentIds(){
     return true;
   }catch(e){return false}
 }
-function resetData(){if(!confirm("Reset the directory to seed data? Local changes will be lost."))return;localStorage.removeItem(STORE_KEY);hydrate();state.view="list";render();toast("Reset to seed data")}
+function resetData(){if(!confirm("Reset the directory to seed data? Local changes will be lost."))return;localStorage.removeItem(STORE_KEY);governedPilotById=new Map();hydrate();state.view="list";render();loadGovernedDirectoryPilot();toast("Reset to seed data")}
 
 const CATEGORIES=["Personal Branding","Marketing & Content","Design & Product","Research & Analysis","Operations & Workflow","Investment & DD","Other"];
 const PLATFORMS=["Claude","Cursor","Manus","ChatGPT","n8n","Custom","Other"];
@@ -678,9 +705,10 @@ function downloadMigrationReview(){
 }
 
 function renderAgentsList(){
-  const cats=["All",...new Set(agents.map(a=>a.category))];
-  const stats=["All",...new Set(agents.map(a=>a.status))];
-  const filtered=agents.filter(a=>{
+  const directoryAgents=displayedAgents();
+  const cats=["All",...new Set(directoryAgents.map(a=>a.category))];
+  const stats=["All",...new Set(directoryAgents.map(a=>a.status))];
+  const filtered=directoryAgents.filter(a=>{
     if(state.catFilter!=="All"&&a.category!==state.catFilter)return false;
     if(state.statusFilter!=="All"&&a.status!==state.statusFilter)return false;
     return true;
@@ -706,6 +734,7 @@ function renderAgentsList(){
         <div class="card-eval">
           <span class="pill ${evalClass(agentEvalStatus(a))} pill-xs">${e&&typeof e.score==="number"?e.score+" · ":""}${escHtml(agentEvalStatus(a))}</span>
           ${prop?'<span class="pill pill-loop pill-xs">● improvement pending</span>':""}
+          ${governedBadge(a)}
         </div>
         <div class="card-footer"><span class="card-meta">${platformIcon(a.platform)} ${escHtml(a.platform)}<span class="sep">&middot;</span>${escHtml(a.category)}</span><div class="avatar">${escHtml(a.initials)}</div></div>
       </div>`;}).join("")}</div>
@@ -740,17 +769,53 @@ function renderRequests(){
 
 function pillarList(items,empty){return items&&items.length?items.map(i=>`<div class="item">&bull; ${escHtml(i)}</div>`).join(""):`<div class="item empty">${empty}</div>`}
 function chips(items){return items&&items.length?items.map(i=>`<span class="chip">${escHtml(i)}</span>`).join(""):'<span class="chip empty">None specified</span>'}
+function isGovernedPilot(a){return a&&a.governedInConvex===true}
+function governedBadge(a){return isGovernedPilot(a)?'<span class="pill pill-blue pill-xs governed-badge">Governed in Convex</span>':""}
+function renderGovernedPilotNotice(a){
+  if(!isGovernedPilot(a))return"";
+  return `<div class="governed-pilot-notice">This governed record is read-only during the Convex pilot. Editing, evaluation and proposals will move to Convex in a later phase.</div>`;
+}
+function renderDetailEditControl(a){
+  if(isGovernedPilot(a))return"";
+  return `<button class="btn btn-sm" onclick="openModal('editAgent',agents.find(x=>x.id==='${a.id}'))">Edit</button>`;
+}
+function renderEvalTitleActions(a){
+  if(isGovernedPilot(a))return"";
+  return `<span class="eval-title-actions"><button class="btn-ghost btn-sm" onclick="proposeImprovement('${a.id}')">Propose improvement</button><button class="btn-ghost btn-sm" onclick="openModal('eval',agents.find(x=>x.id==='${a.id}'))">Log eval</button></span>`;
+}
+function renderEmptyEval(a){
+  if(isGovernedPilot(a)){
+    return `<div class="empty-eval"><p>This agent hasn't been evaluated yet.</p></div>`;
+  }
+  return `<div class="empty-eval"><p>This agent hasn't been evaluated yet.</p><div class="cta" onclick="openModal('eval',agents.find(x=>x.id==='${a.id}'))">Log the first evaluation &rarr;</div></div>`;
+}
+function renderGovernedIdentity(a){
+  if(!(isGovernedPilot(a)&&a.convexGovernance))return"";
+  const g=a.convexGovernance,artifact=g.artifact,sourcePin=g.sourcePin;
+  return `<div class="section governed-identity">
+    <div class="section-title">Governed identity</div>
+    <div class="section-body">
+      <div><strong>Version:</strong> ${escHtml(a.version||"not recorded")}${g.versionState?` · ${escHtml(g.versionState)}`:""}</div>
+      <div><strong>Runner:</strong> ${escHtml(g.runner||"not recorded")}</div>
+      <div><strong>Invocation:</strong> ${escHtml(g.invocationType||"not recorded")}</div>
+      <div><strong>Usability:</strong> ${g.usabilityModes&&g.usabilityModes.length?escHtml(g.usabilityModes.join(", ")):"not recorded"}</div>
+      ${artifact?`<div><strong>Artifact SHA-256:</strong> <code>${escHtml(artifact.digest)}</code></div><div><strong>Artifact locator:</strong> ${escHtml(artifact.locator)}</div>`:""}
+      ${sourcePin?`<div><strong>Git commit source pin:</strong> <code>${escHtml(sourcePin.commitSha)}</code></div><div class="governed-caveat">Source pin only — not an artifact-content digest.</div>`:""}
+    </div>
+  </div>`;
+}
 
 function renderDetail(a){
-  const sopLines=a.sop.split("\n").filter(Boolean);
+  const sopLines=(a.sop||"").split("\n").filter(Boolean);
   const e=latestEval(a);
-  const prop=a.proposedImprovement&&a.proposedImprovement.status==="proposed";
+  const prop=!isGovernedPilot(a)&&a.proposedImprovement&&a.proposedImprovement.status==="proposed";
   return `<div class="detail">
     <button class="back-btn" onclick="goBack()"><span>&lsaquo;</span> Back to Directory</button>
     <div class="detail-header">
       <div class="detail-eyebrow">AGENT ${a.id} · v${escHtml(a.version||"1.0")}${a.model?" · "+escHtml(a.model):""}</div>
-      <button class="btn btn-sm" onclick="openModal('editAgent',agents.find(x=>x.id==='${a.id}'))">Edit</button>
+      ${renderDetailEditControl(a)}
     </div>
+    ${renderGovernedPilotNotice(a)}
     <h1>${escHtml(a.name)}</h1>
     <p class="tagline">${escHtml(a.tagline)}</p>
     <div class="pills">
@@ -758,6 +823,7 @@ function renderDetail(a){
       <span class="pill pill-neutral">${escHtml(a.category)}</span>
       <span class="pill pill-neutral">${platformIcon(a.platform)} ${escHtml(a.platform)}</span>
       <span class="pill pill-neutral pill-owner"><span class="mini-avatar">${escHtml(a.initials)}</span>${escHtml(a.owner)}</span>
+      ${governedBadge(a)}
     </div>
 
     <div class="use-panel">
@@ -814,20 +880,22 @@ function renderDetail(a){
       </div>`:""}
     </div>
 
+    ${renderGovernedIdentity(a)}
+
     ${a.accessUrl||a.repoUrl?`<div class="section"><div class="section-title">Technical Details</div><div class="section-body">
       ${a.accessUrl?`<div class="detail-access-line"><strong>Access:</strong> <a href="${escHtml(a.accessUrl)}">${escHtml(a.accessUrl)}</a></div>`:""}
       ${a.repoUrl?`<div><strong>Repo:</strong> <a href="${escHtml(a.repoUrl)}">${escHtml(a.repoUrl)}</a></div>`:""}
     </div></div>`:""}
 
     <div class="section">
-      <div class="section-title eval-title">Eval &amp; Observability<span class="eval-title-actions"><button class="btn-ghost btn-sm" onclick="proposeImprovement('${a.id}')">Propose improvement</button><button class="btn-ghost btn-sm" onclick="openModal('eval',agents.find(x=>x.id==='${a.id}'))">Log eval</button></span></div>
+      <div class="section-title eval-title">Eval &amp; Observability${renderEvalTitleActions(a)}</div>
       <div class="eval-pill-row"><span class="pill ${evalClass(agentEvalStatus(a))}">${e&&typeof e.score==="number"?e.score+" · ":""}${escHtml(agentEvalStatus(a))}</span>${e?`<span class="date">Last reviewed: ${formatDate(e.date)}${e.by?" · "+escHtml(e.by):""}</span>`:""}</div>
       ${a.evalHistory&&a.evalHistory.length?`<div class="eval-history">${a.evalHistory.slice().reverse().map(h=>`
         <div class="eval-row">
           <div class="eval-row-top"><span class="pill ${evalClass(h.status)} pill-xs">${escHtml(h.status)}</span>${typeof h.score==="number"?`<span class="eval-score">${h.score}</span>`:""}<span class="eval-date">${formatDate(h.date)}${h.by?" · "+escHtml(h.by):""}</span>${h.traceUrl?`<a class="eval-trace" href="${escHtml(h.traceUrl)}">trace ↗</a>`:""}</div>
           ${h.notes?`<div class="eval-note">${escHtml(h.notes)}</div>`:""}
           ${h.knownIssues?`<div class="eval-issue"><b>Known issues:</b> ${escHtml(h.knownIssues)}</div>`:""}
-        </div>`).join("")}</div>`:`<div class="empty-eval"><p>This agent hasn't been evaluated yet.</p><div class="cta" onclick="openModal('eval',agents.find(x=>x.id==='${a.id}'))">Log the first evaluation &rarr;</div></div>`}
+        </div>`).join("")}</div>`:renderEmptyEval(a)}
     </div>
 
     ${a.changelog&&a.changelog.length?`<div class="section"><div class="section-title">Version history</div><div class="section-body">${a.changelog.slice().reverse().map(c=>`<div class="change-row"><span class="change-ver">v${escHtml(c.version)}</span><span class="change-date">${formatDate(c.date)}</span><span class="change-note">${escHtml(c.note)}</span></div>`).join("")}</div></div>`:""}
@@ -838,7 +906,7 @@ function renderDetail(a){
 
 function render(){
   const app=document.getElementById("app");
-  if(state.view==="detail"&&state.agent){const fresh=agents.find(x=>x.id===state.agent.id);if(fresh)state.agent=fresh;app.innerHTML=renderDetail(state.agent);loadRunCapability(state.agent.id);return}
+  if(state.view==="detail"&&state.agent){const fresh=displayedAgents().find(x=>x.id===state.agent.id);if(fresh)state.agent=fresh;app.innerHTML=renderDetail(state.agent);loadRunCapability(state.agent.id);return}
   app.innerHTML=state.subTab==="agents"?renderAgentsList():renderRequests();
   if(state.subTab==="agents"&&window.DirectoryAPI&&DirectoryAPI.enabled)loadAutomations();
 }
@@ -1063,13 +1131,16 @@ async function recallContext(id){
 }
 
 function setFilter(t,v){if(t==="cat")state.catFilter=v;else state.statusFilter=v;render()}
-function openDetail(id){state.agent=agents.find(a=>a.id===id);state.view="detail";render();window.scrollTo(0,0)}
+function openDetail(id){state.agent=displayedAgents().find(a=>a.id===id);state.view="detail";render();window.scrollTo(0,0)}
 function goBack(){state.view="list";state.agent=null;render()}
 function switchSubTab(tab){state.subTab=tab;state.view="list";render()}
 
 // ── BOOT ──
 hydrate();
 render();
+// Non-blocking read pilot: first paint is always the complete local directory.
+// Only a successful query overlays A7/A8 and earns the governance indicator.
+loadGovernedDirectoryPilot();
 // The probe resolves after the first render — refresh the automations panel then.
 if(window.DirectoryAPI)DirectoryAPI.ready.then(()=>{
   // Observe the service's known ids as early as possible, so the first mint in

@@ -376,6 +376,19 @@ input[type="date"] { color-scheme: dark; }
 .card-eval { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0 4px; }
 .pill-xs { font-size: 11px; padding: 2px 8px; }
 .pill-loop { background: rgb(215 122 89 / 14%); border-color: var(--warning-border); color: var(--accent-text); }
+.governed-badge { white-space: nowrap; }
+.governed-identity code { overflow-wrap: anywhere; }
+.governed-identity .section-body { display: grid; gap: 7px; }
+.governed-caveat { color: var(--foreground-subtle); font-size: 12px; }
+.governed-pilot-notice {
+  margin: 10px 0 18px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--foreground-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
 
 /* Pillar blocks */
 .pillar-block { border-radius: var(--radius-surface); padding: 16px; margin-bottom: 16px; border: 1px solid var(--border-subtle); }

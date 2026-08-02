@@ -306,7 +306,8 @@ independent of it. Removing it — so approval lives only in Convex — is **Ord
 ## Repo layout
 
 ```
-index.html · app.js · api.js · styles.css   Static front-end (localStorage; optional Railway bridge)
+index.html · app.js · api.js · styles.css   Static front-end (localStorage + read-only Convex A7/A8 pilot)
+frontend/convexDirectory.js                  Query-only governed-record overlay, bundled for Vercel
 convex/                                       Durable authority: schema, mutations, queries, tests
 convex/reviews.ts                             Approval as the sole release transaction
 convex/lib/auth.ts                            requireIdentity / requireApprover (fail-closed)
@@ -321,6 +322,7 @@ Convex backend (from the repo root):
 
 ```sh
 npm install
+npm run build:frontend    # bundle query client + generate public deployment config
 npm run convex:codegen     # regenerate convex/_generated
 npm run typecheck          # tsc -p convex/tsconfig.json
 npm run test:convex        # vitest run convex
@@ -335,8 +337,14 @@ npm start  --prefix server # node src/http/server.js
 
 **Environment.** The Convex deployment URL lives in `.env.local` as `CONVEX_URL`
 and is git-ignored. `.env.example` ships a placeholder (`CONVEX_URL=`) only —
-never put a real deployment URL in a committed file. `.gitignore` ignores all
-`.env.*` except `.env.example`, and ignores `convex/_generated/`.
+never put a real deployment URL in a committed file. The Vercel build runs
+`npm run build:frontend`, which writes that non-secret URL into
+`deployment-config.js` and bundles the query-only browser client.
+`deployment-config.js` is gitignored — never commit the generated file or a
+real Convex URL. A blank, missing, or unavailable deployment preserves the
+complete local directory and shows no Convex governance label. `.gitignore`
+ignores all `.env.*` except `.env.example`, `convex/_generated/`,
+`convex-directory.bundle.js`, and `deployment-config.js`.
 Biocraft single-shot hosted runs additionally require `ANTHROPIC_API_KEY` in
 `server/.env`; `server/.env.example` contains the empty placeholder.
 
@@ -370,11 +378,13 @@ off, it is off.
   boot against an empty volume runs `seedIfEmpty`; later boots are no-ops
   for seeding, and new server-owned agents still need the explicit upsert.
   Dashboard steps: `docs/DEPLOYMENT.md`.
-- **The Convex authority layer is not yet wired to the running app.** Approvals
-  in the live product do **not** go through `reviews.ts` today — the front-end
-  still reads and writes `localStorage`, and the loop service keeps its own
-  approve/reject path. Convex is exercised only through `convex-test`; wiring it
-  into the app is tracked in **TUS-2327**.
+- **Only A7/A8 directory reads are wired to Convex.** Phase 4 overlays the
+  imported A7/A8 agent and governed-version fields after one successful public
+  query. A1–A6, requests, edits, approvals, runs, evidence, feedback, exports,
+  and every write remain on their existing local/Railway paths. Approvals in
+  the live product do **not** go through `reviews.ts` today. A failed or
+  unconfigured Convex read preserves the full local directory and makes no
+  “Governed in Convex” claim. The remaining cutover is tracked in **TUS-2327**.
 - **General file trace writes are disabled.** `FILE_TRACE_WRITES_ENABLED` is
   `false` in `server/src/observability/localAdapter.js`. The only exception is
   an internally authorized `runtime` trace marked `source: "real"`; those runs
@@ -438,6 +448,30 @@ off, it is off.
 - **Digests are caller attestations, not verified byte hashes.** Fields like
   `declaredDigest` / `declaredArtifactDigest` are values the caller supplies;
   nothing hashes the artifact to check them.
+- **The Phase 2.5B import gate is an Approved import-spec digest, not a file
+  digest.** The value `2da90…` (`APPROVED_IMPORT_MANIFEST_DIGEST`, passed as the
+  machine argument `manifestDigest`) is the SHA-256 of the canonical, stable
+  import specification — `sha256(stableStringify(APPROVED_IMPORT_SPEC))` — not
+  the byte hash of the formatted JSON manifest file. Reformatting the JSON
+  changes the file bytes but not this digest.
+- **A7's imported artifact identity has a custody limitation.** The imported A7
+  version records a SHA-256 `declaredDigest` that identifies the exact imported
+  artifact bytes and a repo-relative `locator`
+  (`server/src/artifacts/biocraft/SKILL.md`). This is not yet a Git commit pin
+  or a canonical artifact-storage location, so the locator alone cannot be
+  relied on to reproduce those bytes later. A real Git pin / canonical storage
+  is a later decision and must not be backfilled onto the immutable A7 version.
+- **Demo/mock evidence is synthetic and ineligible by construction.** Its
+  Convex writers own `source`, force `eligibleForEvaluation: false` and
+  `eligibleForPromotion: false`, and accept no caller-supplied eligibility
+  flags. Demo fixtures are restricted to version-linked A7 metadata in tests;
+  nothing seeds demo evidence on deployment. Synthetic rows are excluded from
+  evaluation and promotion queries and cannot be passed to `recordEvalResult`.
+- **A8 cannot record evidence yet.** A8 is a foreign-runtime handoff whose Git
+  commit is a source pin, explicitly not an artifact-content digest. Until a
+  valid foreign-runtime evidence-identity model is approved, Convex refuses
+  evidence creation for A8 rather than inventing a digest or treating the
+  commit SHA as one.
 - **`agentVersions` immutability is enforced by a static test, not the
   database.** `convex/order1.test.ts` scans every non-generated module with a
   text heuristic for mutations that look like they target an `agentVersions`

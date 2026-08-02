@@ -10,6 +10,19 @@ import { requireIdentity } from "./lib/auth";
 import { evidenceType, providerCost } from "./lib/validators";
 
 type EvidenceSource = "real" | "mock" | "demo" | "imported";
+type SyntheticEvidenceSource = Extract<EvidenceSource, "mock" | "demo">;
+
+const A7_DEMO_DISPLAY_ID = "A7";
+
+function syntheticEligibility(_source: SyntheticEvidenceSource) {
+  // Synthetic writers own these values. They are deliberately absent from
+  // mutation arguments, so no caller can promote demo/mock data by supplying
+  // eligibility flags.
+  return {
+    eligibleForEvaluation: false as const,
+    eligibleForPromotion: false as const,
+  };
+}
 
 async function insertEvidence(
   ctx: MutationCtx,
@@ -39,12 +52,20 @@ async function insertEvidence(
   const version = await ctx.db.get(args.agentVersionId);
   if (!version) throw new Error(`Version ${args.agentVersionId} not found`);
   if (!version.artifact?.declaredDigest) {
+    if (version.sourcePin?.kind === "git-commit") {
+      throw new Error(
+        "Foreign-runtime evidence is unavailable: a Git commit source pin is not an artifact content digest, and the evidence-identity model is not yet defined",
+      );
+    }
     throw new Error(
       "Evidence requires a version with a declared artifact digest",
     );
   }
   const agent = await ctx.db.get(version.agentId);
   if (!agent) throw new Error(`Agent ${version.agentId} not found`);
+  if (source === "demo" && agent.displayId !== A7_DEMO_DISPLAY_ID) {
+    throw new Error("Demo evidence is restricted to A7");
+  }
   if (!agent.evidenceContract.acceptedTypes.includes(args.type)) {
     throw new Error(`Evidence type ${args.type} is not accepted by this agent`);
   }
@@ -80,14 +101,19 @@ async function insertEvidence(
   }
 
   const isSynthetic = source === "mock" || source === "demo";
+  const eligibility = isSynthetic
+    ? syntheticEligibility(source)
+    : {
+        eligibleForEvaluation: true,
+        eligibleForPromotion: source === "real",
+      };
   return await ctx.db.insert("evidence", {
     agentId: version.agentId,
     agentVersionId: version._id,
     declaredArtifactDigest: version.artifact.declaredDigest,
     type: args.type,
     source,
-    eligibleForEvaluation: !isSynthetic,
-    eligibleForPromotion: source === "real",
+    ...eligibility,
     runBy,
     occurredAt: Date.now(),
     cost: args.cost,

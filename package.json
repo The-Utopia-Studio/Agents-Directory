@@ -3,10 +3,12 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "build:frontend": "node scripts/buildFrontend.mjs",
     "convex:dev": "convex dev",
     "convex:codegen": "convex codegen",
     "typecheck": "tsc -p convex/tsconfig.json",
-    "test:convex": "vitest run convex"
+    "test:convex": "vitest run convex",
+    "test:frontend": "vitest run frontend"
   },
   "dependencies": {
     "convex": "^1.21.0"
@@ -15,6 +17,7 @@
     "@edge-runtime/vm": "^5.0.0",
     "@types/node": "^26.1.2",
     "convex-test": "^0.0.54",
+    "esbuild": "0.27.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.10"
   }

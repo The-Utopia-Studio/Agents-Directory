@@ -11,6 +11,27 @@ The front-end works standalone. The loop service is **optional** — it adds liv
 observability, memory, and the automation heartbeat. The front-end auto-detects
 it and degrades gracefully when it's absent.
 
+### Vercel: read-only Convex directory pilot
+
+Set the non-secret `CONVEX_URL` environment variable on the Vercel project.
+`vercel.json` runs `npm run build:frontend`, which generates
+`deployment-config.js` from that value and bundles the browser query client.
+That generated file is gitignored; never commit it. No URL is committed. The
+client invokes only
+`agents:listGovernedDirectoryPilot`; it never invokes a mutation or an import
+endpoint. If the variable is blank or the query fails, A1–A8 continue rendering
+from the existing browser data and no agent is labelled “Governed in Convex.”
+
+For local testing, set `CONVEX_URL` before `npm run build:frontend`, or use the
+non-secret per-browser override:
+
+```js
+localStorage.setItem("directory_convex_url", "https://your-dev-deployment.convex.cloud")
+```
+
+The override is a deployment URL only. Never put a Clerk token, JWT, admin key,
+or other credential in browser storage.
+
 > **Golden rule:** secrets live only on the service host (or a shared secret
 > manager). Never in git, never in the browser. `.env` is gitignored; only
 > `server/.env.example` (the template) is committed.

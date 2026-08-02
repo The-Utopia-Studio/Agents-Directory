@@ -422,10 +422,6 @@ describe("Order 1 authority model", () => {
       agentVersionId: candidateVersionId,
       type: "run",
     });
-    await t.mutation(authorityInternal.evidence.recordDemoEvidence, {
-      agentVersionId: candidateVersionId,
-      type: "run",
-    });
     const recorded = await t.query(authorityApi.evidence.listForVersion, {
       agentVersionId: candidateVersionId,
     });
@@ -438,11 +434,6 @@ describe("Order 1 authority model", () => {
     expect(recorded[0]).not.toHaveProperty("input");
     expect(recorded[0]).not.toHaveProperty("output");
     expect(recorded[0]).not.toHaveProperty("payload");
-    expect(recorded[1]).toMatchObject({
-      source: "demo",
-      eligibleForEvaluation: false,
-      eligibleForPromotion: false,
-    });
     expect(
       await t.query(authorityApi.evidence.listEligibleForEvaluation, {
         agentVersionId: candidateVersionId,

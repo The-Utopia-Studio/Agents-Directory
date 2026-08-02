@@ -9,6 +9,10 @@ node_modules/
 !.env.example
 .cursor/skills/
 convex/_generated/
+convex-directory.bundle.js
+# Generated at build time from the non-secret CONVEX_URL. Never commit the
+# live deployment URL, even though it is not a secret.
+deployment-config.js
 
 # Phase 2 exports may contain catalogue/request identity data. Browser downloads
 # normally land outside the repo; this catches deliberate local copies.
