@@ -26,8 +26,9 @@ There is **no** `v1` key in current code. The `_v2` suffix marks the four-pillar
 {
   agents: Agent[],
   requests: Request[],
-  nextAgentNum: number,  // next id suffix for "A{n}"
-  nextReqNum: number     // next id suffix for "R{n}"
+  nextAgentNum: number,       // starting point for the next "A{n}" mint
+  nextReqNum: number,         // next id suffix for "R{n}"
+  reservedAgentIds: string[]  // agent ids observed as known to the loop service (collision mitigation, not a reservation)
 }
 ```
 
@@ -44,7 +45,7 @@ function persist() {
   try {
     localStorage.setItem(
       STORE_KEY,
-      JSON.stringify({ agents, requests, nextAgentNum, nextReqNum })
+      JSON.stringify({ agents, requests, nextAgentNum, nextReqNum, reservedAgentIds })
     );
   } catch (e) {}
 }
@@ -57,6 +58,8 @@ function hydrate() {
       requests = s.requests;
       nextAgentNum = s.nextAgentNum;
       nextReqNum = s.nextReqNum;
+      reservedAgentIds = Array.isArray(s.reservedAgentIds) ? s.reservedAgentIds : [];
+      // (server-owned display-field migrations elided — see app.js)
       return;
     }
   } catch (e) {}
@@ -70,7 +73,7 @@ function hydrate() {
 
 | Concern | Behavior |
 |---------|----------|
-| Load success | Requires `s.agents` to be an array; then assigns all four fields blindly |
+| Load success | Requires `s.agents` to be an array; then assigns the stored fields (`reservedAgentIds` defaults to `[]` when absent) |
 | Load miss / corrupt | Deep-clones `SEED_AGENTS` / `SEED_REQUESTS`, sets counters to `length + 1`, then `persist()` |
 | Reset | `resetData()` removes the key, then `hydrate()` (re-seeds) |
 | Quota / private mode | `persist` swallows errors — silent no-op |
@@ -94,7 +97,8 @@ Agent.proposedImprovement ──embedded──▶ Proposal | null
 | Request → Agent | On successful “Ship as agent”, `saveNewAgent()` sets `request.status = "Shipped"` and `request.shippedAgentId = "A{n}"` for the new agent |
 | Agent → Request | No back-pointer on the agent |
 | Evals | Always nested under `agent.evalHistory`; UI “current eval” = last array element (`latestEval`) |
-| IDs | Agents: `"A" + nextAgentNum++`. Requests: `"R" + nextReqNum++`. Counters live in the same blob |
+| IDs | Requests: `"R" + nextReqNum++`. Agents: `mintAgentId()` — the floor is derived from every id observed as taken (local agents plus `reservedAgentIds`), so a stale counter cannot reissue an id already in use |
+| Reserved agent IDs | `refreshReservedAgentIds()` reads `GET /api/agents` and caches the ids the loop service currently knows about. Agent ids are one namespace: a browser-minted `A8` would resolve against the service's A8 record, so evals and proposals would land on someone else's agent. **This is a temporary collision mitigation, not an atomic reservation** — `GET /api/agents` observes known ids, it does not reserve one. When the loop service is reachable and responds before minting, the browser avoids ids currently known to it; `saveNewAgent()` re-observes the set immediately before minting and refuses if the service does not answer. Convex becomes the sole allocator in Phase 5 |
 
 ---
 
@@ -370,7 +374,7 @@ Simpler original-shaped agent with goals/skills filled but no golden cases: seed
 
 ```js
 {
-  id: "A" + nextAgentNum++,
+  id: mintAgentId(),   // above every id observed as taken; see §4
   initials: getInitials(f.owner),
   version: f.version || "1.0",
   evalHistory: [],
@@ -446,6 +450,8 @@ These exist on the **server file store** (or API only) when `server/` is running
 - Live memory documents (Supermemory / Activeloop / local memory namespace)  
 - Separate agent copies on the server (may diverge from the browser blob)
 
+A8 is now in `SEED_AGENTS` and is inserted on hydrate when missing, so the catalogue card and prepared-handoff briefing affordance appear. Hand-entered fields on other browser-owned records remain visible only in the browser that entered them until Convex owns the catalog. The `reservedAgentIds` mechanism (§4) only *mitigates* id collisions while the service is reachable; it is not an allocator and does not guarantee uniqueness. Convex becomes the sole id allocator in Phase 5.
+
 Convex port of the **directory UI** should treat `utopia_agents_dir_v2` as the migration source; plan a second phase for loop server collections.
 
 ---
@@ -454,7 +460,7 @@ Convex port of the **directory UI** should treat `utopia_agents_dir_v2` as the m
 
 1. **Two top-level tables** map cleanly: `agents`, `requests`. Consider `evals` as a child table keyed by `agentId` if you want indexing — today they are embedded arrays.  
 2. **Embedded arrays** (`evalHistory`, `changelog`, `goldenCases`, …) are fine as Convex document fields or separate tables; UI assumes latest eval = last history entry.  
-3. **ID strategy:** replace `"A"+n` / `"R"+n` + counters with Convex `_id` (or keep string ids as a field for continuity).  
+3. **ID strategy:** replace `"A"+n` / `"R"+n` + counters with Convex `_id` (or keep string ids as a field for continuity). Browser-minted ids deliberately stay in the `A<n>` shape Convex's `nextDisplayId` matches (`^A(\d+)$`) and are minted above the ids currently observed from the loop service, so no identifier needs renaming during the migration. `reservedAgentIds` is an observation cache, not catalog data and not a reservation — drop it in Phase 5, when Convex becomes the sole id allocator.
 4. **Normalize dates:** request `date` is locale display text; eval/changelog dates are ISO — pick one convention.  
 5. **Schema gaps:** `goldenCases` / `failureClasses` / `costPerOutcome` are in seed + detail UI but not in forms — decide if Convex should expose editors.  
 6. **`directory_api_base`** is config, not catalog data.  

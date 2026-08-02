@@ -2,6 +2,8 @@
 // (run-until-done). Offline, default providers.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,6 +14,7 @@ import { getOptimizer } from "../src/improve/index.js";
 import { getMemory } from "../src/memory/index.js";
 import { getVerifier } from "../src/verify/index.js";
 import { createLoopEngine } from "../src/loop/engine.js";
+import { shouldAutoApply } from "../src/loop/policy.js";
 import { seed, SEED_TRACES } from "../src/scripts/seed.js";
 import { config } from "../src/config.js";
 
@@ -35,6 +38,20 @@ const REJECT_ALL = {
   async health() { return { ok: true }; },
   async assess() { return { verdict: "reject", confidence: 0.9, reasons: ["forced"], by: "test" }; },
 };
+
+test("LOOP_AUTOAPPLY=true fails boot instead of enabling approval", () => {
+  const result = spawnSync(
+    process.execPath,
+    ["--input-type=module", "-e", "import('./src/config.js')"],
+    {
+      cwd: fileURLToPath(new URL("..", import.meta.url)),
+      env: { ...process.env, LOOP_AUTOAPPLY: "true" },
+      encoding: "utf8",
+    },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /LOOP_AUTOAPPLY is disabled/);
+});
 
 test("verifier rejects a proposal with no failing signal", async () => {
   const { verifier } = await freshStack();
@@ -69,19 +86,23 @@ test("runCycle triages the fleet and queues to the inbox (no auto-apply)", async
   assert.equal(runs.length, 1);
 });
 
-test("auto-apply is gated by the agent's autonomy level, not just the flag", async () => {
+test("auto-approval is structurally disabled even with stale enabling config", async () => {
+  assert.equal(
+    shouldAutoApply(
+      { verdict: "ship", confidence: 1 },
+      { autonomyLevel: "L4" },
+      { autoApply: true, autoApplyConfidence: 0 },
+    ),
+    false,
+  );
   const { svc, engine } = await freshStack({ autoApply: true, autoApplyConfidence: 0.8 });
-  // A2 seeds at L1 → must NOT auto-apply even with the master switch on.
-  const run1 = await engine.runCycle();
-  assert.equal(run1.jobs.find((j) => j.agentId === "A2").action, "queued:inbox");
-
-  // Promote to L3 and it auto-applies.
+  // Even a stale true flag plus maximum autonomy cannot approve.
   const a2 = await svc.getAgent("A2");
   await svc.putAgent({ ...a2, autonomyLevel: "L3", proposedImprovement: null });
   const before = await svc.getAgent("A2");
-  const run2 = await engine.runCycle();
-  assert.match(run2.jobs.find((j) => j.agentId === "A2").action, /^auto-approved:v/);
-  assert.notEqual((await svc.getAgent("A2")).version, before.version);
+  const run = await engine.runCycle();
+  assert.equal(run.jobs.find((j) => j.agentId === "A2").action, "queued:inbox");
+  assert.equal((await svc.getAgent("A2")).version, before.version);
 });
 
 test("runGoal carries a loop contract with forbidden moves", async () => {
@@ -106,8 +127,10 @@ test("a verifier rejection blocks the queue item and isn't retried next cycle", 
 
   const run1 = await engine.runCycle();
   assert.equal(run1.jobs.find((j) => j.agentId === "A2").action, "rejected:verifier→learning");
-  assert.ok((await svc.recentLearnings()).some((l) => l.agentId === "A2"), "a learning was written");
-  assert.ok(await svc.isBlockedSignal("A2", "voice"));
+  const learning = (await svc.recentLearnings()).find((l) => l.agentId === "A2");
+  assert.ok(learning, "a learning was written");
+  assert.ok(["voice", "aggressive"].includes(learning.signal));
+  assert.ok(await svc.isBlockedSignal("A2", learning.signal));
   assert.ok((await svc.listResearchQueue()).some((x) => x.agentId === "A2" && x.status === "blocked"));
 
   // Second cycle: the blocked signal is not retried.
@@ -115,14 +138,16 @@ test("a verifier rejection blocks the queue item and isn't retried next cycle", 
   assert.ok(!run2.jobs.some((j) => j.agentId === "A2"), "blocked signal is not retried");
 });
 
-test("runGoal stops with a learning on repeated failure (no evaluator progress)", async () => {
+test("runGoal stops at the human gate on a verifier ship", async () => {
   const { svc, engine } = await freshStack();
-  // reevaluate that never improves the score -> repeated signal, no progress -> stop.
-  const flat = async () => ({ score: 58 });
-  const result = await engine.runGoal("A2", { targetScore: 80, maxIterations: 4, reevaluate: flat });
+  const before = await svc.getAgent("A2");
+  const result = await engine.runGoal("A2", { targetScore: 80, maxIterations: 4 });
   assert.equal(result.done, false);
-  assert.equal(result.reason, "repeated-failure");
-  assert.ok((await svc.recentLearnings()).some((l) => l.agentId === "A2"));
+  assert.equal(result.reason, "held-for-human");
+  assert.equal(result.steps[0].action, "verified:ship-awaiting-human");
+  const after = await svc.getAgent("A2");
+  assert.equal(after.version, before.version);
+  assert.ok(after.proposedImprovement);
 });
 
 test("runCycle respects the token budget", async () => {
@@ -132,19 +157,17 @@ test("runCycle respects the token budget", async () => {
   assert.equal(run.budget.jobs, 0);
 });
 
-test("runGoal converges to the target with a re-evaluator", async () => {
-  const { svc, engine } = await freshStack();
-  let score = 58;
-  const reevaluate = async () => { score = Math.min(100, score + 18); return { score }; };
-  const result = await engine.runGoal("A2", { targetScore: 80, maxIterations: 4, reevaluate });
-  assert.equal(result.done, true);
-  assert.ok(result.finalScore >= 80);
-  assert.ok(result.steps.some((s) => /shipped/.test(s.action || "")));
-});
-
-test("runGoal ships once then stops when no evaluator is wired", async () => {
+test("runGoal never calls a supplied re-evaluator before human approval", async () => {
   const { engine } = await freshStack();
-  const result = await engine.runGoal("A2", { targetScore: 80, maxIterations: 4 });
-  assert.equal(result.done, false);
-  assert.equal(result.reason, "needs-evaluator");
+  let calls = 0;
+  const result = await engine.runGoal("A2", {
+    targetScore: 80,
+    maxIterations: 4,
+    reevaluate: async () => {
+      calls += 1;
+      return { score: 100 };
+    },
+  });
+  assert.equal(result.reason, "held-for-human");
+  assert.equal(calls, 0);
 });

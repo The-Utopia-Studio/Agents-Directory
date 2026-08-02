@@ -30,8 +30,12 @@ Convex owns these tables:
   invocation adapter.
 
 `usabilityModes[]` controls what the UI may offer. Registration rejects
-incompatible runner/invocation combinations and requires the execution
-contract's access methods to match the declared usability modes.
+an empty mode list, incompatible runner/invocation combinations, a
+`foreign-runtime-handoff` without `prepared-handoff`, and `hosted-run` on
+`scheduled-worker` or `none`. The execution contract currently contains only
+inputs and runner configuration; it has no access-method field, so there is no
+execution-contract/usability-mode consistency check beyond those explicit
+runner rules.
 
 The removed `deploymentType` field is not mapped forward.
 
@@ -84,11 +88,18 @@ all guardrails passing.
 
 Clerk is configured through `CLERK_JWT_ISSUER_DOMAIN`. Authority mutations
 derive actors from `ctx.auth.getUserIdentity()`; there is no client actor field.
+The trusted issuer is `https://valid-collie-71.clerk.accounts.dev`; the Clerk
+JWT template and audience are both `convex`. Release approval uses the signed
+top-level `role` claim and requires the user-level value `approver`. This is
+role-based so adding an approver is a Clerk assignment, not a subject-id code
+change. Missing identities fail with 401; identities without that exact role
+fail approval with 403.
 
-`.env.example` contains placeholders only. The standalone deployment URL and
-deployment name live in ignored `.env.local`. Codegen currently requires the
-Clerk issuer to be configured on the Convex deployment before functions can be
-uploaded.
+`.env.example` contains no secrets: the deployment URL remains a placeholder
+and the public Clerk issuer is recorded explicitly. The standalone deployment
+URL and deployment name live in ignored `.env.local`. Codegen requires that
+same Clerk issuer to be configured on the Convex deployment before functions
+can be uploaded.
 
 ## Explicitly deferred
 

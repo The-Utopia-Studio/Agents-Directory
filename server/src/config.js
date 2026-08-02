@@ -22,6 +22,13 @@ function loadDotEnv() {
 loadDotEnv();
 
 const env = process.env;
+// Human approval is mandatory. This is fail-closed rather than default-off:
+// a stale production variable cannot silently re-enable catalog approval.
+if (env.LOOP_AUTOAPPLY && env.LOOP_AUTOAPPLY !== "false") {
+  throw new Error(
+    "LOOP_AUTOAPPLY is disabled: unset it or set exactly false; all proposals require human review",
+  );
+}
 // On Railway this throws at import if DATA_DIR is unset — before listen —
 // so a missing volume config can never look like a healthy deploy.
 const dataDir = resolveDataDir(env);
@@ -37,6 +44,11 @@ export const config = {
   // Optional shared secret. When set, the router requires Authorization: Bearer.
   // When unset/empty, all routes stay open (local + zero-secrets deploy).
   apiToken: env.API_TOKEN || "",
+  // The migration export returns the whole metadata catalogue in one response,
+  // so it is not one of the routes a public origin may leave open. On Railway
+  // it refuses to answer until API_TOKEN is configured; locally it stays
+  // reachable for development.
+  requireAuthenticatedExport: requirePersistentDataDir,
 
   runtime: {
     anthropic: {
@@ -86,8 +98,7 @@ export const config = {
     maxJobs: Number(env.LOOP_MAX_JOBS || 3),
     budgetUsd: Number(env.LOOP_BUDGET_USD || 1),
     costPerJobUsd: Number(env.LOOP_COST_PER_JOB || 0.05),
-    autoApply: env.LOOP_AUTOAPPLY === "true",       // default: human approves everything
-    autoApplyConfidence: Number(env.LOOP_AUTOAPPLY_CONFIDENCE || 0.85),
+    autoApply: false, // hard-disabled; LOOP_AUTOAPPLY=true aborts boot above
   },
 
   // The Context pillar — agent memory / knowledge with semantic recall.

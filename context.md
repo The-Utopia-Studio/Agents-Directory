@@ -261,8 +261,9 @@ browser and credential handling.
 - **Convex is unwired draft.** Front end uses `localStorage`; loop service uses JSON
   files; Convex schema connects to neither. **Three stores, no authority.**
 - **Four promotion bypasses exist on Railway:** `approveImprovement`, `runCycle`
-  auto-apply, `runGoal` shipping, and unrestricted agent replacement/version edits.
-  `LOOP_AUTOAPPLY` defaults off but can still be *enabled* for L2–L4 agents.
+  approval, `runGoal`, and unrestricted agent replacement/version edits.
+  Auto-approval is disabled: `runGoal` stops at human review and
+  `LOOP_AUTOAPPLY=true` fails boot.
 
 ### Open branch — READ BEFORE PLANNING ANY EXECUTION WORK
 **PR #2, `feat/invocation-usable`** (Karan, +223/−4, 11 files). Adds an invocation

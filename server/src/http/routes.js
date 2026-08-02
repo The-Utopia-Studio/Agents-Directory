@@ -2,10 +2,34 @@
 // contract the front-end's api.js talks to.
 import { binaryReply, reply } from "./router.js";
 
-export function registerRoutes(router, svc, engine) {
+/**
+ * Bulk metadata export is the one read that hands over the whole catalogue at
+ * once, so it is authenticated separately from the per-agent routes the static
+ * front-end needs. Without a configured API_TOKEN a deployed service cannot
+ * authenticate anyone, and an anonymous bulk read is worse than no export — so
+ * it answers 401 rather than serving it.
+ */
+function migrationExportDenial(req, { apiToken = "", requireAuthenticatedExport = false } = {}) {
+  if (apiToken) {
+    // The router already gated this; re-checked so the rule holds even if that
+    // gate is ever narrowed.
+    return (req?.headers?.authorization || "") === `Bearer ${apiToken}`
+      ? null
+      : "Unauthorized";
+  }
+  return requireAuthenticatedExport
+    ? "Migration export is disabled until API_TOKEN is configured on this deployment"
+    : null;
+}
+
+export function registerRoutes(router, svc, engine, config = {}) {
   // health / status of the wired providers
   router.get("/api/health", async () => svc.health());
   router.get("/api/fleet/health", async () => svc.fleetHealth());
+  router.get("/api/migration/export", async ({ req }) => {
+    const denial = migrationExportDenial(req, config);
+    return denial ? reply(401, { error: denial }) : svc.migrationExport();
+  });
 
   // ── the loop / automations (the heartbeat) ──
   router.post("/api/loop/run", async () => reply(201, await engine.runCycle()));

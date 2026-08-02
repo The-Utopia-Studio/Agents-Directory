@@ -61,7 +61,12 @@ test("runImprovement derives a proposal from failing signal", async () => {
   assert.equal(proposal.status, "proposed");
   assert.equal(proposal.source, "heuristic");
   assert.ok(proposal.evidence.failing >= 3, "should see the failing traces");
-  assert.match(proposal.summary, /voice mismatch|aggressive/i);
+  assert.equal(proposal.changes.length, 2);
+  assert.ok(proposal.changes.every((change) => change.surface === "prompt"));
+  const references = proposal.changes.flatMap((change) => change.evidence);
+  assert.ok(references.length >= 3);
+  assert.ok(references.every((id) => /^t_a2_/.test(id)));
+  assert.doesNotMatch(proposal.summary + proposal.detail, /results-driven|10x/i);
   const a2 = await svc.getAgent("A2");
   assert.equal(a2.proposedImprovement.id, proposal.id);
 });
@@ -108,11 +113,37 @@ test("reviewer feedback notes count as evidence without any failing trace", asyn
 
   const proposal = await svc.runImprovement("A7");
   assert.equal(proposal.status, "proposed");
-  assert.match(proposal.summary, /em dash/i);
+  assert.equal(proposal.changes.length, 2);
+  assert.deepEqual(
+    new Set(proposal.changes.map((change) => change.surface)),
+    new Set(["prompt", "check"]),
+  );
+  assert.ok(proposal.changes.every((change) => change.evidence.length === 1));
   assert.equal(proposal.evidence.failing, 0, "no failing trace was needed");
   assert.equal(proposal.evidence.feedbackReviewed, 1);
   assert.equal(proposal.evidence.averageRating, 4);
-  assert.ok(proposal.evidence.defectSignals.some((s) => /intersection of/.test(s)));
+  assert.doesNotMatch(
+    JSON.stringify(proposal),
+    /em dash in the hook; AI cliche/,
+    "feedback is cited by id, not copied into proposal text",
+  );
+});
+
+test("one feedback note can produce separate checker and prompt changes", async () => {
+  const note =
+    "Defect one: the AI cliche checker treats its phrase list as a word list. " +
+    "Fix the detector at phrase level. Defect two: the prompt needs a generalised " +
+    "guardrail against generic AI positioning language, separate from the check.";
+  const svc = await serviceWithA7Feedback({ rating: 3, notes: note });
+
+  const proposal = await svc.runImprovement("A7");
+  assert.equal(proposal.changes.length, 2);
+  const checker = proposal.changes.find((change) => change.surface === "check");
+  const prompt = proposal.changes.find((change) => change.surface === "prompt");
+  assert.equal(checker.target, "about_has_no_ai_cliche_phrase");
+  assert.equal(prompt.target, "server/src/artifacts/biocraft/SKILL.md#guardrails");
+  assert.deepEqual(checker.evidence, prompt.evidence);
+  assert.equal(JSON.stringify(proposal).includes(note), false);
 });
 
 test("a proposal records the artifact it was derived against", async () => {
@@ -165,6 +196,24 @@ test("approve cuts a new version and clears the proposal", async () => {
   const a2 = await svc.getAgent("A2");
   assert.equal(a2.proposedImprovement, null);
   assert.ok(a2.changelog.some((c) => c.version === version));
+});
+
+test("approval refuses a legacy proposal with no structured changes", async () => {
+  const { svc } = await freshServiceWithStore();
+  const proposal = await svc.runImprovement("A2");
+  const agent = await svc.getAgent("A2");
+  agent.proposedImprovement = { ...proposal, changes: undefined };
+  await svc.putAgent(agent);
+
+  await assert.rejects(
+    () => svc.approveImprovement("A2", proposal.id),
+    (error) => {
+      assert.equal(error.status, 422);
+      assert.match(error.message, /changes\[\] must contain/);
+      return true;
+    },
+  );
+  assert.equal((await svc.getAgent("A2")).version, agent.version);
 });
 
 test("reject clears the proposal without a version bump", async () => {

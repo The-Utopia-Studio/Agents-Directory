@@ -16,6 +16,8 @@ import {
   loadHandoffBriefing,
 } from "../handoff/handoffArtifacts.js";
 import { sanitizeCheckResults, sanitizeFailureReason } from "./traceSafety.js";
+import { validateProposal } from "../improve/proposalContract.js";
+import { buildServiceMigrationSnapshot } from "../migration/export.js";
 
 function outputDigest(output) {
   return createHash("sha256").update(String(output)).digest("hex");
@@ -28,8 +30,8 @@ function metadataOnlyTrace(agentId, trace) {
     ...(trace.metadata?.failed === true ? { failed: true } : {}),
   };
   // The checker's verdict survives the allowlist; free text does not. Both are
-  // filtered by shape, so an Anthropic message or a line of model output cannot
-  // reach the store even if a future caller passes one.
+  // filtered through closed vocabularies/field allowlists, so an Anthropic
+  // message or model output cannot reach the store if a future caller passes it.
   const checkResults = sanitizeCheckResults(trace.checkResults);
   const failureReason = sanitizeFailureReason(trace.failureReason);
   return {
@@ -75,6 +77,11 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
   const ns = (agentId) => `agent:${agentId}`;
 
   const svc = {
+    // ── Phase 2 migration discovery (read-only) ──
+    async migrationExport() {
+      return buildServiceMigrationSnapshot(store);
+    },
+
     // ── agents ──
     async listAgents() { return store.all("agents"); },
     async getAgent(id) { return store.get("agents", id); },
@@ -386,8 +393,8 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
 
       // A defect signal is a human-or-checker statement of what went wrong.
       // Runs alone are not one: a metadata trace records that the agent ran,
-      // never that it ran badly. Since traces are metadata-only, failureReason
-      // no longer survives persistence, so reviewer notes carry the detail.
+      // never that it ran badly. Closed-vocabulary failureReason survives on
+      // failed traces; reviewer notes carry human judgement separately.
       const defectSignals = [
         ...failingTraces.map((t) => t.failureReason).filter(Boolean),
         ...feedback.map((f) => String(f.notes || "").trim()).filter(Boolean),
@@ -430,7 +437,13 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       }
 
       const artifact = getRuntimeArtifactDescriptor(agentId);
-      const proposal = await optimizer.propose(agent, evidence);
+      // Optimizers are untrusted adapter boundaries. A better model with an
+      // untyped output is still unsafe: enforce concrete changes, bounded text,
+      // and evidence ids that exist for this agent before anything is queued.
+      const proposal = validateProposal(
+        await optimizer.propose(agent, evidence),
+        evidence,
+      );
       proposal.id = `imp_${Date.now().toString(36)}`;
       // Stamp what this proposal was derived against, so approval cannot be
       // applied to a build that has since changed underneath it.
@@ -450,6 +463,13 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       const prop = agent?.proposedImprovement;
       if (!agent || !prop) throw httpError(404, "No pending improvement");
       if (proposalId && prop.id !== proposalId) throw httpError(409, "Proposal id mismatch");
+      // Defend the approval boundary too. This catches legacy or externally
+      // written records that predate changes[] instead of treating them as
+      // approvable proposals.
+      validateProposal(
+        prop,
+        await this.collectImprovementEvidence(agentId, agent),
+      );
       // A proposal is only valid against the build it was derived from. If the
       // artifact moved since, the evidence no longer describes what runs.
       const current = getRuntimeArtifactDescriptor(agentId);

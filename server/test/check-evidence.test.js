@@ -83,7 +83,7 @@ test("a check failure is status fail, not error, and keeps the check id", async 
   assert.ok(svc);
 });
 
-test("a check failure lets the maker propose instead of refusing 422", async () => {
+test("a check failure reaches the maker, which refuses an ambiguous edit", async () => {
   const { obs, svc } = await serviceWithCheckFailure();
 
   // Before any evidence exists the maker must still refuse.
@@ -114,13 +114,16 @@ test("a check failure lets the maker propose instead of refusing 422", async () 
   assert.equal(evidence.failingTraces.length, 1);
   assert.deepEqual(evidence.defectSignals, ["about_closing_has_cta"]);
 
-  // This is the whole point of the change: the mechanically-generated signal
-  // now reaches the optimizer.
-  const proposal = await svc.runImprovement("A7");
-  assert.match(proposal.summary + proposal.detail, /about_closing_has_cta/);
-  assert.doesNotMatch(
-    proposal.summary + proposal.detail,
-    /the most frequent failure in recent runs/,
+  // The mechanically-generated signal reaches the optimizer, but three false
+  // detector booleans cannot tell it whether the draft or checker is wrong.
+  // Refusal is safer than inventing a prompt/check edit.
+  await assert.rejects(
+    () => svc.runImprovement("A7"),
+    (error) => {
+      assert.equal(error.status, 422);
+      assert.match(error.message, /cannot classify it into an exact/);
+      return true;
+    },
   );
 });
 

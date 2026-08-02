@@ -11,9 +11,12 @@ window.DirectoryAPI = (function () {
     typeof window.DIRECTORY_API_BASE === "string"
       ? window.DIRECTORY_API_BASE.trim()
       : "";
+  // A per-browser override outranks the deployed default. The alternative —
+  // editing index.html for local work — is how the shipped base URL became
+  // localhost, pointing every Vercel visitor at their own machine.
   const base =
-    configured ||
     localStorage.getItem("directory_api_base") ||
+    configured ||
     "http://localhost:8790";
 
   const tokenConfigured =
@@ -75,6 +78,11 @@ window.DirectoryAPI = (function () {
       return api.enabled;
     },
 
+    migrationExport: () => j("GET", "/api/migration/export"),
+    // Read-only. Observes which agent ids the service currently knows about, so
+    // the browser can avoid colliding with them. This is not a catalog sync and
+    // not an id reservation: the directory record stays local.
+    listAgents: () => j("GET", "/api/agents"),
     runImprovement: (id) => j("POST", `/api/agents/${id}/improvements`),
     approve: (id) => j("POST", `/api/agents/${id}/improvements/current/approve`),
     reject: (id) => j("POST", `/api/agents/${id}/improvements/current/reject`),

@@ -56,9 +56,7 @@ const SEED_AGENTS=[
       {date:"2026-07-08",status:"Needs improvement",score:58,notes:"CTAs sometimes too aggressive. Voice matching inconsistent without enough examples.",knownIssues:"Tends toward generic corporate language without strong examples.",by:"Sarah",traceUrl:""}
     ],
     changelog:[{version:"1.0",date:"2026-06-30",note:"Initial build."}],
-    proposedImprovement:{source:"GEPA (stub)",date:"2026-07-15",status:"proposed",
-      summary:"Add a voice-anchoring step + a CTA-tone rubric to the prompt.",
-      detail:"Traces show failures cluster when no example bio is supplied. Proposed: (1) require ≥2 of the fellow's own sentences as voice anchors before generating; (2) score each CTA against a 'confident-not-pushy' rubric and regenerate any that fail. Est. +18 pts on voice-match in offline eval."}},
+    proposedImprovement:null},
 
   {id:"A3",name:"Post Suggester",tagline:"Scrapes trending topics in a fellow's field and generates draft LinkedIn posts with hooks and CTAs.",description:"",platform:"Manus",status:"Active",category:"Marketing & Content",owner:"James",initials:"JA",model:"—",version:"1.1",
     usabilityModes:["download-install"],
@@ -141,6 +139,23 @@ const SEED_AGENTS=[
     skills:["biocraft","personal-branding","copywriting"],tools:[],context:["Complete fellow source material supplied up front"],
     accessUrl:"",repoUrl:"",evalHistory:[],
     changelog:[{version:"1.0",date:"2026-08-01",note:"Stateless single-shot draft mode using a server-owned SKILL.md."}],
+    proposedImprovement:null},
+
+  // A8 is prepared-handoff: the agent lives in Aiden's repo and runs in Codex.
+  // Catalogue entry only — engagement terms are in the server handoff registry.
+  {id:"A8",name:"UX&QA",tagline:"Independent UX and QA round against an approved non-production build.",description:"Prepared handoff to Aiden's pinned UX&QA agent. There is no hosted run and no downloadable install package in this directory — copy the engagement brief, complete its checklist, then hand over in Codex.",platform:"Codex",status:"Experimental",category:"Design & Product",owner:"Aiden Kim",initials:"AK",model:"—",version:"0.1.0",
+    objective:"Run an independent UX and QA round against an approved non-production build and return a severity-ranked issue register with evidence per finding.",
+    successCriteria:["Severity-ranked issue register with evidence per finding","Scenario matrix returned as executed","Results attributed to the pinned commit SHA"],
+    guardrails:["Do not treat connector availability as authorisation","Do not silently rewrite \"Not reproducible\" as \"Verified\"","Product-team internal verification stays separate from independent UX/QA verification"],
+    autonomyLevel:"L1",
+    invocation:{type:"link"},
+    usabilityModes:["prepared-handoff"],
+    when:"When a build is marked Ready for QA and needs verification independent of the product team's own testing.",
+    sop:"1. Copy the engagement brief from this directory\n2. Complete its 12-item setup checklist\n3. Hand over in Codex at the pinned commit\n4. Return the issue register, scenario matrix, commit SHA, rating, and build identifier",
+    inputs:["Completed 12-item setup checklist","Approved non-production URL and build identifier"],outputs:["Severity-ranked issue register","Scenario matrix as executed","Rating and notes attributed to the pinned commit"],
+    skills:[],tools:[],context:[],
+    accessUrl:"",repoUrl:"https://github.com/aiden150/ux-qa-agent",evalHistory:[],
+    changelog:[{version:"0.1.0",date:"2026-08-02",note:"Registered as a prepared handoff against a pinned commit."}],
     proposedImprovement:null}
 ];
 
@@ -155,29 +170,76 @@ const SEED_REQUESTS=[
 // ── STATE (hydrated from localStorage) ──
 let agents=[],requests=[],nextAgentNum=1,nextReqNum=1;
 const STORE_KEY="utopia_agents_dir_v2";
+let migrationReview=null;
 
-function persist(){try{localStorage.setItem(STORE_KEY,JSON.stringify({agents,requests,nextAgentNum,nextReqNum}))}catch(e){}}
+// Agent ids are ONE namespace shared with the loop service. A browser that
+// mints an id the service already owns does not just mislabel a card: evals,
+// proposals and briefings for that id resolve against the server's record, so
+// a local agent would write onto someone else's. This is a temporary collision
+// MITIGATION, not an atomic reservation: GET /api/agents only observes the ids
+// currently known to the service, it does not claim one. When the service is
+// reachable and responds before minting, the browser avoids those ids; a
+// hardcoded ceiling would be the same collision with a delay on it. Convex
+// becomes the sole allocator in Phase 5.
+let reservedAgentIds=[];
+
+function persist(){try{localStorage.setItem(STORE_KEY,JSON.stringify({agents,requests,nextAgentNum,nextReqNum,reservedAgentIds}))}catch(e){}}
 function hydrate(){
   try{const s=JSON.parse(localStorage.getItem(STORE_KEY));
     if(s&&Array.isArray(s.agents)){
       agents=s.agents;requests=s.requests;nextAgentNum=s.nextAgentNum;nextReqNum=s.nextReqNum;
-      const seededA7=SEED_AGENTS.find(a=>a.id==="A7"),index=agents.findIndex(a=>a.id==="A7");
+      reservedAgentIds=Array.isArray(s.reservedAgentIds)?s.reservedAgentIds:[];
       let changed=false;
-      if(index<0){agents.push(JSON.parse(JSON.stringify(seededA7)));changed=true}
+      const seededA7=SEED_AGENTS.find(a=>a.id==="A7"),indexA7=agents.findIndex(a=>a.id==="A7");
+      if(indexA7<0){agents.push(JSON.parse(JSON.stringify(seededA7)));changed=true}
       else{
-        const prior=agents[index],fields=["name","tagline","description","owner","objective","successCriteria","guardrails","invocation","usabilityModes","when","sop","inputs","outputs","skills","tools","context"];
+        const prior=agents[indexA7],fields=["name","tagline","description","owner","objective","successCriteria","guardrails","invocation","usabilityModes","when","sop","inputs","outputs","skills","tools","context"];
         if(fields.some(key=>JSON.stringify(prior[key])!==JSON.stringify(seededA7[key]))){
-          agents[index]={...prior,...Object.fromEntries(fields.map(key=>[key,JSON.parse(JSON.stringify(seededA7[key]))]))};
+          agents[indexA7]={...prior,...Object.fromEntries(fields.map(key=>[key,JSON.parse(JSON.stringify(seededA7[key]))]))};
           changed=true;
         }
       }
-      nextAgentNum=Math.max(Number(nextAgentNum)||1,8);if(changed)persist();return
+      // A8 is server-owned prepared-handoff. Insert when missing so the catalogue
+      // card and briefing affordance appear; sync display fields when present so
+      // a stale local copy cannot drift from the handoff registry.
+      const seededA8=SEED_AGENTS.find(a=>a.id==="A8"),indexA8=agents.findIndex(a=>a.id==="A8");
+      if(indexA8<0){agents.push(JSON.parse(JSON.stringify(seededA8)));changed=true}
+      else{
+        const prior=agents[indexA8],fields=["name","tagline","description","platform","owner","initials","objective","successCriteria","guardrails","invocation","usabilityModes","when","sop","inputs","outputs","skills","tools","context","repoUrl","version"];
+        if(fields.some(key=>JSON.stringify(prior[key])!==JSON.stringify(seededA8[key]))){
+          agents[indexA8]={...prior,...Object.fromEntries(fields.map(key=>[key,JSON.parse(JSON.stringify(seededA8[key]))]))};
+          changed=true;
+        }
+      }
+      nextAgentNum=Number(nextAgentNum)||1;if(changed)persist();return
     }
   }catch(e){}
   agents=JSON.parse(JSON.stringify(SEED_AGENTS));
   requests=JSON.parse(JSON.stringify(SEED_REQUESTS));
   nextAgentNum=agents.length+1;nextReqNum=requests.length+1;
   persist();
+}
+function agentIdNumber(id){const m=/^A(\d+)$/.exec(String(id||""));return m?Number(m[1]):0}
+function highestAgentNumber(ids){return ids.reduce((max,id)=>Math.max(max,agentIdNumber(id)),0)}
+// Mint above every id observed as taken, local or service-known. The floor is
+// derived each time rather than stored, so a stale counter cannot reissue one.
+// Ids stay in the A<n> namespace Convex's nextDisplayId matches, so nothing
+// needs renaming when the catalog moves there (TUS-2327).
+function mintAgentId(){
+  const taken=new Set([...agents.map(a=>a.id),...reservedAgentIds]); // ids observed as taken; not a reservation
+  let n=Math.max(Number(nextAgentNum)||1,highestAgentNumber([...taken])+1);
+  while(taken.has("A"+n))n++;
+  nextAgentNum=n+1;
+  return "A"+n;
+}
+async function refreshReservedAgentIds(){
+  if(!(window.DirectoryAPI&&DirectoryAPI.enabled))return false;
+  try{
+    const r=await DirectoryAPI.listAgents();
+    reservedAgentIds=((r&&r.agents)||[]).map(a=>a&&a.id).filter(Boolean);
+    persist();
+    return true;
+  }catch(e){return false}
 }
 function resetData(){if(!confirm("Reset the directory to seed data? Local changes will be lost."))return;localStorage.removeItem(STORE_KEY);hydrate();state.view="list";render();toast("Reset to seed data")}
 
@@ -200,6 +262,18 @@ function getInitials(name){return name.split(" ").map(w=>w[0]).join("").toUpperC
 function autonomyLabel(l){return{L0:"assist only",L1:"suggest + confirm",L2:"act narrow + audit",L3:"act broad",L4:"autonomous"}[l]||"suggest + confirm"}
 function escHtml(s){return s?String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"):""}
 function toast(msg){const t=document.createElement("div");t.className="toast";t.textContent=msg;document.body.appendChild(t);setTimeout(()=>t.remove(),2500)}
+function renderProposalChanges(changes){
+  if(!Array.isArray(changes)||!changes.length)return`<div class="loop-contract-error">This legacy record has no structured changes and cannot be approved. Reject it, then run Propose improvement again.</div>`;
+  return`<div class="loop-changes">${changes.map((c,i)=>`
+    <div class="loop-change">
+      <div class="loop-change-head"><span class="loop-change-index">Change ${i+1}</span><span class="pill pill-xs pill-blue">${escHtml(c.surface)}</span></div>
+      <div class="loop-change-target"><span>Target</span><code>${escHtml(c.target)}</code></div>
+      <div class="loop-change-field"><span>Current</span><p>${escHtml(c.current)}</p></div>
+      <div class="loop-change-field"><span>Proposed</span><p>${escHtml(c.proposed)}</p></div>
+      <div class="loop-change-field"><span>Why</span><p>${escHtml(c.rationale)}</p></div>
+      <div class="loop-change-evidence"><span>Evidence</span>${(c.evidence||[]).map(id=>`<code>${escHtml(id)}</code>`).join("")}</div>
+    </div>`).join("")}</div>`;
+}
 function formatDate(d){if(!d)return"";const dt=new Date(d);return isNaN(dt)?escHtml(d):dt.toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"})}
 function parseCSV(s){return s?s.split(",").map(x=>x.trim()).filter(Boolean):[]}
 function parseLines(s){return s?s.split("\n").map(x=>x.replace(/^\s*[-•\d.]+\s*/,"").trim()).filter(Boolean):[]}
@@ -246,7 +320,7 @@ function agentFormHtml(agent){
         <div class="form-group"><label>Success criteria</label><textarea id="f-success" rows="3" placeholder="One measurable signal per line">${escHtml((a.successCriteria||[]).join("\n"))}</textarea><div class="hint">One per line. How you'll know it worked.</div></div>
         <div class="form-group"><label>Guardrails</label><textarea id="f-guardrails" rows="3" placeholder="One constraint per line">${escHtml((a.guardrails||[]).join("\n"))}</textarea><div class="hint">One per line. Must-nots and limits.</div></div>
       </div>
-      <div class="form-group"><label>Autonomy level</label><select id="f-autonomy">${["L0","L1","L2","L3","L4"].map(l=>`<option${(a.autonomyLevel||"L1")===l?" selected":""}>${l}</option>`).join("")}</select><div class="hint">L0 assist · L1 suggest+confirm · L2 act narrow+audit · L3 act broad · L4 autonomous. The loop won't auto-apply above this.</div></div>
+      <div class="form-group"><label>Autonomy level</label><select id="f-autonomy">${["L0","L1","L2","L3","L4"].map(l=>`<option${(a.autonomyLevel||"L1")===l?" selected":""}>${l}</option>`).join("")}</select><div class="hint">L0 assist · L1 suggest+confirm · L2 act narrow+audit · L3 act broad · L4 autonomous. This describes action scope; proposals always require human approval.</div></div>
     </div>
 
     <div class="form-section">
@@ -406,11 +480,21 @@ function readAgentForm(){
 }
 function validAgent(f){return f.name&&f.tagline&&f.objective&&f.when&&f.sop&&f.category&&f.owner&&Array.isArray(f.usabilityModes)&&f.usabilityModes.length>0}
 
-function saveNewAgent(){
+async function saveNewAgent(){
   const f=readAgentForm();
   if(!validAgent(f)){toast("Fill in all required fields and select a usability mode");return}
-  agents.push(Object.assign({id:"A"+nextAgentNum++,initials:getInitials(f.owner),version:f.version||"1.0",evalHistory:[],changelog:[{version:f.version||"1.0",date:new Date().toISOString().split("T")[0],note:"Registered in directory."}],proposedImprovement:null},f));
-  if(state.pendingRequestId){const r=requests.find(x=>x.id===state.pendingRequestId);if(r){r.status="Shipped";r.shippedAgentId="A"+(nextAgentNum-1);}state.pendingRequestId=null}
+  // Re-read the service's known ids immediately before minting. A set fetched
+  // at page load can miss an id the service assigned in the meantime; refreshing
+  // here narrows (but cannot close) that window, since this is a mitigation, not
+  // an atomic reservation. If the service is enabled but silent, refuse rather
+  // than mint blind against a stale set.
+  if(window.DirectoryAPI&&DirectoryAPI.enabled&&!await refreshReservedAgentIds()){
+    toast("Cannot check agent ids against the directory service — it did not answer. Retry when it is reachable.");
+    return;
+  }
+  const id=mintAgentId();
+  agents.push(Object.assign({id,initials:getInitials(f.owner),version:f.version||"1.0",evalHistory:[],changelog:[{version:f.version||"1.0",date:new Date().toISOString().split("T")[0],note:"Registered in directory."}],proposedImprovement:null},f));
+  if(state.pendingRequestId){const r=requests.find(x=>x.id===state.pendingRequestId);if(r){r.status="Shipped";r.shippedAgentId=id;}state.pendingRequestId=null}
   persist();closeModal();toast("Agent added: "+f.name);
   render();
 }
@@ -476,7 +560,7 @@ async function proposeImprovement(id){
   }
   try{
     const p=await DirectoryAPI.runImprovement(id);
-    a.proposedImprovement={source:p.source,date:p.date,status:p.status,summary:p.summary,detail:p.detail,
+    a.proposedImprovement={source:p.source,date:p.date,status:p.status,summary:p.summary,detail:p.detail,changes:p.changes,
       targetArtifactVersion:p.targetArtifactVersion,targetArtifactDigest:p.targetArtifactDigest,
       targetAgentVersion:p.targetAgentVersion};
     persist();state.agent=a;render();toast("Improvement proposed by "+p.source+" — awaiting review");
@@ -492,13 +576,13 @@ async function approveImprovement(id){
     try{
       const r=await DirectoryAPI.approve(id);
       a.version=r.version;if(r.agent&&r.agent.changelog)a.changelog=r.agent.changelog;a.proposedImprovement=null;
-      persist();state.agent=a;render();toast("Approved → shipped v"+r.version);return;
+      persist();state.agent=a;render();toast("Review decision recorded · catalog label v"+r.version+" · agent behavior unchanged");return;
     }catch(e){toast("Approval failed — check connection and retry");return}
   }
   const nv=bumpVersion(a.version);
   a.changelog.push({version:nv,date:new Date().toISOString().split("T")[0],note:"Approved improvement: "+a.proposedImprovement.summary});
   a.version=nv;a.proposedImprovement=null;
-  persist();state.agent=a;render();toast("Approved → shipped v"+nv);
+  persist();state.agent=a;render();toast("Review decision recorded · catalog label v"+nv+" · agent behavior unchanged");
 }
 async function rejectImprovement(id){
   const a=agents.find(x=>x.id===id);if(!a||!a.proposedImprovement)return;
@@ -525,6 +609,74 @@ function renderHealthStrip(){
   </div>`;
 }
 
+function readinessLabel(status){return status==="ready"?"Ready":status==="blocked"?"Blocked":"Needs review"}
+function renderMigrationReadiness(){
+  if(!migrationReview)return"";
+  const readiness=migrationReview.readiness||{},summary=readiness.summary||{};
+  const groups=Object.entries(migrationReview.records||{}).map(([type,rows])=>{
+    if(!rows.length)return"";
+    return `<div class="migration-group">
+      <div class="migration-group-title">${escHtml(type)} <span>${rows.length}</span></div>
+      ${rows.map(row=>`<div class="migration-row">
+        <span class="migration-source">${escHtml(row.source)}</span>
+        <code>${escHtml(row.sourceId)}</code>
+        <span class="migration-status migration-${escHtml(row.readiness.status)}">${readinessLabel(row.readiness.status)}</span>
+        <span class="migration-reasons">${(row.readiness.reasons||[]).map(reason=>escHtml(reason.message)).join(" · ")||"All governed fields present"}</span>
+      </div>`).join("")}
+    </div>`;
+  }).join("");
+  const sourceIssues=(readiness.sourceIssues||[]).map(issue=>`<div class="migration-source-issue">${escHtml(issue.source)} — ${escHtml(issue.reason)}</div>`).join("");
+  return `<section class="migration-report">
+    <div class="migration-report-head">
+      <div><div class="migration-kicker">PHASE 2 · READ-ONLY</div><h3>Migration readiness</h3><p>${summary.total||0} records · ${summary.ready||0} ready · ${summary.blocked||0} blocked · ${summary["needs-review"]||0} need review</p></div>
+      <button class="btn btn-sm btn-primary" onclick="downloadMigrationReview()">Download review JSON</button>
+    </div>
+    ${sourceIssues}
+    <div class="migration-privacy">Metadata-only export. Raw run inputs, outputs, prompts, credentials, source material, and feedback text are excluded. No source store was changed.</div>
+    ${groups||'<div class="migration-empty">No records were available to inspect.</div>'}
+  </section>`;
+}
+
+async function prepareMigrationReview(button){
+  if(!window.MigrationExport){toast("Migration exporter is still loading — retry in a moment");return}
+  if(button){button.disabled=true;button.textContent="Inspecting…"}
+  try{
+    const browserSnapshot=MigrationExport.readBrowserMigrationSnapshot(localStorage,STORE_KEY);
+    let serviceSnapshot=null,serviceIssue="not-attempted";
+    if(window.DirectoryAPI){
+      if(!DirectoryAPI.enabled)await DirectoryAPI.ready;
+      if(!DirectoryAPI.enabled)await DirectoryAPI.probe();
+      if(!DirectoryAPI.enabled)serviceIssue="unavailable";
+      else{
+        try{serviceSnapshot=await DirectoryAPI.migrationExport();serviceIssue=null}
+        catch(error){
+          // A category, never the thrown message: that text carries server
+          // detail and the URL, and this report gets downloaded and shared.
+          serviceSnapshot=null;
+          serviceIssue=MigrationExport.classifyServiceFetchIssue(error);
+        }
+      }
+    }
+    migrationReview=MigrationExport.buildMigrationExport({browserSnapshot,serviceSnapshot,serviceIssue});
+    if(serviceIssue==="unauthorised")toast("Loop service refused the export as unauthorised — recorded in the report");
+    render();
+    toast("Read-only migration report ready");
+  }catch(error){
+    toast(`Migration report failed: ${String(error.message||error)}`);
+    if(button){button.disabled=false;button.textContent="Migration readiness"}
+  }
+}
+
+function downloadMigrationReview(){
+  if(!migrationReview){toast("Generate the migration report first");return}
+  const blob=new Blob([JSON.stringify(migrationReview,null,2)],{type:"application/json"});
+  const url=URL.createObjectURL(blob),a=document.createElement("a");
+  const stamp=String(migrationReview.generatedAt||new Date().toISOString()).replace(/[:.]/g,"-");
+  a.href=url;a.download=`agents-directory-phase2-${stamp}.json`;
+  document.body.appendChild(a);a.click();a.remove();URL.revokeObjectURL(url);
+  toast("Migration review downloaded — keep it out of git");
+}
+
 function renderAgentsList(){
   const cats=["All",...new Set(agents.map(a=>a.category))];
   const stats=["All",...new Set(agents.map(a=>a.status))];
@@ -534,8 +686,9 @@ function renderAgentsList(){
     return true;
   });
   return `
-    <div class="section-header"><h2>AGENTS</h2><div class="actions"><button class="btn" onclick="openModal('request')">Request an Agent</button><button class="btn btn-primary" onclick="openModal('addAgent')">+ Add agent</button></div></div>
+    <div class="section-header"><h2>AGENTS</h2><div class="actions"><button class="btn" onclick="prepareMigrationReview(this)">Migration readiness</button><button class="btn" onclick="openModal('request')">Request an Agent</button><button class="btn btn-primary" onclick="openModal('addAgent')">+ Add agent</button></div></div>
     ${renderSubTabs()}
+    ${renderMigrationReadiness()}
     ${renderHealthStrip()}
     <div id="automations" class="automations"></div>
     <p class="count-line">${filtered.length} agent${filtered.length!==1?"s":""} across the team. Click one to see its goals, skills, tools, context, and eval history. <a class="reset-link" onclick="resetData()">reset demo data</a></p>
@@ -577,8 +730,9 @@ function renderRequests(){
   const active=["In Progress","Approved","Requested"].map(g=>grp(g,groups[g])).join("");
   const done=["Shipped","Declined"].filter(g=>groups[g].length).map(g=>grp(g,groups[g])).join("");
   return `
-    <div class="section-header"><h2>AGENTS</h2><div class="actions"><button class="btn btn-primary" onclick="openModal('request')">+ New request</button><button class="btn" onclick="openModal('addAgent')">Add agent</button></div></div>
+    <div class="section-header"><h2>AGENTS</h2><div class="actions"><button class="btn" onclick="prepareMigrationReview(this)">Migration readiness</button><button class="btn btn-primary" onclick="openModal('request')">+ New request</button><button class="btn" onclick="openModal('addAgent')">Add agent</button></div></div>
     ${renderSubTabs()}
+    ${renderMigrationReadiness()}
     <p class="count-line">Agent requests from the team. Click a request to triage it — or ship an approved one straight into the catalog.</p>
     ${active}
     ${done?`<div class="resolved-divider"><div class="resolved-title">RESOLVED</div>${done}</div>`:""}`;
@@ -622,13 +776,15 @@ function renderDetail(a){
       <div class="loop-head"><span class="loop-badge">● IMPROVEMENT PROPOSED</span><span class="loop-src">${escHtml(a.proposedImprovement.source)} · ${formatDate(a.proposedImprovement.date)}</span></div>
       <div class="loop-summary">${escHtml(a.proposedImprovement.summary)}</div>
       <div class="loop-detail">${escHtml(a.proposedImprovement.detail)}</div>
+      ${renderProposalChanges(a.proposedImprovement.changes)}
       ${a.proposedImprovement.verdict?`<div class="loop-verdict"><span class="pill pill-xs ${a.proposedImprovement.verdict.verdict==="ship"?"pill-green":a.proposedImprovement.verdict.verdict==="reject"?"pill-amber":"pill-blue"}">checker: ${escHtml(a.proposedImprovement.verdict.verdict)} · ${a.proposedImprovement.verdict.confidence}</span>${(a.proposedImprovement.verdict.reasons||[]).length?`<span class="loop-verdict-why">${escHtml(a.proposedImprovement.verdict.reasons[0])}</span>`:""}</div>`:""}
-      ${a.proposedImprovement.targetArtifactVersion?`<div class="loop-target">Derived against artifact <strong>${escHtml(a.proposedImprovement.targetArtifactVersion)}</strong>${a.proposedImprovement.targetArtifactDigest?` · <code>${escHtml(String(a.proposedImprovement.targetArtifactDigest).slice(0,7))}</code>`:""}. Approving records the review and bumps the catalog label; it does not edit that artifact.</div>`:""}
-      <div class="loop-actions"><button class="btn btn-primary btn-sm" onclick="approveImprovement('${a.id}')">Approve &rarr; catalog v${bumpVersion(a.version)}</button><button class="btn btn-sm" onclick="rejectImprovement('${a.id}')">Reject</button></div>
+      ${a.proposedImprovement.targetArtifactVersion?`<div class="loop-target">Derived against artifact <strong>${escHtml(a.proposedImprovement.targetArtifactVersion)}</strong>${a.proposedImprovement.targetArtifactDigest?` · <code>${escHtml(String(a.proposedImprovement.targetArtifactDigest).slice(0,7))}</code>`:""}.</div>`:""}
+      <div class="loop-approval-notice"><strong>Approval records a review decision only.</strong> It bumps the catalog label and clears this proposal, but changes no prompt, check, runtime, or agent behavior. A human must make, verify, and commit the artifact edit separately.</div>
+      <div class="loop-actions"><button class="btn btn-primary btn-sm" onclick="approveImprovement('${a.id}')" ${Array.isArray(a.proposedImprovement.changes)&&a.proposedImprovement.changes.length?"":"disabled"}>Record approval &rarr; catalog v${bumpVersion(a.version)}</button><button class="btn btn-sm" onclick="rejectImprovement('${a.id}')">Reject proposal</button></div>
     </div>`:""}
 
     <div class="pillar-block pillar-goals">
-      <div class="pillar-tag">① GOALS<span class="autonomy-pill" title="Autonomy level — the loop won't auto-apply above this">${escHtml(a.autonomyLevel||"L1")} · ${autonomyLabel(a.autonomyLevel||"L1")}</span>${a.costPerOutcome&&a.costPerOutcome.target?`<span class="cost-pill">target ${"$"+a.costPerOutcome.target}/outcome</span>`:""}</div>
+      <div class="pillar-tag">① GOALS<span class="autonomy-pill" title="Action scope only — proposals always require human approval">${escHtml(a.autonomyLevel||"L1")} · ${autonomyLabel(a.autonomyLevel||"L1")}</span>${a.costPerOutcome&&a.costPerOutcome.target?`<span class="cost-pill">target ${"$"+a.costPerOutcome.target}/outcome</span>`:""}</div>
       <div class="section-body objective">${escHtml(a.objective||"No objective set.")}</div>
       <div class="io-grid">
         <div class="io-box"><h4>SUCCESS CRITERIA</h4>${pillarList(a.successCriteria,"None specified")}</div>
@@ -744,6 +900,14 @@ const runCapabilities={};
 async function loadRunCapability(id){
   const a=agents.find(x=>x.id===id),slot=document.getElementById("run-action"),installSlot=document.getElementById("install-actions"),handoffSlot=document.getElementById("handoff-actions");
   if(!a)return;
+  if(window.DirectoryAPI){
+    // Capability (brief, install, run) is server-owned. Wait for the in-flight
+    // health probe, then retry once before declaring the server absent —
+    // otherwise a detail view opened before probe resolution permanently shows
+    // "unavailable" even when the loop is up.
+    if(!DirectoryAPI.enabled)await DirectoryAPI.ready;
+    if(!DirectoryAPI.enabled)await DirectoryAPI.probe();
+  }
   if(!(window.DirectoryAPI&&DirectoryAPI.enabled)){
     showCapabilityFailure(a,{slot,installSlot,handoffSlot},"this page is running without a directory server, and every one of these artifacts is server-owned.");
     return;
@@ -907,4 +1071,12 @@ function switchSubTab(tab){state.subTab=tab;state.view="list";render()}
 hydrate();
 render();
 // The probe resolves after the first render — refresh the automations panel then.
-if(window.DirectoryAPI)DirectoryAPI.ready.then(()=>{if(state.view==="list"&&state.subTab==="agents")loadAutomations()});
+if(window.DirectoryAPI)DirectoryAPI.ready.then(()=>{
+  // Observe the service's known ids as early as possible, so the first mint in
+  // a fresh browser already avoids them when the service is reachable.
+  refreshReservedAgentIds();
+  if(state.view==="list"&&state.subTab==="agents")loadAutomations();
+  // Re-load capability once the probe has resolved — first paint may have
+  // rendered the detail view before DirectoryAPI.enabled was true.
+  if(state.view==="detail"&&state.agent)loadRunCapability(state.agent.id);
+});

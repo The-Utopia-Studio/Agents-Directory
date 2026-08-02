@@ -390,15 +390,24 @@ off, it is off.
   be turned off for a deployment with `FEEDBACK_NOTES=false`, which rejects
   posted notes with 400 while still accepting the rating.
 - **The maker refuses without evidence, and there is no offline stub.** A
-  proposal must be derived from a real defect signal: a failing trace's
-  reason, reviewer feedback notes, or an eval `knownIssues`/`notes`. Metadata
-  traces and feedback records are read as evidence, but a successful run is
-  not a defect signal — it records that the agent ran, never that it ran
-  badly. With no signal, `runImprovement` returns 422 naming exactly what is
-  missing, and no proposal is queued. Optimizers refuse too, so no adapter can
-  emit a templated proposal with an unresolved placeholder in it. The
-  front-end has no offline synthesis path; without the loop service, Propose
-  simply declines.
+  proposal must contain a non-empty `changes[]`; each change names a
+  `prompt | check | runtime` surface, concrete target, bounded current/proposed
+  text, one-sentence rationale, and at least one existing trace or feedback id.
+  The server validates those ids against records scoped to the agent and
+  rejects unknown ids, empty changes, overlong edit text, and verbatim inlined
+  feedback. Evidence is cited by reference, not pasted into the title or
+  rationale.
+
+  The offline heuristic only emits edits for defect classes it explicitly
+  understands. It can separate known prompt and checker defects, but it refuses
+  unknown prose rather than keyword-extracting a reviewer note into a template.
+  A mechanical check failure alone also remains ambiguous: detector facts show
+  what fired, not whether the draft or detector is wrong, so the heuristic
+  refuses until reviewer evidence identifies the edit. The current GEPA
+  adapter is structurally prompt-only (`optimizedPrompt`/`diff`) and therefore
+  refuses all proposals until its endpoint/CLI can emit valid `changes[]`; it
+  never converts a prompt diff into a fake checker/runtime edit. No LLM maker
+  is wired yet.
 - **Approving a proposal does not change what runs.** `approveImprovement`
   bumps the mutable directory catalog label (`1.0` → `1.1`) and appends a
   changelog entry. It does not edit `SKILL.md`, `artifact_version`, or the
@@ -408,16 +417,24 @@ off, it is off.
   artifact has moved since the proposal was derived. Applying an approved
   change to the artifact itself is still a manual edit plus an
   `artifact_version` bump.
+- **The loop cannot approve on its own.** Verifier `ship` is a recommendation,
+  not a review event. Cycle runs leave it in the inbox; goal runs stop at
+  `held-for-human`. `shouldAutoApply` always returns false and
+  `LOOP_AUTOAPPLY=true` fails boot rather than reopening a stale configuration
+  path. `autonomyLevel` describes action scope only.
 - **Runtime traces have no approved `agentVersionId`.** A7 traces carry the same
   `artifactDigest` and `artifactDigestAlgorithm: "sha256"` used by
   run/copy/download plus the mutable directory version label, but the artifact
   is still not a Convex-approved version. It cannot support authoritative
   promotion until Railway is wired to Convex under **TUS-2327**.
-- **No auth provider is configured (no Clerk).** There is no `auth.config.ts`.
-  Against a real deployment, `ctx.auth.getUserIdentity()` returns nothing, so
-  every authority mutation — evidence inserts, approvals — fails closed with a
-  401. Tests get past this only because `convex-test` injects an identity via
-  `.withIdentity(...)`.
+- **Clerk is configured, but the front-end is not authenticated yet.**
+  `convex/auth.config.ts` trusts the configured
+  `CLERK_JWT_ISSUER_DOMAIN` using the `convex` audience. Authority mutations
+  fail closed with 401 when no signed identity is present. Release decisions
+  additionally require the signed, user-level top-level claim
+  `role: "approver"` and fail with 403 for every other role. The static
+  front-end is not wired to Clerk or Convex yet, so this protects the authority
+  function boundary but does not make the current browser UI a Convex client.
 - **Digests are caller attestations, not verified byte hashes.** Fields like
   `declaredDigest` / `declaredArtifactDigest` are values the caller supplies;
   nothing hashes the artifact to check them.

@@ -176,7 +176,7 @@ Example with defaults:
 If the heartbeat is enabled, an extra line:
 
 ```
-[loop] heartbeat every <ms>ms (autoApply=false|true)
+[loop] heartbeat every <ms>ms (autoApply=false)
 ```
 
 ---
@@ -212,8 +212,7 @@ If the heartbeat is enabled, an extra line:
 | `LOOP_MAX_JOBS` | Jobs per cycle | `3` | Optional | No | ✓ |
 | `LOOP_BUDGET_USD` | $ cap per cycle | `1` | Optional | No | ✓ |
 | `LOOP_COST_PER_JOB` | Assumed $ per job | `0.05` | Optional | No | ✓ |
-| `LOOP_AUTOAPPLY` | Auto-ship proposals | `false` | Optional | No | ✓ keep false |
-| `LOOP_AUTOAPPLY_CONFIDENCE` | Min confidence to auto-apply | `0.85` | Optional | No | ✓ |
+| `LOOP_AUTOAPPLY` | Retired auto-approval switch | `false` | Optional | No | Must be false/unset; true aborts boot |
 | `MEMORY_PROVIDER` | Memory backend | `local` | Optional | No | ✓ |
 | `MEMORY_TOP_K` | Recall result count | `5` | Optional | No | ✓ |
 | `SUPERMEMORY_API_KEY` | Supermemory auth | `""` | If provider=supermemory | **Yes** | skip |
@@ -341,9 +340,13 @@ The public Railway domain is open by default. To lock it down without breaking z
 
 Priority order:
 
-1. `window.DIRECTORY_API_BASE` (set via inline script before `api.js`)  
-2. `localStorage.getItem("directory_api_base")`  
+1. `localStorage.getItem("directory_api_base")` — per-browser override for local development
+2. `window.DIRECTORY_API_BASE` (set via inline script before `api.js`) — the deployed default
 3. Fallback: `"http://localhost:8790"`
+
+The override outranks the page default deliberately: editing `index.html` to
+point at a local loop is how a `http://127.0.0.1:8790` base URL shipped to
+Vercel and sent every visitor's browser to their own machine.
 
 **There is no Vercel/build-time env injection today.** `index.html` only loads:
 
@@ -352,10 +355,13 @@ Priority order:
 <script src="app.js"></script>
 ```
 
-No `DIRECTORY_API_BASE` is set in the repo. After Railway gives you a URL, you must either:
+`index.html` ships the Railway host in `window.DIRECTORY_API_BASE`. To point a
+single browser somewhere else (a local loop, a preview service), set the
+override once in the console and reload — never by editing the tracked default:
 
-- Add `<script>window.DIRECTORY_API_BASE = "https://….up.railway.app";</script>` before `api.js`, or  
-- Once in the browser console: `localStorage.setItem("directory_api_base", "https://….up.railway.app")` then reload.
+```js
+localStorage.setItem("directory_api_base", "http://127.0.0.1:8790");
+```
 
 ### Detecting up / down
 
@@ -455,7 +461,8 @@ Do these in order.
    - `CORS_ORIGIN` = `*` *(or your Vercel origin once known)*  
    Leave providers unset (defaults = local/heuristic).  
    Do **not** set `PORT` (Railway injects it).  
-   Do **not** set `LOOP_AUTOAPPLY=true` for first deploy.
+   Do **not** set `LOOP_AUTOAPPLY=true`; auto-approval is disabled and the
+   service fails boot when that stale value is present.
 
 7. **Deploy / wait for healthy**  
    Verify in Railway logs: `[loop] listening on :<port> dataDir=/data (Railway volume required) obs=local(ok) …`  

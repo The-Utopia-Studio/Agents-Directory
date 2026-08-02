@@ -1,6 +1,6 @@
-// Triage policy — decides which agents the loop should look at this cycle, and
-// whether a verified proposal may auto-apply. Pure functions so the policy is
-// easy to reason about, test, and later swap.
+// Triage policy — decides which agents the loop should look at this cycle.
+// Approval remains a human action; the retired guard below fails closed for
+// compatibility with any caller that still asks about auto-application.
 const latestEval = (a) => (a.evalHistory || []).at(-1);
 
 /**
@@ -17,21 +17,12 @@ export function selectForTriage(agents, { lowScore = 70 } = {}) {
 }
 
 /**
- * Should a verified proposal ship without a human? Keyed off the AGENT'S declared
- * autonomy level (SPF eval-first spec) rather than one global flag — promotion is
- * earned per agent. The `autoApply` master switch is a kill-switch on top.
- *   L0/L1 — never auto-apply (assist / suggest+confirm)
- *   L2    — auto-apply only high-confidence ships (act narrow + audit)
- *   L3/L4 — auto-apply ships (act broad / autonomous)
- * Everything not auto-applied waits in the human triage inbox.
+ * Auto-approval is retired. Keep this pure guard as defence-in-depth for any
+ * caller not yet migrated: no verdict, confidence, autonomy level, or config
+ * can turn a verifier opinion into a review decision.
  */
-export function shouldAutoApply(verdict, agent, { autoApply, autoApplyConfidence }) {
-  if (!autoApply) return false;                       // master kill-switch
-  if (verdict.verdict !== "ship") return false;
-  const level = agent?.autonomyLevel || "L1";
-  if (level === "L0" || level === "L1") return false;
-  if (level === "L2") return verdict.confidence >= Math.max(autoApplyConfidence, 0.85);
-  return verdict.confidence >= autoApplyConfidence;   // L3 / L4
+export function shouldAutoApply() {
+  return false;
 }
 
 /**
@@ -45,7 +36,7 @@ export function defaultContract(overrides = {}) {
     maxIterations: 3,
     forbiddenMoves: [
       "weaken or remove a guardrail",
-      "auto-apply above the agent's declared autonomy level",
+      "auto-approve any proposal; a verifier verdict is not a human decision",
       "retry an identical proposal after it was rejected",
       "exceed the token/cost budget",
     ],

@@ -193,6 +193,80 @@ describe("Order 1 authority model", () => {
     ).rejects.toThrow("Authentication required");
   });
 
+  test("request creation and update require identity, while authenticated writes succeed", async () => {
+    const base = convexTest(schema, modules);
+    const request = {
+      title: "Authenticated request",
+      desc: "Proves the intake write boundary",
+      requestedBy: "Studio Test",
+      priority: "Important" as const,
+    };
+
+    await expect(
+      base.mutation(authorityApi.requests.createRequest, request),
+    ).rejects.toMatchObject({
+      data: expect.objectContaining({ status: 401 }),
+    });
+    expect(await base.query(authorityApi.requests.listRequests, {})).toEqual([]);
+
+    const authenticated = base.withIdentity({
+      name: "Operator",
+      role: "operator",
+    });
+    const requestId = await authenticated.mutation(
+      authorityApi.requests.createRequest,
+      request,
+    );
+    await expect(
+      base.mutation(authorityApi.requests.updateRequest, {
+        id: requestId,
+        status: "Approved",
+      }),
+    ).rejects.toMatchObject({
+      data: expect.objectContaining({ status: 401 }),
+    });
+    await expect(
+      authenticated.mutation(authorityApi.requests.updateRequest, {
+        id: requestId,
+        status: "Approved",
+      }),
+    ).resolves.toBe(requestId);
+  });
+
+  test("the signed top-level role claim alone controls release approval", async () => {
+    const base = convexTest(schema, modules);
+    const operator = base.withIdentity({ name: "Operator", role: "operator" });
+    const fixture = await createProposalFixture(operator);
+
+    await expect(
+      operator.mutation(authorityApi.reviews.approve, {
+        proposalId: fixture.proposalId,
+        editCategory: "no-edit",
+      }),
+    ).rejects.toMatchObject({
+      data: expect.objectContaining({ status: 403 }),
+    });
+    expect(
+      await base.query(authorityApi.reviews.listForProposal, {
+        proposalId: fixture.proposalId,
+      }),
+    ).toEqual([]);
+
+    const approver = base.withIdentity({
+      name: "Release Approver",
+      role: "approver",
+    });
+    await expect(
+      approver.mutation(authorityApi.reviews.approve, {
+        proposalId: fixture.proposalId,
+        editCategory: "no-edit",
+      }),
+    ).resolves.toMatchObject({
+      decision: "approve",
+      status: "approved",
+    });
+  });
+
   test("registration stores a declared digest and creates an unreleased draft", async () => {
     const t = convexTest(schema, modules).withIdentity({ name: "Operator" });
     const created = await t.mutation(
@@ -310,6 +384,17 @@ describe("Order 1 authority model", () => {
         }),
       ),
     ).rejects.toThrow("incompatible with runner api");
+  });
+
+  test("registration rejects an empty usabilityModes array without writing an agent", async () => {
+    const t = convexTest(schema, modules).withIdentity({ name: "Operator" });
+    await expect(
+      t.mutation(
+        authorityApi.agents.registerAgent,
+        registration({ usabilityModes: [] }),
+      ),
+    ).rejects.toThrow("At least one usability mode is required");
+    expect(await t.query(authorityApi.agents.listAgents, {})).toEqual([]);
   });
 
   test("mock evidence is excluded while real evidence can support normalized evals", async () => {
@@ -495,7 +580,7 @@ describe("Order 1 authority model", () => {
   // mid-handler pause cannot overlap a second approve after the same open read.
   // This proves the post-terminal identical-call path the harness can exercise.
   test("identical re-approval returns the canonical result without a second event", async () => {
-    const t = convexTest(schema, modules).withIdentity({ name: "Approver" });
+    const t = convexTest(schema, modules).withIdentity({ name: "Approver", role: "approver" });
     const fixture = await createProposalFixture(t);
     const versionsBefore = await t.query(
       authorityApi.agentVersions.listForAgent,
@@ -546,7 +631,7 @@ describe("Order 1 authority model", () => {
   );
 
   test("reject after terminal approval throws conflict without changing release or audit", async () => {
-    const t = convexTest(schema, modules).withIdentity({ name: "Approver" });
+    const t = convexTest(schema, modules).withIdentity({ name: "Approver", role: "approver" });
     const fixture = await createProposalFixture(t);
     await t.mutation(authorityApi.reviews.approve, {
       proposalId: fixture.proposalId,
@@ -580,7 +665,7 @@ describe("Order 1 authority model", () => {
   });
 
   test("approval succeeds normally after a non-terminal defer", async () => {
-    const t = convexTest(schema, modules).withIdentity({ name: "Approver" });
+    const t = convexTest(schema, modules).withIdentity({ name: "Approver", role: "approver" });
     const fixture = await createProposalFixture(t);
     const deferred = await t.mutation(authorityApi.reviews.defer, {
       proposalId: fixture.proposalId,
@@ -608,7 +693,7 @@ describe("Order 1 authority model", () => {
   });
 
   test("approve reject and defer decisions are all audited", async () => {
-    const t = convexTest(schema, modules).withIdentity({ name: "Approver" });
+    const t = convexTest(schema, modules).withIdentity({ name: "Approver", role: "approver" });
     const approvedFixture = await createProposalFixture(t, {
       version: "0.2.0",
     });
@@ -636,7 +721,7 @@ describe("Order 1 authority model", () => {
   });
 
   test("approve-with-edit fails closed when artifact storage is unavailable", async () => {
-    const t = convexTest(schema, modules).withIdentity({ name: "Approver" });
+    const t = convexTest(schema, modules).withIdentity({ name: "Approver", role: "approver" });
     const fixture = await createProposalFixture(t);
     await expect(
       t.mutation(authorityApi.reviews.approveWithEdit, {
@@ -652,7 +737,7 @@ describe("Order 1 authority model", () => {
   });
 
   test("unchanged approval refuses a candidate without artifact reference or digest", async () => {
-    const t = convexTest(schema, modules).withIdentity({ name: "Approver" });
+    const t = convexTest(schema, modules).withIdentity({ name: "Approver", role: "approver" });
     const created = await t.mutation(
       authorityApi.agents.registerAgent,
       registration(),
@@ -721,7 +806,7 @@ describe("Order 1 authority model", () => {
   });
 
   test("failed guardrails block promotion", async () => {
-    const t = convexTest(schema, modules).withIdentity({ name: "Approver" });
+    const t = convexTest(schema, modules).withIdentity({ name: "Approver", role: "approver" });
     const fixture = await createProposalFixture(t);
     const evidenceId = await t.mutation(
       authorityInternal.evidence.recordRealExecutionEvidence,

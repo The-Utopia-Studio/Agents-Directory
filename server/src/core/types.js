@@ -53,11 +53,22 @@
  */
 
 /**
+ * @typedef {Object} ProposalChange  One concrete, reviewable edit.
+ * @property {"prompt"|"check"|"runtime"} surface
+ * @property {string} target       file path + section, or mechanical check id
+ * @property {string} current      bounded description/quote of current behavior
+ * @property {string} proposed     exact suggested change, not raw evidence
+ * @property {string} rationale    one bounded sentence
+ * @property {string[]} evidence  existing trace and/or feedback record ids
+ */
+
+/**
  * @typedef {Object} Proposal  A proposed improvement awaiting human review.
  * @property {string} id
  * @property {string} source            e.g. "GEPA", "heuristic"
  * @property {string} summary
  * @property {string} detail
+ * @property {ProposalChange[]} changes  non-empty; proposal-level review only
  * @property {string} [diff]            prompt/skill diff, when the optimizer returns one
  * @property {number} [expectedGain]    estimated points on the target metric
  * @property {"proposed"|"approved"|"rejected"} status
@@ -118,8 +129,8 @@
  */
 
 /**
- * Autonomy ladder (from SPF's eval-first spec). Promotion only via eval result,
- * not vibe. The loop's auto-apply policy keys off this per agent.
+ * Autonomy ladder (from SPF's eval-first spec). This describes action scope,
+ * not approval authority: every proposal still requires a human decision.
  *   L0 assist only · L1 suggest+confirm · L2 act narrow+audit ·
  *   L3 act broad+exception queue · L4 autonomous
  * @typedef {"L0"|"L1"|"L2"|"L3"|"L4"} AutonomyLevel

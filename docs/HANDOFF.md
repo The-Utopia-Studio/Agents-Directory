@@ -23,7 +23,7 @@ new service, and set the environment variables.
    **Activeloop** (Deep Lake) adapter included for the Utopia org.
 4. **Loop heartbeat (automations)** — triage the fleet on a schedule, a
    maker/checker split (optimizer proposes, a separate verifier grades), a token
-   budget, and a triage inbox. Auto-apply is opt-in; a human stays the gate.
+   budget, and a triage inbox. Auto-approval is disabled; a human stays the gate.
 
 15/15 tests passing, verified in-browser. See
 [`ARCHITECTURE.md`](ARCHITECTURE.md), [`../server/README.md`](../server/README.md),
@@ -42,7 +42,8 @@ new service, and set the environment variables.
    Vercel). Secrets = Sensitive ON; config selectors = Sensitive OFF.
 4. **Provision keys** — Supermemory first (memory), then Langfuse / GEPA when ready.
 5. **Point the front-end** at the service via `DIRECTORY_API_BASE`.
-6. **Turn providers on one at a time**, keeping `LOOP_AUTOAPPLY=false`.
+6. **Turn providers on one at a time**, keeping `LOOP_AUTOAPPLY=false`
+   (`true` aborts boot).
 
 ## Known follow-ups
 - **Persistence:** front-end and server stores are separate — Supabase/Postgres

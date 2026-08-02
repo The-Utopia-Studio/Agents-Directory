@@ -1026,6 +1026,15 @@ test("usability modes remain separate from the scalar invocation adapter", async
   assert.match(appSource, /Output \(failed checks\)/);
   // The banner must not translate "no detector fired" into "the model omitted".
   assert.match(appSource, /A check can be wrong about a correct draft/);
+  // Proposal approval is a review record, not an artifact release. Structured
+  // changes are separate review rows and retain only evidence references.
+  assert.match(appSource, /function renderProposalChanges/);
+  assert.match(appSource, /loop-change-evidence/);
+  assert.match(appSource, /Approval records a review decision only/);
+  assert.match(appSource, /changes no prompt, check, runtime, or agent behavior/);
+  assert.match(appSource, /A human must make, verify, and commit the artifact edit separately/);
+  assert.match(appSource, /Record approval &rarr; catalog v/);
+  assert.doesNotMatch(appSource, /Approved → shipped/);
   // A capability request that fails must say so. Blanking the slots renders an
   // agent that offers nothing, identical to an agent that legitimately has
   // nothing, and only a manual API audit tells the two apart.

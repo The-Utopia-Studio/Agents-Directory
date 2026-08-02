@@ -17,12 +17,25 @@ export function createHeuristicVerifier({ minGain = 8, shipGain = 15 } = {}) {
       const reasons = [];
       const failing = traces.filter((t) => t.status !== "ok").length;
       const gain = proposal.expectedGain ?? 0;
-      const dominant = (proposal.evidence?.signals || [])[0] || latestEval?.knownIssues || "";
-      const addressesEvidence = dominant && new RegExp(dominant.slice(0, 6), "i").test(proposal.summary + " " + proposal.detail);
+      const changes = Array.isArray(proposal.changes) ? proposal.changes : [];
+      const addressesEvidence =
+        changes.length > 0 &&
+        changes.every(
+          (change) =>
+            Array.isArray(change.evidence) &&
+            change.evidence.length > 0 &&
+            change.target &&
+            change.proposed,
+        );
 
       // Guardrail safety: a proposal must not contradict a stated guardrail.
+      const proposedText = changes.map((change) => change.proposed).join(" ");
       const guardrailRisk = (agent.guardrails || []).some((g) =>
-        /never|no |avoid/i.test(g) && new RegExp(g.replace(/never|no |avoid/i, "").trim().slice(0, 8), "i").test(proposal.detail || "")
+        /never|no |avoid/i.test(g) &&
+        new RegExp(
+          g.replace(/never|no |avoid/i, "").trim().slice(0, 8),
+          "i",
+        ).test(proposedText),
       );
       if (guardrailRisk) reasons.push("may conflict with a guardrail");
 
@@ -37,7 +50,9 @@ export function createHeuristicVerifier({ minGain = 8, shipGain = 15 } = {}) {
         verdict = "hold"; confidence = 0.55;
       } else if (gain >= shipGain && failing >= 2 && addressesEvidence) {
         verdict = "ship"; confidence = Math.min(0.95, 0.6 + failing * 0.08);
-        reasons.push(`addresses "${dominant}" across ${failing} failing traces (gain ${gain})`);
+        reasons.push(
+          `${changes.length} concrete change(s) cite evidence across ${failing} failing traces (gain ${gain})`,
+        );
       } else {
         verdict = "hold"; confidence = 0.5;
         reasons.push("plausible but under-evidenced — send to a human");

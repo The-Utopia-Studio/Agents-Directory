@@ -100,7 +100,7 @@ same setup.
 | `VERIFIER_ENDPOINT` | `https://…` | **yes** | judge service |
 | `LOOP_ENABLED` | `true` | no | turn the scheduler on |
 | `LOOP_INTERVAL_MS` | `3600000` | no | e.g. hourly |
-| `LOOP_AUTOAPPLY` | `false` | no | keep `false` — human approves |
+| `LOOP_AUTOAPPLY` | `false` | no | must be `false` or unset; `true` aborts boot |
 | `LOOP_BUDGET_USD` / `LOOP_MAX_JOBS` | `1` / `3` | no | per-cycle cost cap |
 | `CORS_ORIGIN` | `https://…vercel.app` | no | lock to the front-end origin |
 
@@ -122,15 +122,27 @@ Pick one source of truth so nobody emails a `.env`: **Vercel env vars**
 
 ## 3. Point the front-end at the service
 
-The static app reads a non-secret base URL. Set it however you prefer:
+The static app reads a non-secret base URL. `index.html` holds the deployed
+host, which is what ships to Vercel:
 
 ```html
 <!-- in index.html, before api.js -->
 <script>window.DIRECTORY_API_BASE = "https://<your-loop-service-host>";</script>
 ```
 
-or from the console once: `localStorage.setItem("directory_api_base", "https://…")`.
-Default is `http://localhost:8790` for local dev.
+To develop against a local loop, override it per browser instead of editing
+that line: `localStorage.setItem("directory_api_base", "http://127.0.0.1:8790")`.
+The override wins over the shipped default, so a local value cannot be
+committed and pointed at every visitor's own machine. With neither set, the
+base falls back to `http://localhost:8790`.
+
+### Bulk migration export
+
+`GET /api/migration/export` returns the whole metadata catalogue in one
+response. On Railway it answers `401` until `API_TOKEN` is set, and then
+requires `Authorization: Bearer <API_TOKEN>`. Keep that token out of the repo
+and out of the browser: run the export from a trusted client (for example
+`curl -H "Authorization: Bearer $API_TOKEN"`), not from the deployed page.
 
 ---
 
@@ -138,7 +150,8 @@ Default is `http://localhost:8790` for local dev.
 1. Deploy `server/`, confirm `GET /api/health` returns `ok`.
 2. Set `MEMORY_PROVIDER=supermemory` + `SUPERMEMORY_API_KEY`; confirm memory
    recall works in an agent's Context block.
-3. Add Langfuse, then GEPA, when ready. Keep `LOOP_AUTOAPPLY=false` until trusted.
+3. Add Langfuse, then a structured maker, when ready. Keep
+   `LOOP_AUTOAPPLY=false`; auto-approval is disabled and `true` aborts boot.
 
 ## Follow-ups (not blocking)
 - **Persistence:** front-end (`localStorage`) and server stores are separate.

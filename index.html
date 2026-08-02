@@ -21,8 +21,17 @@
 <div id="modal-root"></div>
 <div class="watermark">PROTOTYPE v0.3 · AGENTS INVENTORY</div>
 <script>
-  // Loop service base URL. Empty = fall back to localStorage, then localhost.
+  // Deployed loop service. This ships to Vercel, so it must stay the Railway
+  // host: a localhost value here sends every visitor's browser to their own
+  // machine. To develop against a local loop, override it per browser instead
+  // of editing this file:
+  //   localStorage.setItem("directory_api_base", "http://127.0.0.1:8790")
+  // Non-secret: the base URL only, never a token.
   window.DIRECTORY_API_BASE = "https://agents-directory-loop-production-1481.up.railway.app";
+</script>
+<script type="module">
+  import * as MigrationExport from "./migrationExport.js";
+  window.MigrationExport = MigrationExport;
 </script>
 <script src="api.js"></script>
 <script src="app.js"></script>

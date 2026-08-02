@@ -53,7 +53,7 @@ export async function buildApp(overrides = {}) {
   }
 
   const router = createRouter({ corsOrigin: appConfig.corsOrigin, apiToken: appConfig.apiToken });
-  registerRoutes(router, svc, engine);
+  registerRoutes(router, svc, engine, appConfig);
   return { svc, engine, handler: router.handler() };
 }
 

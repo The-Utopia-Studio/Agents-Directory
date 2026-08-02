@@ -30,7 +30,7 @@ A loop is a **bounded, recursive workflow** with a **Loop Contract**: goal · do
 
 Hard rules the loop engine enforces:
 
-1. **Autonomy-gated auto-apply.** The loop only auto-applies up to an agent's declared `autonomyLevel` (L0–L4). Promotion is earned via eval result, not vibe. `LOOP_AUTOAPPLY` is a master kill-switch on top.
+1. **Human approval is mandatory.** Verifier `ship` is advice, not a review decision. The loop never auto-approves, regardless of `autonomyLevel`; `LOOP_AUTOAPPLY=true` fails boot so stale deployment configuration cannot reopen that path.
 2. **Human gate** for taste, money, or irreversible actions. Everything else can be autonomous within contract.
 3. **Never retry a failed identical attempt.** Same failure signal twice → **stop and write a learning**; the signal is then skipped. *The agent forgets, the repo doesn't.*
 4. **Budget-bounded.** Every cycle respects a token/cost ceiling.
@@ -59,7 +59,7 @@ Status keys (SPF style): **Shipped** (wired & tested) · **Port** (adapter ready
 - **Backend → Convex** as the control plane (Workflow/Workpool for the loop scheduler; RAG for memory) — not a separate Supabase stack.
 - **Run + evaluate agents via `@studio/ai-runtime`** (sandbox + metered inference) — that's how run-until-done gets a real evaluator and real cost-per-outcome.
 - **Product truth → PostHog, failure truth → Sentry** via `@studio/observability`; Langfuse stays for LLM traces (complementary).
-- **Effect fence** the money/trust-critical paths (budget, auto-apply, cost metering).
+- **Effect fence** the money/trust-critical paths (budget, approval, cost metering).
 
 ## Hard rules
 

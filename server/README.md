@@ -70,11 +70,11 @@ POST /api/agents/A2/goal      # run-until-done: iterate until success criteria m
 
 - **Maker/checker split** — the `Optimizer` proposes; a distinct `Verifier`
   (`VERIFIER=heuristic|llm`) grades `ship | hold | reject` with a confidence.
-  The human stays the final gate unless `LOOP_AUTOAPPLY=true`.
-- **Stop condition = your success criteria.** `runGoal` iterates until the eval
-  score crosses `targetScore`, re-verified each pass. A real eval run plugs in at
-  the `reevaluate` hook; without it the loop ships one verified change and stops
-  (`needs-evaluator`) rather than pretending to measure progress.
+  The human is always the final gate. `LOOP_AUTOAPPLY=true` aborts boot.
+- **Goal runs stop at review.** `runGoal` may produce and verify a proposal, but
+  both `ship` and `hold` stop with `held-for-human`; neither changes a catalog
+  label or artifact. Evaluation resumes only after a separate human approval
+  and committed artifact edit.
 - **Budget.** `LOOP_BUDGET_USD` / `LOOP_MAX_JOBS` cap each cycle (Osmani's token
   caveat, made concrete).
 - **Scheduler.** Off by default. `LOOP_ENABLED=true` + `LOOP_INTERVAL_MS` runs an
@@ -89,7 +89,7 @@ a concrete provider.
 | Concern | Default (offline) | Production | Switch |
 |---|---|---|---|
 | Observability | `local` (file traces) | **Langfuse** | `OBS_PROVIDER=langfuse` + keys |
-| Optimizer | `heuristic` (reflective, offline) | **GEPA / DSPy** | `OPTIMIZER=gepa` + endpoint/cmd |
+| Optimizer | `heuristic` (bounded, offline) | GEPA adapter **blocked pending `changes[]` support** | `OPTIMIZER=gepa` + endpoint/cmd |
 | Memory (Context) | `local` (token overlap) | **Supermemory** / Activeloop | `MEMORY_PROVIDER=supermemory` + key |
 | Verifier (checker) | `heuristic` (offline skeptic) | **LLM judge** | `VERIFIER=llm` + endpoint |
 | Store | file (`data/*.json`) | Postgres / Supabase | reimplement `src/core/store.js` |
@@ -98,17 +98,23 @@ Adding a new backend = write an adapter implementing the interface, then
 `register(name, factory)` in `src/observability/index.js` or
 `src/improve/index.js`. Nothing else changes.
 
-### Wiring GEPA
+### GEPA contract status
 
-Set one of:
+The adapter retains configuration seams for:
 
-- `GEPA_ENDPOINT` — the adapter POSTs a dataset (built from failing traces) to
-  your job runner and parses the optimized prompt back.
+- `GEPA_ENDPOINT` — an HTTP optimization job runner.
 - `GEPA_CMD` — e.g. `python -m gepa optimize`; the adapter pipes the task in on
   stdin and reads JSON back on stdout.
 
-See `src/improve/gepaAdapter.js`. Until configured, `OPTIMIZER=gepa` falls back
-to the heuristic optimizer with a warning, so the loop never hard-fails.
+No job is currently launched. The existing external result contract is
+prompt-only
+(`optimizedPrompt`/`diff`). Every proposal now requires one or more structured
+`changes[]`, each typed as `prompt | check | runtime` and backed by real trace
+or feedback ids. `gepaAdapter.js` therefore refuses with 422 before running a
+job. It will remain unavailable until both endpoint/CLI and adapter emit the
+structured contract; a prompt diff is never silently relabelled as a checker
+or runtime edit. If GEPA is selected but transport configuration is absent,
+the factory still falls back to the heuristic with a warning.
 
 ## Layout
 

@@ -1,17 +1,21 @@
 // The Loop Engine — the heartbeat that turns the directory's parts into an
 // actual loop (Osmani, "Loop Engineering"), governed by SPF's loop doctrine:
 // every run carries a Loop Contract (goal / done-when / max-iters / forbidden
-// moves / artifacts / human-gate), auto-apply is keyed off each agent's declared
-// autonomy level, and a repeated failure STOPS and writes a learning instead of
+// moves / artifacts / human-gate), verifier ships still wait for a human review
+// decision, and a repeated failure STOPS and writes a learning instead of
 // retrying forever ("the agent forgets, the repo doesn't").
 //
 // Entry points:
 //   runCycle() — one heartbeat across the fleet (Automations)
 //   runGoal(agentId, …) — run-until-done on one agent (the /goal primitive)
-import { selectForTriage, shouldAutoApply, createBudget, defaultContract } from "./policy.js";
+import { selectForTriage, createBudget, defaultContract } from "./policy.js";
 
 const dominantSignal = (proposal, agent) =>
-  proposal?.evidence?.signals?.[0] ||
+  proposal?.evidence?.signalKeys?.[0] ||
+  proposal?.evidence?.changeTargets?.[0] ||
+  (proposal?.changes?.[0]
+    ? `${proposal.changes[0].surface}:${proposal.changes[0].target}`
+    : "") ||
   (agent?.evalHistory?.at(-1)?.knownIssues || "").toLowerCase().split(/\W+/).find((w) => w.length > 4) ||
   "unknown";
 
@@ -106,9 +110,6 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
             `Verifier rejected the fix for "${dominantSignal(proposal, agent)}": ${verdict.reasons?.[0] || "no evidence"}.`,
             "re-propose the same fix without new evidence");
           action = "rejected:verifier→learning"; nextStatus = "blocked";
-        } else if (shouldAutoApply(verdict, agent, loopCfg)) {
-          const { version } = await svc.approveImprovement(item.agentId);
-          action = `auto-approved:v${version}`; nextStatus = "done";
         }
         await svc.setResearchStatus(item.id, nextStatus);
         jobs.push({ agentId: item.agentId, item: item.id, action, verdict });
@@ -124,7 +125,10 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
       });
     },
 
-    async runGoal(agentId, { targetScore = 80, maxIterations, reevaluate, ...overrides } = {}) {
+    async runGoal(
+      agentId,
+      { targetScore = 80, maxIterations, reevaluate: _ignoredReevaluate, ...overrides } = {},
+    ) {
       const contract = defaultContract({
         goal: `Raise ${agentId} to score ${targetScore}`,
         doneWhen: `latest eval score ≥ ${targetScore}`,
@@ -132,7 +136,7 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
         ...overrides,
       });
       const steps = [];
-      let lastSignal = null, lastWasReject = false, prevShipScore = null;
+      let lastSignal = null, lastWasReject = false;
 
       for (let i = 0; i < contract.maxIterations; i++) {
         let agent = await svc.getAgent(agentId);
@@ -150,10 +154,9 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
         const signal = dominantSignal(proposal, agent);
 
         // SPF: never recurse after a failed identical attempt — stop when the
-        // same signal repeats AND the last attempt made no progress (a rejection,
-        // or a shipped change that didn't raise the score).
-        const noProgress = prevShipScore !== null && typeof score === "number" && score <= prevShipScore;
-        if (signal === lastSignal && (lastWasReject || noProgress)) {
+        // same rejected signal repeats. Verified proposals stop at the human
+        // gate on their first iteration and are never applied here.
+        if (signal === lastSignal && lastWasReject) {
           await learn("runGoal", agent, signal,
             `Same failure "${signal}" recurred with no progress toward score ${targetScore}.`,
             "keep iterating on this signal — needs a human or a different approach");
@@ -170,24 +173,23 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
           lastSignal = signal; lastWasReject = true;
           continue;
         }
-        if (verdict.verdict === "hold") {
-          steps.push({ i, action: "held-for-human", verdict });
-          return { done: false, reason: "held-for-human", contract, iterations: i + 1, steps };
-        }
-        const { version } = await svc.approveImprovement(agentId);    // ship
-        prevShipScore = typeof score === "number" ? score : prevShipScore;
-        lastSignal = signal; lastWasReject = false;
-        let newScore = null;
-        if (reevaluate) {
-          const r = await reevaluate(agentId, proposal);
-          newScore = r.score;
-          await svc.logEval(agentId, {
-            status: newScore >= targetScore ? "Performing well" : "Needs improvement",
-            score: newScore, notes: `Auto-eval after v${version} (goal loop)`, by: "loop",
-          });
-        }
-        steps.push({ i, action: `shipped:v${version}`, verdict, newScore });
-        if (!reevaluate) return { done: false, reason: "needs-evaluator", contract, iterations: i + 1, steps };
+        // Both hold and ship are verifier opinions, not review decisions.
+        // Leave the proposal pending and stop at the human gate.
+        steps.push({
+          i,
+          action:
+            verdict.verdict === "ship"
+              ? "verified:ship-awaiting-human"
+              : "held-for-human",
+          verdict,
+        });
+        return {
+          done: false,
+          reason: "held-for-human",
+          contract,
+          iterations: i + 1,
+          steps,
+        };
       }
       const finalScore = latestEval(await svc.getAgent(agentId))?.score ?? null;
       return { done: typeof finalScore === "number" && finalScore >= targetScore, reason: "max-iterations", contract, iterations: contract.maxIterations, finalScore, steps };

@@ -50,7 +50,7 @@ spec ──run──▶ traces ──score──▶ eval history
   │                          failing signal
   │                                   ▼
 new version ◀─ human approve ◀─ verifier grades ◀─ optimizer proposes
-   (or auto-apply within policy)   (checker)          (maker)
+   (review record only)           (checker)          (maker)
 ```
 
 1. **Observe** — runs are recorded as traces (`ObservabilityProvider`).
@@ -69,16 +69,16 @@ new version ◀─ human approve ◀─ verifier grades ◀─ optimizer propose
 ([Osmani, "Loop Engineering"](https://addyosmani.com)):
 
 - **`runCycle()`** — one heartbeat: triage the fleet (agents below a score / with
-  failing signal, not already in the inbox) → maker → checker → route to inbox or
-  auto-apply within policy → record the cycle to state. Bounded by a **token
+  failing signal, not already in the inbox) → maker → checker → route to inbox →
+  record the cycle to state. Bounded by a **token
   budget** (`LOOP_BUDGET_USD`, `LOOP_MAX_JOBS`).
-- **`runGoal(agentId, {targetScore})`** — run-until-done on one agent. The stop
-  condition *is the agent's success criteria*; a fresh eval re-verifies each pass
-  (the `reevaluate` hook is where a real eval run plugs in).
+- **`runGoal(agentId, {targetScore})`** — proposes and verifies toward a target,
+  then stops at `held-for-human`; it cannot approve or re-evaluate an unapplied
+  edit.
 - **Scheduler** — off by default; `LOOP_ENABLED` + `LOOP_INTERVAL_MS` runs it in
   process, or push to cron / GitHub Actions for production.
-- **Stay the engineer** — auto-apply is opt-in (`LOOP_AUTOAPPLY`); by default
-  every proposal waits for a human in the triage inbox.
+- **Stay the engineer** — every proposal waits for a human.
+  `LOOP_AUTOAPPLY=true` fails boot.
 
 ## Why it's modular & scalable
 

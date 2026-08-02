@@ -32,6 +32,9 @@ export function assertUsabilityModes(
   runner: Runner,
   modes: string[],
 ): void {
+  if (modes.length === 0) {
+    throw new Error("At least one usability mode is required");
+  }
   if (
     runner === "foreign-runtime-handoff" &&
     !modes.includes("prepared-handoff")

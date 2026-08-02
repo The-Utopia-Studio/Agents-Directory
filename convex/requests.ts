@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { nextDisplayId, todayIso } from "./lib/helpers";
+import { requireIdentity } from "./lib/auth";
 import {
   requestPriority,
   requestStatus,
@@ -42,6 +43,7 @@ export const createRequest = mutation({
     date: v.optional(v.string()), // ISO; defaults to today
   },
   handler: async (ctx, args) => {
+    await requireIdentity(ctx);
     const existing = await ctx.db.query("requests").collect();
     const displayId = nextDisplayId(
       existing.map((r) => r.displayId),
@@ -73,6 +75,7 @@ export const updateRequest = mutation({
     desc: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    await requireIdentity(ctx);
     const req = await ctx.db.get(args.id);
     if (!req) throw new Error(`Request ${args.id} not found`);
     const { id, ...rest } = args;
