@@ -331,7 +331,6 @@ Blockers on that PR:
 |---|---|---|
 | Approval policy — who approves, who can approve-with-edit, emergency revoke path | Karan | Enforcing approver roles |
 | Clerk identity model; Composio project/account ownership; who owns shared test accounts | Oliver (on leave) | Composio as production dependency |
-| UX/QA commit SHA; setup checklist; prohibited-actions notes | Aiden | Handoff package |
 | The three UX/QA test runs he's already done | Aiden | Real eval cases instead of synthetic |
 | `/biocraft` rubric + 3–4 real examples | Sarah | Scoring hosted runs |
 | Canonical artifact storage — Git, Convex file storage, or both | Oliver | Custody model |

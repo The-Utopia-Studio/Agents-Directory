@@ -10,6 +10,11 @@ import {
   getInstallArtifactCapability,
   loadInstallSkill,
 } from "../artifacts/installArtifacts.js";
+import { getRuntimeArtifactDescriptor } from "../invoke/runtimeArtifacts.js";
+import {
+  getHandoffCapability,
+  loadHandoffBriefing,
+} from "../handoff/handoffArtifacts.js";
 
 function outputDigest(output) {
   return createHash("sha256").update(String(output)).digest("hex");
@@ -91,7 +96,11 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         inputContract: invoker.inputContract ? invoker.inputContract(agent) : null,
         feedbackNotes: config?.observability?.feedbackNotes !== false,
         feedbackNotesMaxChars: config?.observability?.feedbackNotesMaxChars || 2000,
+        // Export affordances are driven by usability mode, not collapsed into
+        // one gate: download-install gets the pinned artifact, prepared-handoff
+        // gets a pinned briefing, and neither falls back to the other.
         installArtifact,
+        handoff: getHandoffCapability(agent),
         runnable: invoker.serverRun && artifactAvailable && configured,
         unavailableReason: !configured
           ? "Runtime is not configured on the server"
@@ -109,6 +118,11 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       const agent = await store.get("agents", agentId);
       if (!agent) throw httpError(404, `No agent ${agentId}`);
       return buildInstallArtifactZip(agent);
+    },
+    async getHandoffBriefing(agentId) {
+      const agent = await store.get("agents", agentId);
+      if (!agent) throw httpError(404, `No agent ${agentId}`);
+      return loadHandoffBriefing(agent);
     },
 
     // ── context / memory (the fourth pillar) ──
@@ -325,13 +339,70 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
     },
 
     // ── the loop: run the optimizer on failing signal ──
+    async collectImprovementEvidence(agentId, agent) {
+      const [failingTraces, traces, feedback] = await Promise.all([
+        obs.getFailingTraces(agentId, { limit: 100 }),
+        obs.listTraces(agentId, { limit: 100 }),
+        store.query("feedback", (f) => f.agentId === agentId),
+      ]);
+      const latestEval = (agent.evalHistory || []).at(-1);
+
+      // A defect signal is a human-or-checker statement of what went wrong.
+      // Runs alone are not one: a metadata trace records that the agent ran,
+      // never that it ran badly. Since traces are metadata-only, failureReason
+      // no longer survives persistence, so reviewer notes carry the detail.
+      const defectSignals = [
+        ...failingTraces.map((t) => t.failureReason).filter(Boolean),
+        ...feedback.map((f) => String(f.notes || "").trim()).filter(Boolean),
+        String(latestEval?.knownIssues || "").trim(),
+        String(latestEval?.notes || "").trim(),
+      ].filter(Boolean);
+
+      const lowRatings = feedback.filter(
+        (f) => typeof f.rating === "number" && f.rating <= 3,
+      );
+
+      return {
+        traces,
+        failingTraces,
+        feedback,
+        lowRatings,
+        defectSignals,
+        latestEval,
+      };
+    },
+
     async runImprovement(agentId) {
       const agent = await store.get("agents", agentId);
       if (!agent) throw httpError(404, `No agent ${agentId}`);
-      const traces = await obs.getFailingTraces(agentId, { limit: 100 });
-      const latestEval = (agent.evalHistory || []).at(-1);
-      const proposal = await optimizer.propose(agent, traces, latestEval);
+      const evidence = await this.collectImprovementEvidence(agentId, agent);
+
+      // No evidence must refuse, naming what is absent. Falling back to a
+      // template produces a proposal with an Approve button and nothing behind
+      // it, which is worse than no proposal at all.
+      if (!evidence.defectSignals.length) {
+        throw httpError(
+          422,
+          `Cannot propose for ${agentId} without evidence of a defect. ` +
+            `Found ${evidence.traces.length} trace(s) (${evidence.failingTraces.length} failing), ` +
+            `${evidence.feedback.length} feedback record(s), ` +
+            `${evidence.feedback.filter((f) => String(f.notes || "").trim()).length} with notes, ` +
+            `${evidence.latestEval ? "a latest eval with no known issues" : "no eval history"}. ` +
+            `Supply at least one of: a failing trace, feedback notes, or an eval with knownIssues.`,
+        );
+      }
+
+      const artifact = getRuntimeArtifactDescriptor(agentId);
+      const proposal = await optimizer.propose(agent, evidence);
       proposal.id = `imp_${Date.now().toString(36)}`;
+      // Stamp what this proposal was derived against, so approval cannot be
+      // applied to a build that has since changed underneath it.
+      proposal.targetAgentVersion = agent.version;
+      if (artifact) {
+        proposal.targetArtifactVersion = artifact.artifactVersion;
+        proposal.targetArtifactDigest = artifact.artifactDigest;
+        proposal.targetArtifactDigestAlgorithm = artifact.artifactDigestAlgorithm;
+      }
       agent.proposedImprovement = proposal;
       await store.put("agents", agent);
       return proposal;
@@ -342,6 +413,22 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       const prop = agent?.proposedImprovement;
       if (!agent || !prop) throw httpError(404, "No pending improvement");
       if (proposalId && prop.id !== proposalId) throw httpError(409, "Proposal id mismatch");
+      // A proposal is only valid against the build it was derived from. If the
+      // artifact moved since, the evidence no longer describes what runs.
+      const current = getRuntimeArtifactDescriptor(agentId);
+      if (
+        prop.targetArtifactDigest &&
+        current &&
+        prop.targetArtifactDigest !== current.artifactDigest
+      ) {
+        throw httpError(
+          409,
+          `Proposal targets artifact ${prop.targetArtifactVersion} ` +
+            `(${prop.targetArtifactDigest.slice(0, 7)}) but the live artifact is ` +
+            `${current.artifactVersion} (${current.artifactDigest.slice(0, 7)}). ` +
+            `Re-run the proposal against the current build.`,
+        );
+      }
       const nv = bumpVersion(agent.version);
       agent.changelog = [...(agent.changelog || []), {
         version: nv, date: new Date().toISOString().slice(0, 10),

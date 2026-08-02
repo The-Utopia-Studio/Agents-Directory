@@ -9,21 +9,30 @@
 // and the factory falls back to the heuristic optimizer.
 import { spawn } from "node:child_process";
 
-function buildDataset(agent, traces, latestEval) {
+function buildDataset(agent, evidence) {
+  const { traces = [], failingTraces = [], feedback = [], defectSignals = [], latestEval } =
+    evidence || {};
   return {
     agentId: agent.id,
     objective: agent.objective,
     currentPrompt: agent.prompt || "",
     metric: "success_criteria",
     knownIssues: latestEval?.knownIssues || "",
-    // GEPA optimizes against a rollout set — failing traces are the signal.
-    examples: traces.map((t) => ({
-      input: t.input,
-      output: t.output,
+    // Traces are metadata-only, so they carry no payload to optimize against.
+    // Reviewer notes are the human-authored defect statements; they are the
+    // signal GEPA reflects on.
+    defectSignals,
+    examples: failingTraces.map((t) => ({
       status: t.status,
       score: t.score,
-      failureReason: t.failureReason,
+      outputDigest: t.outputDigest,
     })),
+    feedback: feedback.map((f) => ({
+      traceId: f.traceId,
+      rating: f.rating,
+      notes: f.notes,
+    })),
+    traceCount: traces.length,
   };
 }
 
@@ -77,10 +86,21 @@ export function createGepaOptimizer({ endpoint, cmd, model, budget }) {
       return { ok: true, detail: endpoint ? `endpoint ${endpoint}` : `cmd ${cmd}` };
     },
 
-    async propose(agent, traces, latestEval) {
-      const task = { ...buildDataset(agent, traces, latestEval), model, budget };
+    async propose(agent, evidence) {
+      if (!evidence?.defectSignals?.length) {
+        throw Object.assign(
+          new Error("GEPA has no defect signal to optimize against — refusing"),
+          { status: 422 },
+        );
+      }
+      const task = { ...buildDataset(agent, evidence), model, budget };
       const result = endpoint ? await runHttp(endpoint, task) : await runCmd(cmd, task);
-      return toProposal(result, { tracesReviewed: traces.length, model, budget });
+      return toProposal(result, {
+        tracesReviewed: evidence.traces?.length || 0,
+        feedbackReviewed: evidence.feedback?.length || 0,
+        model,
+        budget,
+      });
     },
   };
 }

@@ -92,6 +92,7 @@ window.DirectoryAPI = (function () {
       j("GET", `/api/agents/${id}/install-artifact/skill`),
     downloadInstallArtifact: (id) =>
       download(`/api/agents/${id}/install-artifact/download`),
+    handoffBriefing: (id) => j("GET", `/api/agents/${id}/handoff-briefing`),
     submitFeedback: (id, traceId, feedback) =>
       j("POST", `/api/agents/${id}/traces/${encodeURIComponent(traceId)}/feedback`, feedback),
     // Loop / automations (the heartbeat)

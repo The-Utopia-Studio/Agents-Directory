@@ -456,27 +456,29 @@ function shipRequestAsAgent(id){
   openModal("addAgent",{name:r.title.replace(/ Agent$/,""),tagline:r.desc.slice(0,120),description:r.desc,platform:"Claude",status:"Experimental",category:"",owner:r.assignee||"",model:"",version:"1.0",objective:"",successCriteria:[],guardrails:[],when:"",sop:"",inputs:[],outputs:[],skills:[],tools:[],context:[],accessUrl:"",repoUrl:""});
 }
 
-// ── THE LOOP: propose (stub) → human approves/rejects → new version ──
-// In production, proposedImprovement is written by a GEPA/DSPy job that reads
-// failing traces from Langfuse. Here it's synthesised from the latest eval so
-// the human-in-the-loop review flow is exercisable end-to-end.
+// ── THE LOOP: propose → human approves/rejects → new version ──
+// The maker only runs server-side, against real defect signals (failing
+// traces, reviewer feedback notes, eval known issues). There is no offline
+// synthesis path: a proposal carries an Approve button, so it must never be
+// backed by a template the front-end wrote about itself. No evidence, or no
+// service, means no proposal.
 async function proposeImprovement(id){
   const a=agents.find(x=>x.id===id);if(!a)return;
-  // Live path: the loop service runs the real optimizer against real traces.
-  if(window.DirectoryAPI&&DirectoryAPI.enabled){
-    try{
-      const p=await DirectoryAPI.runImprovement(id);
-      a.proposedImprovement={source:p.source,date:p.date,status:p.status,summary:p.summary,detail:p.detail};
-      persist();state.agent=a;render();toast("Improvement proposed by "+p.source+" — awaiting review");return;
-    }catch(e){toast("Optimizer unreachable — using local stub")}
+  if(!(window.DirectoryAPI&&DirectoryAPI.enabled)){
+    toast("Cannot propose offline — the optimizer reads real traces and feedback, which only the loop service can see");
+    return;
   }
-  // Offline fallback (static deploy): synthesise from the latest eval.
-  const e=latestEval(a);
-  const issue=(e&&e.knownIssues)||"the most frequent failure in recent traces";
-  a.proposedImprovement={source:"heuristic (offline)",date:new Date().toISOString().split("T")[0],status:"proposed",
-    summary:"Prompt/skill revision targeting: "+issue,
-    detail:"Reflective optimiser read the recent eval notes and proposes a revised prompt + tool-description addressing \""+issue+"\". Review, then approve to cut a new version or reject to discard."};
-  persist();state.agent=a;render();toast("Improvement proposed — awaiting review");
+  try{
+    const p=await DirectoryAPI.runImprovement(id);
+    a.proposedImprovement={source:p.source,date:p.date,status:p.status,summary:p.summary,detail:p.detail,
+      targetArtifactVersion:p.targetArtifactVersion,targetArtifactDigest:p.targetArtifactDigest,
+      targetAgentVersion:p.targetAgentVersion};
+    persist();state.agent=a;render();toast("Improvement proposed by "+p.source+" — awaiting review");
+  }catch(e){
+    // Refusals are the expected result with no evidence; show the reason
+    // verbatim so it names what is missing.
+    toast(String(e&&e.message?e.message:e));
+  }
 }
 async function approveImprovement(id){
   const a=agents.find(x=>x.id===id);if(!a||!a.proposedImprovement)return;
@@ -602,10 +604,11 @@ function renderDetail(a){
       <div class="use-head">Use this agent<span class="use-tier">${invocationTier(a)}</span></div>
       <div class="use-actions">
         ${a.accessUrl?`<a class="btn btn-sm" href="${escHtml(a.accessUrl)}" target="_blank" rel="noopener">Open in ${escHtml(a.platform)} &#8599;</a>`:""}
-        ${canDownload(a)?`${isSingleShotRuntime(a)?"":`<button class="btn btn-sm" onclick="copyAgentPrompt('${a.id}')">Copy prompt</button><button class="btn btn-sm" onclick="copyAgentSkill('${a.id}')">Copy as SKILL.md</button>`}<span id="install-actions"></span>`:""}
+        ${canInstall(a)?`<button class="btn btn-sm" onclick="copyAgentPrompt('${a.id}')" title="A plain-text summary of this directory record. Not the agent.">Copy summary</button>`:""}
+        ${hasExportMode(a)?`<span id="install-actions"></span><span id="handoff-actions"></span>`:""}
         <span id="run-action"></span>
       </div>
-      <div class="use-hint">${hasUsabilityDefect(a)?`MISCONFIGURED: this agent has no stored usabilityModes. Edit the record before offering access.`:isSingleShotRuntime(a)?`Run, Copy as SKILL.md, evaluation, and Download use the same pinned single-shot artifact. This is not the full /biocraft agent: no Chrome, Drive, HTML rendering, or follow-up conversation.`:needsInvokerConfiguration(a)?`${escHtml((a.invocation&&a.invocation.type)||"runtime")} execution is not configured. Use the stored prepared handoff/export path until an adapter is connected.`:`Available here: ${escHtml(a.usabilityModes.join(", "))}. The execution adapter remains ${escHtml((a.invocation&&a.invocation.type)||"link")}.`}</div>
+      <div class="use-hint">${hasUsabilityDefect(a)?`MISCONFIGURED: this agent has no stored usabilityModes. Edit the record before offering access.`:isSingleShotRuntime(a)?`Run, Copy as SKILL.md, evaluation, and Download use the same pinned single-shot artifact. This is not the full /biocraft agent: no Chrome, Drive, HTML rendering, or follow-up conversation.`:canHandoff(a)&&!canInstall(a)?`Prepared handoff: this agent is not installed or hosted here. The export is an engagement brief that pins the repository and commit where the agent actually lives, plus the setup checklist, prohibited actions, inputs, and how to return a result.`:needsInvokerConfiguration(a)?`${escHtml((a.invocation&&a.invocation.type)||"runtime")} execution is not configured. Use the stored prepared handoff/export path until an adapter is connected.`:`Available here: ${escHtml(a.usabilityModes.join(", "))}. The execution adapter remains ${escHtml((a.invocation&&a.invocation.type)||"link")}.`}</div>
       <div id="run-panel" class="run-panel"></div>
     </div>
 
@@ -614,7 +617,8 @@ function renderDetail(a){
       <div class="loop-summary">${escHtml(a.proposedImprovement.summary)}</div>
       <div class="loop-detail">${escHtml(a.proposedImprovement.detail)}</div>
       ${a.proposedImprovement.verdict?`<div class="loop-verdict"><span class="pill pill-xs ${a.proposedImprovement.verdict.verdict==="ship"?"pill-green":a.proposedImprovement.verdict.verdict==="reject"?"pill-amber":"pill-blue"}">checker: ${escHtml(a.proposedImprovement.verdict.verdict)} · ${a.proposedImprovement.verdict.confidence}</span>${(a.proposedImprovement.verdict.reasons||[]).length?`<span class="loop-verdict-why">${escHtml(a.proposedImprovement.verdict.reasons[0])}</span>`:""}</div>`:""}
-      <div class="loop-actions"><button class="btn btn-primary btn-sm" onclick="approveImprovement('${a.id}')">Approve &rarr; ship v${bumpVersion(a.version)}</button><button class="btn btn-sm" onclick="rejectImprovement('${a.id}')">Reject</button></div>
+      ${a.proposedImprovement.targetArtifactVersion?`<div class="loop-target">Derived against artifact <strong>${escHtml(a.proposedImprovement.targetArtifactVersion)}</strong>${a.proposedImprovement.targetArtifactDigest?` · <code>${escHtml(String(a.proposedImprovement.targetArtifactDigest).slice(0,7))}</code>`:""}. Approving records the review and bumps the catalog label; it does not edit that artifact.</div>`:""}
+      <div class="loop-actions"><button class="btn btn-primary btn-sm" onclick="approveImprovement('${a.id}')">Approve &rarr; catalog v${bumpVersion(a.version)}</button><button class="btn btn-sm" onclick="rejectImprovement('${a.id}')">Reject</button></div>
     </div>`:""}
 
     <div class="pillar-block pillar-goals">
@@ -713,7 +717,15 @@ async function runLoopNow(btn){
 // ── Using an agent across platforms (invocation) ──
 function hasUsabilityDefect(a){return!Array.isArray(a.usabilityModes)||a.usabilityModes.length===0}
 function hasUsabilityMode(a,mode){return!hasUsabilityDefect(a)&&a.usabilityModes.includes(mode)}
-function canDownload(a){return hasUsabilityMode(a,"download-install")||hasUsabilityMode(a,"prepared-handoff")}
+// The two export modes are deliberately NOT one gate. Collapsing them is what
+// handed prepared-handoff agents an install-shaped export: a skill file
+// reassembled from directory metadata, whose own procedure told you to go open
+// the real agent. Each mode resolves its own server-owned artifact.
+//   download-install → pinned SKILL.md + ZIP   (installable package)
+//   prepared-handoff → pinned Briefing         (pointer + engagement terms)
+function canInstall(a){return hasUsabilityMode(a,"download-install")}
+function canHandoff(a){return hasUsabilityMode(a,"prepared-handoff")}
+function hasExportMode(a){return canInstall(a)||canHandoff(a)}
 function needsInvokerConfiguration(a){return(a.invocation&&a.invocation.type)==="mcp"}
 function isSingleShotRuntime(a){return a.invocation&&a.invocation.type==="runtime"&&a.invocation.mode==="single-shot"}
 function invocationTier(a){return hasUsabilityDefect(a)?"misconfigured":a.usabilityModes.join(" + ")}
@@ -724,7 +736,7 @@ function slug(s){return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").repla
 // labels on the record — renaming a label must not break the run.
 const runCapabilities={};
 async function loadRunCapability(id){
-  const a=agents.find(x=>x.id===id),slot=document.getElementById("run-action"),installSlot=document.getElementById("install-actions");
+  const a=agents.find(x=>x.id===id),slot=document.getElementById("run-action"),installSlot=document.getElementById("install-actions"),handoffSlot=document.getElementById("handoff-actions");
   if(!a||!(window.DirectoryAPI&&DirectoryAPI.enabled))return;
   try{
     const capability=await DirectoryAPI.invocationCapability(id);
@@ -733,10 +745,20 @@ async function loadRunCapability(id){
       if(capability.serverRun&&capability.artifactAvailable&&capability.configured&&capability.runnable)slot.innerHTML=`<button class="btn btn-sm btn-primary" onclick="toggleRun('${id}')">&#9654; ${capability.mode==="single-shot"?"Run single-shot draft":"Run here"}</button>`;
       else if(!capability.configured)slot.innerHTML=`<span class="run-unavailable">${escHtml(capability.unavailableReason||"Runtime unavailable")}</span>`;
     }
-    if(installSlot&&hasUsabilityMode(a,"download-install")&&capability.installArtifact&&capability.installArtifact.available){
-      installSlot.innerHTML=`<button class="btn btn-sm" onclick="copyInstallSkill('${id}')">Copy single-shot SKILL.md</button><button class="btn btn-sm" onclick="downloadInstallArtifact('${id}')">Download single-shot (.zip)</button><span class="artifact-pin"><strong>${escHtml(capability.installArtifact.artifactVersion)}</strong> · ${escHtml(capability.installArtifact.artifactDigestAlgorithm)}:<code>${escHtml(capability.installArtifact.artifactDigest)}</code></span>`;
+    // download-install: only a pinned server-owned artifact is installable.
+    // With none registered there is no client-side substitute to fall back to.
+    if(installSlot&&canInstall(a)){
+      const install=capability.installArtifact;
+      if(install&&install.available)installSlot.innerHTML=`<button class="btn btn-sm" onclick="copyInstallSkill('${id}')">Copy single-shot SKILL.md</button><button class="btn btn-sm" onclick="downloadInstallArtifact('${id}')">Download single-shot (.zip)</button><span class="artifact-pin"><strong>${escHtml(install.artifactVersion)}</strong> · ${escHtml(install.artifactDigestAlgorithm)}:<code>${escHtml(install.artifactDigest)}</code></span>`;
+      else installSlot.innerHTML=`<span class="run-unavailable">No pinned installable artifact is registered for this agent, so there is nothing to install. The summary above is a description of the record, not the agent.</span>`;
     }
-  }catch(e){delete runCapabilities[id];if(slot)slot.innerHTML="";if(installSlot)installSlot.innerHTML=""}
+    // prepared-handoff: a briefing, never a generated skill file.
+    if(handoffSlot&&canHandoff(a)){
+      const handoff=capability.handoff;
+      if(handoff&&handoff.available)handoffSlot.innerHTML=`<button class="btn btn-sm" onclick="copyHandoffBriefing('${id}')">Copy engagement brief</button><span class="artifact-pin">The agent lives at <a href="${escHtml(handoff.repoUrl)}" target="_blank" rel="noopener">${escHtml(handoff.repoUrl)}</a> · <strong>${escHtml(handoff.briefVersion)}</strong> · commit <code>${escHtml(handoff.commitSha)}</code></span>`;
+      else handoffSlot.innerHTML=`<span class="run-unavailable">${escHtml((handoff&&handoff.reason)||"No pinned handoff package is registered for this agent.")}</span>`;
+    }
+  }catch(e){delete runCapabilities[id];if(slot)slot.innerHTML="";if(installSlot)installSlot.innerHTML="";if(handoffSlot)handoffSlot.innerHTML=""}
 }
 
 // The agent definition (four pillars) → a portable system prompt. This is what
@@ -755,13 +777,19 @@ function buildAgentPrompt(a){
   if((a.outputs||[]).length)L.push(`\n## Outputs\n${a.outputs.map(s=>"- "+s).join("\n")}`);
   return L.join("\n");
 }
-// Export as a SKILL.md (the open cross-vendor standard).
-function buildSkillMd(a){
-  return `---\nname: ${slug(a.name)}\ndescription: ${(a.tagline||a.objective||"").replace(/\n/g," ")}\n---\n\n`+buildAgentPrompt(a)+"\n";
-}
+// There is deliberately no client-side "Copy as SKILL.md". It wrapped the
+// summary above in yaml frontmatter and called the result the agent, which
+// made two buttons out of one output and shipped a skill file whose own
+// procedure said to go open the real agent. Installable and handoff artifacts
+// are both server-owned and pinned; see copyInstallSkill / copyHandoffBriefing.
 function copyText(text,msg){(navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(text):Promise.reject()).then(()=>toast(msg)).catch(()=>{const ta=document.createElement("textarea");ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast(msg)}catch(e){toast("Copy failed")}ta.remove()})}
-function copyAgentPrompt(id){const a=agents.find(x=>x.id===id);if(a)copyText(buildAgentPrompt(a),"Prompt copied — paste into any platform")}
-function copyAgentSkill(id){const a=agents.find(x=>x.id===id);if(a)copyText(buildSkillMd(a),"SKILL.md copied")}
+function copyAgentPrompt(id){const a=agents.find(x=>x.id===id);if(a)copyText(buildAgentPrompt(a),"Summary copied — a description of this record, not the agent")}
+async function copyHandoffBriefing(id){
+  try{
+    const brief=await DirectoryAPI.handoffBriefing(id);
+    copyText(brief.content,`Engagement brief copied · ${brief.briefVersion} · commit ${String(brief.commitSha).slice(0,7)}`);
+  }catch(e){toast(`Briefing unavailable: ${String(e.message||e)}`)}
+}
 async function copyInstallSkill(id){
   try{
     const artifact=await DirectoryAPI.installSkill(id);

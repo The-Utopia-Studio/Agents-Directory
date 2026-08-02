@@ -58,6 +58,24 @@
  * @property {"proposed"|"approved"|"rejected"} status
  * @property {string} date
  * @property {Object} [evidence]        traces/signals the proposal was derived from
+ * @property {string} [targetAgentVersion]     directory label at proposal time
+ * @property {string} [targetArtifactVersion]  artifact this was derived against
+ * @property {string} [targetArtifactDigest]   approval is refused if this moved
+ * @property {"sha256"} [targetArtifactDigestAlgorithm]
+ */
+
+/**
+ * Evidence bundle handed to every optimizer. Traces are metadata-only, so a
+ * trace proves a run happened, never that it went wrong; `defectSignals` holds
+ * the human-or-checker statements of what was actually wrong. Empty
+ * `defectSignals` must produce a refusal, never a templated proposal.
+ * @typedef {Object} ImprovementEvidence
+ * @property {Trace[]} traces           all recent metadata traces
+ * @property {Trace[]} failingTraces    failed/errored/low-scoring subset
+ * @property {TraceFeedback[]} feedback rating + notes records
+ * @property {TraceFeedback[]} lowRatings  feedback rated 3 or below
+ * @property {string[]} defectSignals   failure reasons, notes, eval issues
+ * @property {EvalRecord} [latestEval]
  */
 
 /**
@@ -170,7 +188,7 @@
  * @typedef {Object} Optimizer
  * @property {string} name
  * @property {() => Promise<{ok:boolean, detail?:string}>} health
- * @property {(agent:Agent, traces:Trace[], latestEval?:EvalRecord) => Promise<Proposal>} propose
+ * @property {(agent:Agent, evidence:ImprovementEvidence) => Promise<Proposal>} propose
  */
 
 /**

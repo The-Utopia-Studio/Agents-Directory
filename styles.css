@@ -386,6 +386,9 @@ input[type="date"] { color-scheme: dark; }
 .loop-src { font-size: 12px; color: var(--foreground-subtle); }
 .loop-summary { font-size: 15px; color: var(--foreground); font-weight: var(--font-weight-medium); margin-bottom: 6px; }
 .loop-detail { font-size: 13px; color: var(--foreground-muted); line-height: 1.6; margin-bottom: 12px; }
+.loop-target { font-size: 12px; color: var(--foreground-subtle); line-height: 1.5; margin-bottom: 12px; }
+.loop-target strong { color: var(--foreground); font-weight: 500; }
+.loop-target code { font-family: ui-monospace, monospace; }
 .loop-actions { display: flex; gap: 8px; }
 .loop-verdict { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .loop-verdict-why { font-size: 12px; color: var(--foreground-subtle); }

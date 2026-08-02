@@ -85,7 +85,17 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
         if (!agent) { await svc.setResearchStatus(item.id, "blocked", "agent removed"); continue; }
         budget.spend();
 
-        const proposal = await svc.runImprovement(item.agentId);      // maker
+        // A refusal is a valid maker outcome, not a crash: block the item and
+        // keep the cycle moving rather than aborting the whole run.
+        let proposal;
+        try {
+          proposal = await svc.runImprovement(item.agentId);          // maker
+        } catch (e) {
+          if (e?.status !== 422) throw e;
+          await svc.setResearchStatus(item.id, "blocked", e.message);
+          jobs.push({ agentId: item.agentId, item: item.id, action: "refused:no-evidence" });
+          continue;
+        }
         const verdict = await verify(agent, proposal);                // checker
         await svc.attachVerdict(item.agentId, verdict);
 
@@ -130,7 +140,13 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
         if (typeof score === "number" && score >= targetScore) {
           return { done: true, reason: "target-met", contract, iterations: i, finalScore: score, steps };
         }
-        const proposal = await svc.runImprovement(agentId);           // maker
+        let proposal;
+        try {
+          proposal = await svc.runImprovement(agentId);               // maker
+        } catch (e) {
+          if (e?.status !== 422) throw e;
+          return { done: false, reason: "no-evidence", detail: e.message, contract, iterations: i, steps };
+        }
         const signal = dominantSignal(proposal, agent);
 
         // SPF: never recurse after a failed identical attempt — stop when the

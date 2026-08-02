@@ -40,6 +40,9 @@ export function registerRoutes(router, svc, engine) {
       "x-artifact-digest-algorithm": artifact.artifactDigestAlgorithm,
     });
   });
+  router.get("/api/agents/:id/handoff-briefing", async ({ params }) =>
+    svc.getHandoffBriefing(params.id)
+  );
   router.put("/api/agents/:id", async ({ params, body }) =>
     svc.putAgent({ ...body, id: params.id })
   );

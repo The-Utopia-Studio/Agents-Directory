@@ -374,8 +374,9 @@ test("missing Anthropic key is a visible non-2xx failure without a key leak", as
   const capability = await fetch(
     `${base}/api/agents/A7/invocation-capability`,
   );
-  const { inputContract, installArtifact, ...capabilityFlags } =
+  const { inputContract, installArtifact, handoff, ...capabilityFlags } =
     await capability.json();
+  assert.deepEqual(handoff, { available: false });
   assert.deepEqual(capabilityFlags, {
     invocationType: "runtime",
     mode: "single-shot",
@@ -482,8 +483,11 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   const capabilityResponse = await fetch(
     `${base}/api/agents/A7/invocation-capability`,
   );
-  const { inputContract, installArtifact, ...capabilityFlags } =
+  const { inputContract, installArtifact, handoff, ...capabilityFlags } =
     await capabilityResponse.json();
+  // A7 declares hosted-run + download-install, never prepared-handoff, so it
+  // must not be offered a briefing.
+  assert.deepEqual(handoff, { available: false });
   assert.deepEqual(capabilityFlags, {
     invocationType: "runtime",
     mode: "single-shot",
@@ -726,6 +730,7 @@ test("serverRun false stays hidden by capability and rejects run with 400", asyn
     feedbackNotes: true,
     feedbackNotesMaxChars: 2000,
     installArtifact: { available: false },
+    handoff: { available: false },
     runnable: false,
     unavailableReason: null,
   });
@@ -768,10 +773,22 @@ test("usability modes remain separate from the scalar invocation adapter", async
   assert.match(appSource, /This is not the full \/biocraft agent/);
   assert.match(appSource, /Copy single-shot SKILL\.md/);
   assert.match(appSource, /Download single-shot \(\.zip\)/);
+  assert.match(appSource, /const install=capability\.installArtifact;/);
+  assert.match(appSource, /if\(install&&install\.available\)/);
+  // Export affordances must stay split per usability mode. One shared gate is
+  // what handed prepared-handoff agents an install-shaped export.
+  assert.doesNotMatch(appSource, /function canDownload/);
   assert.match(
     appSource,
-    /capability\.installArtifact&&capability\.installArtifact\.available/,
+    /function canInstall\(a\)\{return hasUsabilityMode\(a,"download-install"\)\}/,
   );
+  assert.match(
+    appSource,
+    /function canHandoff\(a\)\{return hasUsabilityMode\(a,"prepared-handoff"\)\}/,
+  );
+  // The client must not reassemble a skill file from directory metadata.
+  assert.doesNotMatch(appSource, /function buildSkillMd/);
+  assert.doesNotMatch(appSource, /copyAgentSkill/);
   assert.doesNotMatch(appSource, /inferredUsabilityModes|getUsabilityModes/);
   assert.match(appSource, /MISCONFIGURED: this agent has no stored usabilityModes/);
   const langfuseSource = await readFile(

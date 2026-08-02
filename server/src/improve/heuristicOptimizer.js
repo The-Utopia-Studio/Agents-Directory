@@ -1,9 +1,14 @@
 // Heuristic reflective optimizer. Fully offline, no external calls, no cost.
-// It reads the failing traces + the latest eval's known issues, clusters the
-// dominant failure signal, and emits a concrete, human-reviewable proposal.
+// It reads real defect signals — reviewer feedback notes, failing-trace
+// reasons, eval known issues — clusters the dominant one, and emits a
+// concrete, human-reviewable proposal.
 //
 // It is deliberately the same INTERFACE as the GEPA adapter, so the loop is
 // exercisable today and you can flip OPTIMIZER=gepa without touching callers.
+//
+// It has no template fallback. With no defect signal it refuses, because a
+// proposal carries an Approve button and must never be backed by a sentence
+// the optimizer wrote about itself.
 const STOP = new Set(["the", "a", "an", "to", "of", "and", "or", "is", "in", "on", "for", "with", "without", "too", "not", "no"]);
 
 function topSignal(texts) {
@@ -23,18 +28,39 @@ export function createHeuristicOptimizer() {
 
     async health() { return { ok: true, detail: "offline reflective heuristic" }; },
 
-    async propose(agent, traces, latestEval) {
-      const reasons = traces.map((t) => t.failureReason).filter(Boolean);
-      const outputs = traces.filter((t) => t.status !== "ok").map((t) => t.output).filter(Boolean);
-      const corpus = [...reasons, latestEval?.knownIssues, latestEval?.notes].filter(Boolean);
-      const signals = topSignal([...reasons, ...corpus]);
-      const dominant = reasons.length
-        ? mode(reasons)
-        : latestEval?.knownIssues || "the most frequent failure in recent runs";
+    async propose(agent, evidence) {
+      const {
+        traces = [],
+        failingTraces = [],
+        feedback = [],
+        lowRatings = [],
+        defectSignals = [],
+      } = evidence || {};
 
-      const n = traces.length;
-      const failing = traces.filter((t) => t.status !== "ok").length;
-      const gain = Math.min(25, 6 + failing * 2 + signals.length * 2);
+      const dominant = defectSignals.length ? mode(defectSignals) : "";
+      if (!dominant) {
+        // Belt and braces: the service refuses first, but an optimizer must
+        // never be the component that invents a signal to fill a template.
+        throw Object.assign(
+          new Error(
+            "Heuristic optimizer has no defect signal to propose against — refusing rather than emitting a placeholder",
+          ),
+          { status: 422 },
+        );
+      }
+
+      const signals = topSignal(defectSignals);
+      const ratedFeedback = feedback.filter((f) => typeof f.rating === "number");
+      const gain = Math.min(
+        25,
+        6 + failingTraces.length * 2 + lowRatings.length * 3 + signals.length * 2,
+      );
+
+      const sources = [
+        `${traces.length} trace(s) (${failingTraces.length} failing)`,
+        `${feedback.length} feedback record(s)`,
+        `${defectSignals.length} defect signal(s)`,
+      ].join(", ");
 
       return {
         source: "heuristic",
@@ -42,12 +68,28 @@ export function createHeuristicOptimizer() {
         date: new Date().toISOString().slice(0, 10),
         summary: `Prompt/skill revision targeting: ${dominant}`,
         detail:
-          `Reviewed ${n} recent trace(s), ${failing} failing. Dominant failure signal: "${dominant}"` +
+          `Reviewed ${sources}.` +
+          ` Dominant defect signal: "${dominant}"` +
           (signals.length ? ` (keywords: ${signals.join(", ")}).` : ".") +
           ` Proposed change: add an explicit guardrail + a check step to the prompt that addresses "${dominant}",` +
           ` and regenerate any output that trips the check. Re-run the eval set to confirm before approving.`,
         expectedGain: gain,
-        evidence: { tracesReviewed: n, failing, signals, sampleOutputs: outputs.slice(0, 2) },
+        evidence: {
+          tracesReviewed: traces.length,
+          failing: failingTraces.length,
+          feedbackReviewed: feedback.length,
+          lowRatings: lowRatings.length,
+          averageRating: ratedFeedback.length
+            ? Number(
+                (
+                  ratedFeedback.reduce((sum, f) => sum + f.rating, 0) /
+                  ratedFeedback.length
+                ).toFixed(2),
+              )
+            : undefined,
+          signals,
+          defectSignals: defectSignals.slice(0, 5),
+        },
       };
     },
   };

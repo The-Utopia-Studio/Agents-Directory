@@ -15,6 +15,10 @@ import { config } from "../src/config.js";
 import { bumpVersion } from "../src/core/version.js";
 
 async function freshService() {
+  return (await freshServiceWithStore()).svc;
+}
+
+async function freshServiceWithStore() {
   const dir = await mkdtemp(join(tmpdir(), "adir-"));
   const store = createStore(dir);
   await seed(store);
@@ -22,7 +26,25 @@ async function freshService() {
   const obs = getObservability(config, { store });
   const optimizer = getOptimizer(config);
   const memory = getMemory(config, { store });
-  return createLoopService({ store, obs, optimizer, memory, config });
+  return { svc: createLoopService({ store, obs, optimizer, memory, config }), store };
+}
+
+/**
+ * Mirror the real A7 state: successful metadata-only runs plus reviewer
+ * feedback. Feedback must attach to a real trace, so the trace is seeded here
+ * rather than relaxing that check.
+ */
+async function serviceWithA7Feedback(feedback) {
+  const { svc, store } = await freshServiceWithStore();
+  const trace = await store.append("traces", {
+    agentId: "A7",
+    status: "ok",
+    source: "real",
+    ts: new Date().toISOString(),
+    metadata: { via: "runtime" },
+  });
+  await svc.recordFeedback("A7", trace.id, feedback);
+  return svc;
 }
 
 test("loads seven agents and historical A2 trace fixtures", async () => {
@@ -42,6 +64,96 @@ test("runImprovement derives a proposal from failing signal", async () => {
   assert.match(proposal.summary, /voice mismatch|aggressive/i);
   const a2 = await svc.getAgent("A2");
   assert.equal(a2.proposedImprovement.id, proposal.id);
+});
+
+// A7 has no seeded traces, evals, or feedback: the exact state that used to
+// yield a templated proposal with an Approve button behind it.
+test("maker refuses with no evidence and names what is missing", async () => {
+  const svc = await freshService();
+  await assert.rejects(
+    () => svc.runImprovement("A7"),
+    (e) => {
+      assert.equal(e.status, 422);
+      assert.match(e.message, /without evidence of a defect/);
+      assert.match(e.message, /0 trace\(s\) \(0 failing\)/);
+      assert.match(e.message, /0 feedback record\(s\)/);
+      assert.match(e.message, /no eval history/);
+      assert.match(e.message, /Supply at least one of/);
+      return true;
+    },
+  );
+  const a7 = await svc.getAgent("A7");
+  assert.equal(a7.proposedImprovement, null, "refusal must not queue a proposal");
+});
+
+test("no proposal ever renders an unresolved placeholder", async () => {
+  const svc = await freshService();
+  const placeholder = /the most frequent failure in recent (runs|traces)/i;
+
+  await assert.rejects(() => svc.runImprovement("A7"), (e) => e.status === 422);
+
+  // The one agent that does have evidence must resolve the signal from it.
+  const proposal = await svc.runImprovement("A2");
+  assert.doesNotMatch(proposal.summary, placeholder);
+  assert.doesNotMatch(proposal.detail, placeholder);
+  assert.doesNotMatch(JSON.stringify(proposal.evidence), placeholder);
+});
+
+test("reviewer feedback notes count as evidence without any failing trace", async () => {
+  // Four stars, so no low rating and no failing trace — only the notes.
+  const svc = await serviceWithA7Feedback({
+    rating: 4,
+    notes: "em dash in the hook; AI cliche 'sits at the intersection of'",
+  });
+
+  const proposal = await svc.runImprovement("A7");
+  assert.equal(proposal.status, "proposed");
+  assert.match(proposal.summary, /em dash/i);
+  assert.equal(proposal.evidence.failing, 0, "no failing trace was needed");
+  assert.equal(proposal.evidence.feedbackReviewed, 1);
+  assert.equal(proposal.evidence.averageRating, 4);
+  assert.ok(proposal.evidence.defectSignals.some((s) => /intersection of/.test(s)));
+});
+
+test("a proposal records the artifact it was derived against", async () => {
+  const svc = await serviceWithA7Feedback({
+    rating: 2,
+    notes: "fabricated a character count",
+  });
+  const proposal = await svc.runImprovement("A7");
+  assert.equal(proposal.targetArtifactVersion, "biocraft-singleshot-v2");
+  assert.match(proposal.targetArtifactDigest, /^[a-f0-9]{64}$/);
+  assert.equal(proposal.targetArtifactDigestAlgorithm, "sha256");
+  assert.equal(proposal.targetAgentVersion, (await svc.getAgent("A7")).version);
+});
+
+test("approval is refused when the targeted artifact has moved", async () => {
+  const svc = await serviceWithA7Feedback({
+    rating: 2,
+    notes: "fabricated a character count",
+  });
+  const proposal = await svc.runImprovement("A7");
+
+  const agent = await svc.getAgent("A7");
+  agent.proposedImprovement = {
+    ...proposal,
+    targetArtifactVersion: "biocraft-singleshot-v1",
+    targetArtifactDigest: "0".repeat(64),
+  };
+  await svc.putAgent(agent);
+
+  await assert.rejects(
+    () => svc.approveImprovement("A7", proposal.id),
+    (e) => {
+      assert.equal(e.status, 409);
+      assert.match(e.message, /but the live artifact is biocraft-singleshot-v2/);
+      return true;
+    },
+  );
+  assert.ok(
+    (await svc.getAgent("A7")).proposedImprovement,
+    "a refused approval must leave the proposal pending",
+  );
 });
 
 test("approve cuts a new version and clears the proposal", async () => {

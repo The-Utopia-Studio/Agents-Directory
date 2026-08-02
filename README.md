@@ -31,8 +31,49 @@ concepts.
 | Tier | What it means | Backed by |
 |------|---------------|-----------|
 | **Open** | Deep-link out to where the agent already lives; the server does not run it. | `invocation.type` of `link` / `prompt` (not server-run) |
-| **Export** | Copy the evaluated `SKILL.md`, or download its complete server-owned artifact folder as a ZIP. | `usabilityModes` including `download-install` / `prepared-handoff`; resolvable runtime artifacts add **Copy single-shot SKILL.md** and **Download single-shot (.zip)** |
+| **Install** | Copy the evaluated `SKILL.md` or download its server-owned artifact folder as a ZIP. | `usabilityModes` including `download-install` **and** a resolvable server-owned artifact |
+| **Handoff** | Copy an engagement **brief** that pins the repo and commit where the agent actually lives. | `usabilityModes` including `prepared-handoff` **and** a registered handoff entry |
 | **Hosted-run** | The server invokes the agent and attempts to record a trace of the run. | `usabilityModes` including `hosted-run` **and** a server-run adapter (`mock`, `http`, or `runtime`) |
+
+### Install and handoff are separate gates
+
+`download-install` and `prepared-handoff` are different affordance sets and are
+never collapsed into one condition. A prepared-handoff agent is not installed
+and not hosted here: its artifact is a package in someone else's repo, so the
+only honest export is a pointer plus the engagement terms. Offering it an
+install-shaped export produced a skill file reassembled from directory metadata
+whose own first step read "open the agent in Codex" — a document claiming to be
+the agent while telling you to go and find it.
+
+- `download-install` → **Copy single-shot SKILL.md** + **Download (.zip)**, both
+  resolved from the server-owned runtime artifact.
+- `prepared-handoff` → **Copy engagement brief**, resolved from the server-owned
+  handoff registry.
+- `hosted-run` → **Run**, plus whatever the other declared modes offer.
+
+Neither substitutes for the other. An agent whose mode has no registered
+server-owned artifact shows an explanation of what is missing, never a
+generated stand-in. **Copy summary** remains available on install agents as a
+plain-text description of the directory record, labelled as such.
+
+`server/src/handoff/handoffArtifacts.js` is the handoff registry, parallel to
+`runtimeArtifacts.js`: keyed by agent ID and holding the pinned repo URL, full
+40-character commit SHA, brief/version/owner/runtime labels, pinned artifact
+file inventory, setup checklist, prohibited-actions file reference, required
+inputs, status-integrity note, and return protocol. The browser sends only an
+agent ID and can never supply a repo, SHA, or path. Entries are validated when
+the module loads, so a short SHA, branch name, empty checklist, or prohibited
+actions reference that is not in the pinned file inventory throws instead of
+shipping a brief with a hole where its provenance should be.
+
+**A8 UX&QA is registered** at
+`https://github.com/aiden150/ux-qa-agent`, commit
+`2a8f2b9562c4d4569c156e2ae7559ab04a54b883`, version `0.1.0`, owned by Aiden
+Kim. Its briefing points to the eight package files at that exact commit rather
+than copying their contents. In particular, prohibited actions remain
+authoritative in pinned `AGENT.md`, and the brief surfaces its status-integrity
+rule that `Not reproducible` must not silently become `Verified`. The agent
+runs in Codex; there is no endpoint.
 
 The invocation adapters that exist today: `link` / `prompt` (manual, not
 server-run), `http` (call an endpoint, with SSRF-guarded fetch), `mock` (canned
@@ -223,6 +264,25 @@ off, it is off.
   `evalHistory`. Notes are capped at `FEEDBACK_NOTES_MAX_CHARS` (2000) and can
   be turned off for a deployment with `FEEDBACK_NOTES=false`, which rejects
   posted notes with 400 while still accepting the rating.
+- **The maker refuses without evidence, and there is no offline stub.** A
+  proposal must be derived from a real defect signal: a failing trace's
+  reason, reviewer feedback notes, or an eval `knownIssues`/`notes`. Metadata
+  traces and feedback records are read as evidence, but a successful run is
+  not a defect signal — it records that the agent ran, never that it ran
+  badly. With no signal, `runImprovement` returns 422 naming exactly what is
+  missing, and no proposal is queued. Optimizers refuse too, so no adapter can
+  emit a templated proposal with an unresolved placeholder in it. The
+  front-end has no offline synthesis path; without the loop service, Propose
+  simply declines.
+- **Approving a proposal does not change what runs.** `approveImprovement`
+  bumps the mutable directory catalog label (`1.0` → `1.1`) and appends a
+  changelog entry. It does not edit `SKILL.md`, `artifact_version`, or the
+  artifact bytes, so the runtime keeps executing the same digest afterwards.
+  Proposals therefore record `targetArtifactVersion` and
+  `targetArtifactDigest`, and approval is refused with 409 if the live
+  artifact has moved since the proposal was derived. Applying an approved
+  change to the artifact itself is still a manual edit plus an
+  `artifact_version` bump.
 - **Runtime traces have no approved `agentVersionId`.** A7 traces carry the same
   `artifactDigest` and `artifactDigestAlgorithm: "sha256"` used by
   run/copy/download plus the mutable directory version label, but the artifact
