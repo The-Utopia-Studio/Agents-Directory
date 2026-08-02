@@ -96,6 +96,8 @@ export function runtimeInvoker(config = {}) {
       getRuntimeArtifactDescriptor(agent.id)?.artifactDigest || null,
     artifactDigestAlgorithm: (agent) =>
       getRuntimeArtifactDescriptor(agent.id)?.artifactDigestAlgorithm || null,
+    artifactVersion: (agent) =>
+      getRuntimeArtifactDescriptor(agent.id)?.artifactVersion || null,
     inputContract: (agent) => getRuntimeInputContract(agent.id),
     async invoke(agent, inputs) {
       if (!anthropic.apiKey) {
@@ -218,6 +220,8 @@ export function runtimeInvoker(config = {}) {
         artifactDigestAlgorithm:
           getRuntimeArtifactDescriptor(agent.id)?.artifactDigestAlgorithm ||
           undefined,
+        artifactVersion:
+          getRuntimeArtifactDescriptor(agent.id)?.artifactVersion || undefined,
         provider: "anthropic",
         modelId: payload.model || model,
         latencyMs,

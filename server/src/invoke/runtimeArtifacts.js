@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
 
 const ARTIFACTS_ROOT = new URL("../artifacts/", import.meta.url);
 
-function snapshotArtifact(directoryUrl, primaryName) {
+/** Exported so the boot-failure test can assert the same throw the module uses at import. */
+export function snapshotArtifact(directoryUrl, primaryName) {
   let files;
   let primary;
   try {
@@ -60,12 +61,49 @@ function snapshotArtifact(directoryUrl, primaryName) {
   if (!artifactDigest) {
     throw new Error("Artifact loaded but SHA-256 digest was unavailable");
   }
+  const content = primary.data.toString("utf8");
+  const frontmatter = content.match(/^---\n([\s\S]*?)\n---\n/)?.[1];
+  if (!frontmatter) {
+    throw new Error("Artifact loaded without parseable frontmatter");
+  }
+  const artifactVersion = frontmatter.match(
+    /^artifact_version:\s*([a-zA-Z0-9._-]+)\s*$/m,
+  )?.[1];
+  if (!artifactVersion) {
+    throw new Error(
+      "Artifact loaded without a valid artifact_version frontmatter field",
+    );
+  }
+  const guardrails = frontmatterList(frontmatter, "guardrails");
+  const successCriteria = frontmatterList(frontmatter, "success_criteria");
+  // Declared beside the prompt so the manifest, the digest, and the executed
+  // bytes cannot disagree. Absence is a defect, not an empty section.
+  if (!guardrails.length || !successCriteria.length) {
+    throw new Error(
+      "Artifact loaded without frontmatter guardrails and success_criteria",
+    );
+  }
   return {
-    content: primary.data.toString("utf8"),
+    content,
     files,
+    artifactVersion,
+    guardrails,
+    successCriteria,
     artifactDigest,
     artifactDigestAlgorithm: "sha256",
   };
+}
+
+/** Read a simple `key:` / `  - item` block from already-isolated frontmatter. */
+function frontmatterList(frontmatter, key) {
+  const block = frontmatter.match(
+    new RegExp(`^${key}:\\s*\\n((?:[ \\t]+-[ \\t]+.+\\n?)+)`, "m"),
+  )?.[1];
+  if (!block) return [];
+  return block
+    .split("\n")
+    .map((line) => line.replace(/^[ \t]+-[ \t]+/, "").trim())
+    .filter(Boolean);
 }
 
 const BIOCRAFT_DIRECTORY = new URL("../artifacts/biocraft/", import.meta.url);
@@ -186,6 +224,9 @@ export function getRuntimeArtifactDescriptor(agentId) {
     mode: artifact.mode,
     slug: artifact.slug,
     displayName: artifact.displayName,
+    artifactVersion: artifact.snapshot.artifactVersion,
+    guardrails: [...artifact.snapshot.guardrails],
+    successCriteria: [...artifact.snapshot.successCriteria],
     artifactDigest: artifact.snapshot.artifactDigest,
     artifactDigestAlgorithm: artifact.snapshot.artifactDigestAlgorithm,
     files: artifact.snapshot.files.map((file) => ({

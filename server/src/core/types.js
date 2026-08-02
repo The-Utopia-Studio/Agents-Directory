@@ -17,6 +17,7 @@
  * @property {number} [outputTokens]
  * @property {number} [totalTokens]
  * @property {string} [agentVersion]    mutable label only; not an approved Convex agentVersionId
+ * @property {string} [artifactVersion] stable label from artifact frontmatter
  * @property {string} [artifactDigest]  SHA-256 of server-owned runtime artifact bytes
  * @property {"sha256"} [artifactDigestAlgorithm]
  * @property {string} [outputDigest]    SHA-256 of output; output text is never stored
@@ -138,7 +139,8 @@
  * @property {(agent:Agent) => Promise<boolean>} [canInvoke]
  * @property {(agent:Agent) => string|null} [artifactDigest]
  * @property {(agent:Agent) => "sha256"|null} [artifactDigestAlgorithm]
- * @property {(agent:Agent, inputs:Object) => Promise<{output:string, artifactDigest?:string, artifactDigestAlgorithm?:"sha256", costUsd?:number, provider?:string, modelId?:string, inputTokens?:number, outputTokens?:number, totalTokens?:number, latencyMs?:number}>} invoke
+ * @property {(agent:Agent) => string|null} [artifactVersion]
+ * @property {(agent:Agent, inputs:Object) => Promise<{output:string, artifactVersion?:string, artifactDigest?:string, artifactDigestAlgorithm?:"sha256", costUsd?:number, provider?:string, modelId?:string, inputTokens?:number, outputTokens?:number, totalTokens?:number, latencyMs?:number}>} invoke
  */
 
 /**

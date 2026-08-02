@@ -39,22 +39,12 @@ function cleanVersion(value) {
   return raw.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "");
 }
 
-function artifactVersion(value) {
-  let version = cleanVersion(value)
-    .replace(/^biocraft[._-]?/i, "")
-    .replace(/^v/i, "");
-  if (/^\d+\.0$/.test(version)) version = version.slice(0, -2);
-  return `v${version || "unversioned"}`;
-}
-
 function zipFilename(agent, artifact) {
-  return `${agent.id}-${artifact.slug}-${artifactVersion(agent.version)}-${artifact.artifactDigest.slice(0, 7)}.zip`;
+  return `${agent.id}-${artifact.artifactVersion}-${artifact.artifactDigest.slice(0, 7)}.zip`;
 }
 
-function bulletList(values, fallback) {
-  return values?.length
-    ? values.map((value) => `- ${value}`).join("\n")
-    : `- ${fallback}`;
+function bulletList(values) {
+  return values.map((value) => `- ${value}`).join("\n");
 }
 
 function buildManifest(agent, artifact, files) {
@@ -75,14 +65,19 @@ function buildManifest(agent, artifact, files) {
 
   return `# ${artifact.displayName}
 
+**Artifact version — quote this when returning a result:**
+\`${artifact.artifactVersion}\`
+
 - Agent name: ${artifact.displayName}
 - Directory display ID: ${agent.id}
 - Directory record name: ${agent.name}
-- Directory version label: ${cleanVersion(agent.version)}
-- Artifact version: ${artifactVersion(agent.version)}
 - Artifact mode: ${artifact.mode}
 - Artifact digest: \`${artifact.artifactDigest}\`
 - Artifact digest algorithm: \`${artifact.artifactDigestAlgorithm}\`
+
+The artifact version above identifies these files. The directory catalog carries
+a separate label that tracks the catalog entry rather than this download, and
+moves independently of it: \`${agent.id}\` version ${cleanVersion(agent.version)}.
 
 ## Contents
 
@@ -102,29 +97,35 @@ This is the **single-shot artifact**, not the full Chrome/Google Drive
 \`SKILL.md\` verbatim. It has no browser, Drive, filesystem, HTML-rendering, or
 follow-up conversation tools.
 
-The filename and this manifest use the agent's current directory version label.
-When the loop bumps that version, subsequent downloads follow it automatically;
-runtime, evaluation, copy, and download still resolve through the same artifact
-registry and content digest.
+The filename and this manifest use the stable version label declared inside
+\`SKILL.md\`. Runtime, evaluation, copy, and download all resolve through that
+same artifact registry and content digest. When the evaluated artifact changes,
+its own \`artifact_version\` must change with it.
 
-## Guardrails from the directory record
+## Guardrails
 
-${bulletList(agent.guardrails, "No guardrails recorded.")}
+Declared in the \`SKILL.md\` frontmatter, so they are covered by the digest above
+and cannot drift from the prompt that was executed.
 
-## Success criteria from the directory record
+${bulletList(artifact.guardrails)}
 
-${bulletList(agent.successCriteria, "No success criteria recorded.")}
+## Success criteria
+
+${bulletList(artifact.successCriteria)}
 
 ## Return a result
 
-Return all three items so the evaluation can be attributed to this exact build:
+Return these three items so the evaluation can be attributed to the artifact
+without copying a machine digest:
 
 1. **Output** — the generated deliverable, or a link/path to it.
 2. **Rating** — an integer from 1 to 5.
-3. **Artifact digest** — \`${artifact.artifactDigest}\`.
-4. **Artifact digest algorithm** — \`${artifact.artifactDigestAlgorithm}\`.
+3. **Artifact version** — \`${artifact.artifactVersion}\`.
 
 Include free-text notes explaining the rating whenever possible.
+
+Machine provenance is recorded separately as
+\`${artifact.artifactDigestAlgorithm}:${artifact.artifactDigest}\`.
 `;
 }
 
@@ -140,7 +141,7 @@ export async function getInstallArtifactCapability(agent) {
       available: true,
       kind: "single-shot",
       label: artifact.displayName,
-      artifactVersion: artifactVersion(agent.version),
+      artifactVersion: artifact.artifactVersion,
       artifactDigest: artifact.artifactDigest,
       artifactDigestAlgorithm: artifact.artifactDigestAlgorithm,
       shortDigest: artifact.artifactDigest.slice(0, 7),
@@ -160,8 +161,8 @@ export async function loadInstallSkill(agent) {
   if (!skill) throw httpError(404, "Install artifact has no SKILL.md");
   return {
     content: skill.data.toString("utf8"),
-    filename: `${agent.id}-${artifact.slug}-${artifactVersion(agent.version)}-${artifact.artifactDigest.slice(0, 7)}-SKILL.md`,
-    artifactVersion: artifactVersion(agent.version),
+    filename: `${agent.id}-${artifact.artifactVersion}-${artifact.artifactDigest.slice(0, 7)}-SKILL.md`,
+    artifactVersion: artifact.artifactVersion,
     artifactDigest: artifact.artifactDigest,
     artifactDigestAlgorithm: artifact.artifactDigestAlgorithm,
     kind: "single-shot",

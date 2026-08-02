@@ -65,10 +65,38 @@ At boot the server computes `artifactDigest` as SHA-256 over the exact
 `SKILL.md` bytes it caches and executes. `artifactDigestAlgorithm` is always
 `sha256`. The same pair is returned with Copy as SKILL.md, written to
 `MANIFEST.md`, attached to runtime traces and the capability response, shown in
-the UI, and used in the ZIP filename. The filename also derives its version
-from the current agent record, so a loop version bump automatically changes
-subsequent downloads (for example,
-`A7-biocraft-v1.1-<digest-prefix>.zip`).
+the UI, and used in the ZIP filename.
+
+The artifact declares its own stable, paste-surviving frontmatter label:
+`artifact_version: biocraft-singleshot-v2`. Runtime parses that label from the
+same bytes; it is not duplicated in configuration. Copy does not prepend or
+alter anything, so re-hashing a pasted copy produces the recorded digest. ZIP
+filenames use the label directly, for example
+`A7-biocraft-singleshot-v2-<digest-prefix>.zip`.
+
+The same frontmatter also declares `guardrails` and `success_criteria`. The
+manifest reports those, never the mutable directory record, so what a reviewer
+is held to is covered by the digest and cannot drift from the executed prompt.
+Those lists are required: if either is missing or empty, `snapshotArtifact`
+throws at module load and the server process does not start. A regression test
+spawns that import path and asserts a non-zero exit — the guard is not a
+warning and must not be refactored into one silently.
+
+### v1 → v2 behaviour change (not byte-only)
+
+`biocraft-singleshot-v1` → `biocraft-singleshot-v2` changed the **system
+prompt the model receives**, not only the file hash. Frontmatter is part of
+`SKILL.md`, and the runtime sends that file to Anthropic verbatim — it is not
+stripped. v2 therefore adds the machine-readable `guardrails` /
+`success_criteria` YAML blocks to the prompt on top of the existing prose
+`## Guardrails` section. The model sees the same nine guardrails twice, in two
+formats. That is redundant, not contradictory (a test asserts the lists stay
+in step), but it is still a prompt change.
+
+An earlier claim that “model-facing prose is unchanged” was wrong. Ratings
+returned against `biocraft-singleshot-v1` are **not comparable** to ratings
+against `biocraft-singleshot-v2`. When any of these bytes change again,
+`artifact_version` must change with them.
 
 `server/src/artifacts/installArtifacts.js` resolves through the runtime
 registry; it has no separate artifact map. The browser sends only the agent ID.
@@ -77,10 +105,13 @@ unsafe ZIP entry names fail closed. Download renders only when the record has
 `download-install` and that runtime directory resolves.
 
 Each ZIP contains the runtime directory plus a generated root `MANIFEST.md`
-with the single-shot limitation, agent/display/version identifiers, artifact
-digest and algorithm, file inventory and hashes, current record guardrails and
-success criteria, install instructions, and the
-output/rating/artifactDigest/artifactDigestAlgorithm return protocol.
+with the single-shot limitation, agent and display identifiers, artifact digest
+and algorithm, file inventory and hashes, the artifact-declared guardrails and
+success criteria, install instructions, and the human
+output/rating/artifact-version return protocol. Exactly one version is offered
+as the one to quote back — the artifact version. The directory catalog label
+appears only as a cross-reference that says so. The digest remains persistent
+machine provenance rather than something a reviewer must transcribe.
 
 There is no fake or fallback identifier. If the runtime artifact cannot be
 resolved at boot, it is not runnable or downloadable. If its bytes load but a

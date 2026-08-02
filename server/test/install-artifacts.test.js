@@ -1,14 +1,49 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { createStore } from "../src/core/store.js";
 import { buildApp } from "../src/http/server.js";
 import { runtimeInvoker } from "../src/invoke/index.js";
 import { config } from "../src/config.js";
+
+const ARTIFACTS_ROOT = join(
+  dirname(fileURLToPath(import.meta.url)),
+  "../src/artifacts",
+);
+const RUNTIME_ARTIFACTS_URL = pathToFileURL(
+  join(dirname(fileURLToPath(import.meta.url)), "../src/invoke/runtimeArtifacts.js"),
+).href;
+
+/**
+ * Mirror production boot: top-level snapshotArtifact assignment, no try/catch.
+ * Fixtures live under the artifacts root so the path check does not soft-return
+ * null before the frontmatter guard runs — that soft path is for unreadable
+ * dirs, not for a loaded artifact missing its lists.
+ */
+async function spawnBootWithSkill(skillBody) {
+  const dir = await mkdtemp(join(ARTIFACTS_ROOT, ".boot-fail-"));
+  await writeFile(join(dir, "SKILL.md"), skillBody);
+  const harness = join(dir, "boot.mjs");
+  await writeFile(
+    harness,
+    `import { pathToFileURL } from "node:url";
+import { snapshotArtifact } from ${JSON.stringify(RUNTIME_ARTIFACTS_URL)};
+const SNAPSHOT = snapshotArtifact(pathToFileURL(${JSON.stringify(`${dir}/`)}), "SKILL.md");
+console.log("boot-continued", Boolean(SNAPSHOT));
+`,
+  );
+  try {
+    return spawnSync(process.execPath, [harness], { encoding: "utf8" });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
 
 async function listen(app, t) {
   const server = createServer(app.handler);
@@ -61,9 +96,14 @@ test("A7 copy export is byte-for-byte the system artifact runtime executes", asy
   assert.equal(exported.kind, "single-shot");
   assert.equal(exported.artifactDigest, expectedDigest);
   assert.equal(exported.artifactDigestAlgorithm, "sha256");
+  assert.equal(exported.artifactVersion, "biocraft-singleshot-v2");
   assert.equal(
     exported.filename,
-    `A7-biocraft-v1-${expectedDigest.slice(0, 7)}-SKILL.md`,
+    `A7-biocraft-singleshot-v2-${expectedDigest.slice(0, 7)}-SKILL.md`,
+  );
+  assert.match(
+    exported.content,
+    /^artifact_version: biocraft-singleshot-v2$/m,
   );
   assert.doesNotMatch(exported.content, /artifact-(?:commit|digest):/);
   assert.match(exported.content, /## Mode boundary/);
@@ -103,11 +143,13 @@ test("A7 ZIP contains the runtime folder and follows the evaluated version", asy
   const app = await buildApp({ store });
   const base = await listen(app, t);
   const agent = await app.svc.getAgent("A7");
+  // Deliberately misleading directory record: the manifest must ignore it and
+  // report the guardrails declared inside the digested artifact instead.
   await app.svc.putAgent({
     ...agent,
     version: "biocraft.v1.1",
-    guardrails: ["Never fabricate metrics", "No em dashes"],
-    successCriteria: ["About is at most 2,600 characters"],
+    guardrails: ["Directory-record guardrail that must not reach the manifest"],
+    successCriteria: ["Directory-record criterion that must not reach it"],
   });
 
   const response = await fetch(
@@ -131,14 +173,24 @@ test("A7 ZIP contains the runtime folder and follows the evaluated version", asy
   assert.equal(response.headers.get("x-artifact-digest"), expectedDigest);
   assert.equal(
     response.headers.get("content-disposition"),
-    `attachment; filename="A7-biocraft-v1.1-${expectedDigest.slice(0, 7)}.zip"`,
+    `attachment; filename="A7-biocraft-singleshot-v2-${expectedDigest.slice(0, 7)}.zip"`,
   );
   const manifest = files.get("MANIFEST.md").toString();
   assert.match(manifest, /Agent name: Biocraft single-shot draft/);
   assert.match(manifest, /Directory display ID: A7/);
-  assert.match(manifest, /Directory version label: biocraft\.v1\.1/);
-  assert.match(manifest, /Artifact version: v1\.1/);
   assert.match(manifest, /Artifact mode: single-shot/);
+
+  // Exactly one version is offered as the one to quote back; the catalog label
+  // appears only as a cross-reference, in prose that says so.
+  assert.match(
+    manifest,
+    /\*\*Artifact version — quote this when returning a result:\*\*\n`biocraft-singleshot-v2`/,
+  );
+  assert.match(
+    manifest,
+    /a separate label that tracks the catalog entry rather than this download[\s\S]*?`A7` version biocraft\.v1\.1\./,
+  );
+  assert.doesNotMatch(manifest, /^- Directory version label:/m);
   assert.equal(
     manifest.includes(`Artifact digest: \`${expectedDigest}\``),
     true,
@@ -148,15 +200,99 @@ test("A7 ZIP contains the runtime folder and follows the evaluated version", asy
   assert.match(manifest, /single-shot artifact/);
   assert.match(manifest, /not the full Chrome\/Google Drive/);
   assert.match(manifest, /hosted runtime executes this same server-owned/);
-  assert.match(manifest, /Never fabricate metrics/);
-  assert.match(manifest, /About is at most 2,600 characters/);
-  assert.match(manifest, /1\. \*\*Output\*\*/);
-  assert.match(manifest, /2\. \*\*Rating\*\*/);
-  assert.match(manifest, /3\. \*\*Artifact digest\*\*/);
-  assert.match(manifest, /4\. \*\*Artifact digest algorithm\*\*/);
+  // Guardrails and criteria come from the digested artifact, never the record.
+  const skill = files.get("SKILL.md").toString();
+  assert.doesNotMatch(manifest, /Directory-record guardrail/);
+  assert.doesNotMatch(manifest, /Directory-record criterion/);
+  assert.match(manifest, /Never fabricate or alter a metric/);
+  assert.match(manifest, /Preserve qualifiers such as Intern/);
+  assert.match(manifest, /LinkedIn About hook is 300 characters or fewer/);
+  assert.match(manifest, /Spoken event introduction reads aloud in 20 to 30/);
+  const guardrailBullets = manifest
+    .split("## Guardrails")[1]
+    .split("## Success criteria")[0]
+    .match(/^- /gm);
+  assert.equal(guardrailBullets.length, 9);
+  // The frontmatter declaration and the prose the model reads must stay in step.
+  const skillGuardrails = skill.split("\n## Guardrails\n")[1];
+  assert.equal(skillGuardrails.match(/^\d+\. /gm).length, guardrailBullets.length);
 
-  assert.match(files.get("SKILL.md").toString(), /artifact-mode: single-shot/);
-  assert.doesNotMatch(files.get("SKILL.md").toString(), /Google Drive MCP tools/);
+  // The count in the sentence must match the list it introduces.
+  const returnBlock = manifest.split("## Return a result")[1];
+  assert.match(returnBlock, /Return these three items/);
+  assert.equal(returnBlock.match(/^\d+\. \*\*/gm).length, 3);
+  assert.match(returnBlock, /1\. \*\*Output\*\*/);
+  assert.match(returnBlock, /2\. \*\*Rating\*\*/);
+  assert.match(returnBlock, /3\. \*\*Artifact version\*\*/);
+  assert.match(
+    manifest,
+    /Machine provenance is recorded separately as\s+`sha256:[a-f0-9]{64}`/,
+  );
+
+  assert.match(skill, /artifact-mode: single-shot/);
+  assert.doesNotMatch(skill, /Google Drive MCP tools/);
+});
+
+test("boot aborts when frontmatter guardrails or success_criteria are missing or empty", async () => {
+  const expected = /Artifact loaded without frontmatter guardrails and success_criteria/;
+  const baseFrontmatter = `---
+name: boot-fail-fixture
+description: Fixture for asserting import-time abort.
+artifact-mode: single-shot
+artifact_version: boot-fail-v0
+`;
+
+  const cases = [
+    {
+      name: "both lists missing",
+      body: `${baseFrontmatter}---\n\n# Fixture\n`,
+    },
+    {
+      name: "guardrails missing",
+      body: `${baseFrontmatter}success_criteria:
+  - LinkedIn About hook is 300 characters or fewer
+---\n\n# Fixture\n`,
+    },
+    {
+      name: "success_criteria missing",
+      body: `${baseFrontmatter}guardrails:
+  - Never fabricate a metric
+---\n\n# Fixture\n`,
+    },
+    {
+      name: "guardrails empty",
+      body: `${baseFrontmatter}guardrails:
+success_criteria:
+  - LinkedIn About hook is 300 characters or fewer
+---\n\n# Fixture\n`,
+    },
+    {
+      name: "success_criteria empty",
+      body: `${baseFrontmatter}guardrails:
+  - Never fabricate a metric
+success_criteria:
+---\n\n# Fixture\n`,
+    },
+  ];
+
+  for (const fixture of cases) {
+    const result = await spawnBootWithSkill(fixture.body);
+    assert.notEqual(
+      result.status,
+      0,
+      `${fixture.name}: process must exit non-zero (got ${result.status})`,
+    );
+    assert.match(
+      result.stderr,
+      expected,
+      `${fixture.name}: stderr must carry the boot-failure throw, not a warning`,
+    );
+    assert.equal(
+      /boot-continued/.test(result.stdout),
+      false,
+      `${fixture.name}: must not continue after the throw`,
+    );
+  }
 });
 
 test("download capability fails closed without a registered artifact", async (t) => {

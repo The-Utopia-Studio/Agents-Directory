@@ -412,7 +412,9 @@ input[type="date"] { color-scheme: dark; }
 .use-tier { font-family: ui-monospace, monospace; font-size: 10px; text-transform: none; letter-spacing: 0; color: var(--accent-text); border: 1px solid var(--border-subtle); border-radius: 999px; padding: 1px 8px; }
 .use-actions { display: flex; flex-wrap: wrap; gap: 8px; }
 .use-actions #install-actions { display: contents; }
-.artifact-pin { align-self: center; font-family: ui-monospace, monospace; font-size: 10px; color: var(--foreground-subtle); }
+.artifact-pin { flex-basis: 100%; font-family: ui-monospace, monospace; font-size: 10px; line-height: 1.45; color: var(--foreground-subtle); }
+.artifact-pin strong { color: var(--foreground); font-weight: 500; }
+.artifact-pin code { overflow-wrap: anywhere; }
 .use-hint { font-size: 12px; color: var(--foreground-subtle); margin-top: 10px; }
 .run-panel:empty { display: none; }
 .run-form { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-top: 14px; padding-top: 14px; border-top: 1px dashed var(--border); }

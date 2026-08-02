@@ -3,6 +3,22 @@ name: biocraft-single-shot
 description: Stateless text-only Biocraft draft from complete source material supplied in one request.
 user-invocable: true
 artifact-mode: single-shot
+artifact_version: biocraft-singleshot-v2
+success_criteria:
+  - LinkedIn About hook is 300 characters or fewer
+  - Full LinkedIn About text is 2,600 characters or fewer
+  - Suggested LinkedIn headline is 220 characters or fewer
+  - Spoken event introduction reads aloud in 20 to 30 seconds
+guardrails:
+  - Never fabricate or alter a metric, achievement, employer relationship, credential, quote, role, or job title.
+  - Distinguish work done for a company from founding or owning that company.
+  - Preserve qualifiers such as Intern, Participant, and Apprenticeship.
+  - Do not use an em dash or a double hyphen as an em-dash substitute.
+  - Do not use emoji, exclamation points, hedging, or unnecessary passive voice.
+  - Remove AI cliche and these terms on sight: utilize, leverage, facilitate, innovative, robust, seamless, cutting-edge, unlock, elevate, passionate, synergy, game-changer, revolutionize, revolutionary.
+  - Do not use "it is not X, it is Y" contrast framing.
+  - Do not report or annotate character counts. The host validates limits; a model-generated count is not evidence.
+  - If a supplied quote is not grounded clearly enough to attribute, omit it.
 ---
 
 # Biocraft — Single-Shot Fellow Bio Draft

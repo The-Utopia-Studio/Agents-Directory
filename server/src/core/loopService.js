@@ -43,6 +43,7 @@ function metadataOnlyTrace(agentId, trace) {
     ...(trace.agentVersion ? { agentVersion: trace.agentVersion } : {}),
     ...(trace.artifactDigest
       ? {
+          artifactVersion: trace.artifactVersion,
           artifactDigest: trace.artifactDigest,
           artifactDigestAlgorithm: trace.artifactDigestAlgorithm,
         }
@@ -185,9 +186,14 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         typeof invoker.artifactDigestAlgorithm === "function"
           ? invoker.artifactDigestAlgorithm(agent)
           : null;
+      const artifactVersion =
+        typeof invoker.artifactVersion === "function"
+          ? invoker.artifactVersion(agent)
+          : null;
       if (
         (artifactDigest && artifactDigestAlgorithm !== "sha256") ||
-        (!artifactDigest && artifactDigestAlgorithm)
+        (!artifactDigest && artifactDigestAlgorithm) ||
+        (artifactDigest && !artifactVersion)
       ) {
         throw httpError(
           500,
@@ -224,7 +230,7 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
             ...(invoker.modelId ? { modelId: invoker.modelId } : {}),
             agentVersion: agent.version,
             ...(artifactDigest
-              ? { artifactDigest, artifactDigestAlgorithm }
+              ? { artifactVersion, artifactDigest, artifactDigestAlgorithm }
               : {}),
             metadata: {
               via: invoker.name,
@@ -281,6 +287,7 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
                 artifactDigest: result.artifactDigest || artifactDigest,
                 artifactDigestAlgorithm:
                   result.artifactDigestAlgorithm || artifactDigestAlgorithm,
+                artifactVersion: result.artifactVersion || artifactVersion,
               }
             : {}),
           outputDigest: outputDigest(result.output),
@@ -297,6 +304,7 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         via: invoker.name,
         mode: invoker.mode || null,
         agentVersion: agent.version,
+        artifactVersion: result.artifactVersion || artifactVersion || null,
         artifactDigest: result.artifactDigest || artifactDigest || null,
         artifactDigestAlgorithm:
           result.artifactDigestAlgorithm || artifactDigestAlgorithm || null,

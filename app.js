@@ -734,7 +734,7 @@ async function loadRunCapability(id){
       else if(!capability.configured)slot.innerHTML=`<span class="run-unavailable">${escHtml(capability.unavailableReason||"Runtime unavailable")}</span>`;
     }
     if(installSlot&&hasUsabilityMode(a,"download-install")&&capability.installArtifact&&capability.installArtifact.available){
-      installSlot.innerHTML=`<button class="btn btn-sm" onclick="copyInstallSkill('${id}')">Copy single-shot SKILL.md</button><button class="btn btn-sm" onclick="downloadInstallArtifact('${id}')">Download single-shot (.zip)</button><span class="artifact-pin" title="${escHtml(capability.installArtifact.artifactDigest)}">${escHtml(capability.installArtifact.artifactVersion)} · ${escHtml(capability.installArtifact.artifactDigestAlgorithm)}:${escHtml(capability.installArtifact.shortDigest)}</span>`;
+      installSlot.innerHTML=`<button class="btn btn-sm" onclick="copyInstallSkill('${id}')">Copy single-shot SKILL.md</button><button class="btn btn-sm" onclick="downloadInstallArtifact('${id}')">Download single-shot (.zip)</button><span class="artifact-pin"><strong>${escHtml(capability.installArtifact.artifactVersion)}</strong> · ${escHtml(capability.installArtifact.artifactDigestAlgorithm)}:<code>${escHtml(capability.installArtifact.artifactDigest)}</code></span>`;
     }
   }catch(e){delete runCapabilities[id];if(slot)slot.innerHTML="";if(installSlot)installSlot.innerHTML=""}
 }
@@ -765,7 +765,7 @@ function copyAgentSkill(id){const a=agents.find(x=>x.id===id);if(a)copyText(buil
 async function copyInstallSkill(id){
   try{
     const artifact=await DirectoryAPI.installSkill(id);
-    copyText(artifact.content,`Single-shot SKILL.md copied · ${artifact.artifactDigestAlgorithm}:${artifact.artifactDigest.slice(0,7)}`);
+    copyText(artifact.content,`Single-shot SKILL.md copied · ${artifact.artifactVersion}`);
   }catch(e){toast(`Single-shot export failed: ${String(e.message||e)}`)}
 }
 async function downloadInstallArtifact(id){
