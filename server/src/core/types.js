@@ -7,6 +7,11 @@
  * @property {string} id
  * @property {string} agentId
  * @property {"ok"|"fail"|"error"} status
+ *   "fail" = it ran and missed the bar (e.g. a mechanical check).
+ *   "error" = it did not run. Both are returned by getFailingTraces.
+ * @property {string} [failureReason]  closed vocabulary only — check ids or a
+ *   failure code. Free text is rejected by `sanitizeFailureReason`.
+ * @property {CheckResult[]} [checkResults]  structural facts per failed check
  * @property {number} [score]           0–100, if scored at run time
  * @property {number} [latencyMs]
  * @property {number} [costUsd]
@@ -76,6 +81,25 @@
  * @property {TraceFeedback[]} lowRatings  feedback rated 3 or below
  * @property {string[]} defectSignals   failure reasons, notes, eval issues
  * @property {EvalRecord} [latestEval]
+ */
+
+/**
+ * A mechanical check verdict. Records the shape of what was inspected so a
+ * parsing miss can be told from a genuine omission, and never the text: no
+ * matched substring or excerpt may appear here.
+ * @typedef {Object} CheckResult
+ * @property {string} checkId          closed vocabulary, snake_case
+ * @property {boolean} [sectionFound]
+ * @property {number} [paragraphCount]
+ * @property {number} [hookChars]
+ * @property {number} [limit]
+ * @property {number} [windowParagraphs]  paragraphs the CTA check inspected
+ * @property {number} [windowChars]
+ * @property {boolean} [hasContactChannel]
+ * @property {boolean} [hasImperativeOpener]
+ * @property {boolean} [hasInvitationFrame]
+ * @property {"·"|"|"|"•"} [delimiter]
+ * @property {number} [segmentCount]
  */
 
 /**

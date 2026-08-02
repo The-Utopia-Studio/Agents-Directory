@@ -1,5 +1,10 @@
 // Local observability reads historical traces from the file store. New file
 // writes are disabled pending a Convex service identity.
+import {
+  sanitizeCheckResults,
+  sanitizeFailureReason,
+} from "../core/traceSafety.js";
+
 export const FILE_TRACE_WRITES_ENABLED = false;
 
 export function createLocalObservability({ store, lowScoreThreshold = 70 }) {
@@ -33,17 +38,26 @@ export function createLocalObservability({ store, lowScoreThreshold = 70 }) {
         };
       }
       // Defense in depth: even a trusted runtime call cannot persist payloads
-      // or free-text failure reasons while retention rules are unresolved.
+      // while retention rules are unresolved. The checker's verdict is allowed
+      // through because it is filtered to closed-vocabulary ids and numeric or
+      // boolean facts — shape, never content. Stripping it outright is what
+      // left every failing trace with an empty failureReason and starved the
+      // maker of the one signal we generate mechanically.
       const {
         input: _input,
         output: _output,
-        failureReason: _failureReason,
+        failureReason,
+        checkResults,
         ...metadataOnly
       } = trace;
+      const safeReason = sanitizeFailureReason(failureReason);
+      const safeChecks = sanitizeCheckResults(checkResults);
       const doc = {
         status: "ok",
         ts: new Date().toISOString(),
         ...metadataOnly,
+        ...(safeReason ? { failureReason: safeReason } : {}),
+        ...(safeChecks.length ? { checkResults: safeChecks } : {}),
       };
       const saved = await store.append("traces", doc);
       return { ...saved, persisted: true };

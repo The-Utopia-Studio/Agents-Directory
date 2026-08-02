@@ -9,10 +9,13 @@ import { relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ARTIFACTS_ROOT = new URL("../artifacts/", import.meta.url);
+// Declarable in artifact frontmatter. Must stay in step with KNOWN_CHECK_IDS
+// in core/traceSafety.js, which also carries ids the runtime raises without
+// them being declared (about_section_present). A test asserts no drift.
 const RUNTIME_CHECKS = new Set([
   "about_hook_max_200_characters",
   "about_has_no_delimiter_separated_keyword_run",
-  "about_final_paragraph_has_cta",
+  "about_closing_has_cta",
 ]);
 
 /** Exported so the boot-failure test can assert the same throw the module uses at import. */
@@ -274,45 +277,124 @@ function visibleText(markdown) {
     .trim();
 }
 
+export const HOOK_CHARACTER_LIMIT = 200;
+
+// Sarah's rule is "one or two final lines": one paragraph is too narrow, and
+// anything wider is too generous. There is deliberately no expand-to-N-chars
+// rule — on a short About that would swallow the whole section and pass a bio
+// whose CTA sits mid-text, which is the opposite of what the check is for.
+const CTA_WINDOW_PARAGRAPHS = 2;
+
+// A contact channel. Pattern-only, so no phrase needs enumerating.
+const CONTACT_CHANNEL =
+  /(?:[\w.+-]+@[\w-]+\.[\w.]{2,}|https?:\/\/\S+|\b(?:www|linkedin|calendly|substack|github)\.[\w./-]+)/i;
+
+// An imperative CTA is identified by sentence-initial POSITION of a contact
+// verb, not by matching a whole phrase. "Book a call", "Book a slot" and
+// "Book time with me" all fire on the same rule.
+const IMPERATIVE_OPENER =
+  /^(?:book|email|message|call|reach|contact|connect|send|visit|schedule|join|drop|ping|write|follow|apply|subscribe|hire|explore|start|get|say|tell)\b|^(?:let'?s\b|feel free\b)/i;
+
+// The remaining branch is lexical, bounded by the artifact's own wording:
+// "state what the fellow is open to, or how to reach out."
+const INVITATION_FRAME =
+  /\b(?:available (?:for|to)|open (?:to|for)|currently taking on|taking on new|now booking|accepting|happy to|looking to|reach out|get in touch|contact me|email me|message me|send me|dm me|drop me|write to me|say hello|let'?s (?:connect|talk|chat)|work with me|hear from you|find me at|book a|schedule a)\b/i;
+
+const KEYWORD_RUN = /(?:([·|•])[^·|•\n]*){2,}/;
+
+/** The closing: at most the trailing two paragraphs, never more. */
+function trailingWindow(paragraphs) {
+  const picked = paragraphs.slice(-CTA_WINDOW_PARAGRAPHS);
+  return { text: visibleText(picked.join("\n\n")), paragraphs: picked.length };
+}
+
+function ctaSignals(windowText) {
+  const sentences = windowText
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return {
+    hasContactChannel: CONTACT_CHANNEL.test(windowText),
+    hasImperativeOpener: sentences.some((s) => IMPERATIVE_OPENER.test(s)),
+    hasInvitationFrame: INVITATION_FRAME.test(windowText),
+  };
+}
+
 /**
  * Execute the checks declared in the same server-owned bytes used as the
  * system prompt. This prevents a `checks:` block from being documentation
  * that the runtime silently ignores.
+ *
+ * Returns one structured result per FAILED check: a closed-vocabulary id, a
+ * human-readable message for the caller, and numeric/boolean facts about the
+ * structure inspected. Facts exist so a parsing miss can be told apart from a
+ * genuine omission; they never include matched text.
  */
 export function validateRuntimeArtifactOutput(agentId, output) {
   const artifact = RUNTIME_ARTIFACTS[agentId];
   const checks = artifact?.snapshot?.checks || [];
   if (!checks.length) return [];
 
-  const failures = [];
   const about = markdownSection(output, "LinkedIn About");
   if (!about) {
-    return ["LinkedIn About section is missing or not labelled exactly"];
+    return [
+      {
+        checkId: "about_section_present",
+        message: "LinkedIn About section is missing or not labelled exactly",
+        sectionFound: false,
+        paragraphCount: 0,
+      },
+    ];
   }
+
   const paragraphs = about.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
   const hook = visibleText(paragraphs[0] || "");
-  const finalParagraph = visibleText(paragraphs.at(-1) || "");
+  const failures = [];
 
-  if (
-    checks.includes("about_hook_max_200_characters") &&
-    hook.length > 200
-  ) {
-    failures.push(`LinkedIn About hook is ${hook.length} characters; maximum is 200`);
+  if (checks.includes("about_hook_max_200_characters") && hook.length > HOOK_CHARACTER_LIMIT) {
+    failures.push({
+      checkId: "about_hook_max_200_characters",
+      message: `LinkedIn About hook is ${hook.length} characters; maximum is ${HOOK_CHARACTER_LIMIT}`,
+      sectionFound: true,
+      paragraphCount: paragraphs.length,
+      hookChars: hook.length,
+      limit: HOOK_CHARACTER_LIMIT,
+    });
   }
-  if (
-    checks.includes("about_has_no_delimiter_separated_keyword_run") &&
-    /(?:[·|•][^·|•\n]*){2,}/.test(about)
-  ) {
-    failures.push("LinkedIn About contains a delimiter-separated keyword run");
+
+  if (checks.includes("about_has_no_delimiter_separated_keyword_run")) {
+    const match = about.match(KEYWORD_RUN);
+    if (match) {
+      failures.push({
+        checkId: "about_has_no_delimiter_separated_keyword_run",
+        message: "LinkedIn About contains a delimiter-separated keyword run",
+        sectionFound: true,
+        paragraphCount: paragraphs.length,
+        delimiter: match[1],
+        segmentCount: match[0].split(match[1]).filter(Boolean).length,
+      });
+    }
   }
-  if (
-    checks.includes("about_final_paragraph_has_cta") &&
-    !/\b(?:open to|reach out|contact me|email me|message me|send me|dm me|connect with me|let'?s (?:connect|talk)|get in touch|hear from you|find me at|work with me)\b/i.test(
-      finalParagraph,
-    )
-  ) {
-    failures.push("LinkedIn About final paragraph has no explicit CTA");
+
+  if (checks.includes("about_closing_has_cta")) {
+    const window = trailingWindow(paragraphs);
+    const signals = ctaSignals(window.text);
+    if (!signals.hasContactChannel && !signals.hasImperativeOpener && !signals.hasInvitationFrame) {
+      failures.push({
+        checkId: "about_closing_has_cta",
+        // Detector language, not a verdict on the draft. No detector firing is
+        // evidence to look, not proof the model omitted a CTA.
+        message:
+          "No CTA detected in the closing of the LinkedIn About (trailing two paragraphs)",
+        sectionFound: true,
+        paragraphCount: paragraphs.length,
+        windowParagraphs: window.paragraphs,
+        windowChars: window.text.length,
+        ...signals,
+      });
+    }
   }
+
   return failures;
 }
 

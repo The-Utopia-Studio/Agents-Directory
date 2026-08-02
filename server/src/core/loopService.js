@@ -15,6 +15,7 @@ import {
   getHandoffCapability,
   loadHandoffBriefing,
 } from "../handoff/handoffArtifacts.js";
+import { sanitizeCheckResults, sanitizeFailureReason } from "./traceSafety.js";
 
 function outputDigest(output) {
   return createHash("sha256").update(String(output)).digest("hex");
@@ -26,6 +27,11 @@ function metadataOnlyTrace(agentId, trace) {
     ...(trace.metadata?.mode ? { mode: trace.metadata.mode } : {}),
     ...(trace.metadata?.failed === true ? { failed: true } : {}),
   };
+  // The checker's verdict survives the allowlist; free text does not. Both are
+  // filtered by shape, so an Anthropic message or a line of model output cannot
+  // reach the store even if a future caller passes one.
+  const checkResults = sanitizeCheckResults(trace.checkResults);
+  const failureReason = sanitizeFailureReason(trace.failureReason);
   return {
     agentId,
     status: trace.status,
@@ -59,6 +65,8 @@ function metadataOnlyTrace(agentId, trace) {
           outputDigestAlgorithm: "sha256",
         }
       : {}),
+    ...(failureReason ? { failureReason } : {}),
+    ...(checkResults.length ? { checkResults } : {}),
     ...(Object.keys(metadata).length ? { metadata } : {}),
   };
 }
@@ -238,10 +246,16 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
           trace = await obs.recordTrace(metadataOnlyTrace(agentId, {
             agentId,
             status: "error",
-            latencyMs: Date.now() - started,
+            latencyMs:
+              typeof e.latencyMs === "number" ? e.latencyMs : Date.now() - started,
             source: invoker.name === "mock" ? "mock" : "real",
             ...(invoker.provider ? { provider: invoker.provider } : {}),
             ...(invoker.modelId ? { modelId: invoker.modelId } : {}),
+            // If the provider already answered, the tokens were billed. Carry
+            // them so an error is still attributable spend, not a silent cost.
+            ...(e.usage || {}),
+            ...(typeof e.costUsd === "number" ? { costUsd: e.costUsd } : {}),
+            failureReason: e.failureCode,
             agentVersion: agent.version,
             ...(artifactDigest
               ? { artifactVersion, artifactDigest, artifactDigestAlgorithm }
@@ -269,13 +283,25 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         throw error;
       }
 
-      // The run succeeded. Tracing it is secondary bookkeeping: if the writer
-      // fails, the output still has to reach the caller as a success.
+      // The invocation returned. A failed mechanical check means it ran and
+      // missed the bar — status "fail", distinct from "error", which means the
+      // run did not happen. Both are visible to getFailingTraces, and "fail"
+      // now carries the check ids the maker reads as a defect signal.
+      const checkResults = Array.isArray(result.checkResults)
+        ? result.checkResults
+        : [];
+      const failedChecks = checkResults.map((r) => r.checkId);
+
+      // Tracing it is secondary bookkeeping: if the writer fails, the output
+      // still has to reach the caller.
       let trace = null;
       try {
         trace = await obs.recordTrace(metadataOnlyTrace(agentId, {
           agentId,
-          status: "ok",
+          status: failedChecks.length ? "fail" : "ok",
+          ...(failedChecks.length
+            ? { failureReason: failedChecks.join(", "), checkResults }
+            : {}),
           latencyMs:
             typeof result.latencyMs === "number"
               ? result.latencyMs
@@ -314,7 +340,18 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       }
       return {
         output: result.output,
-        status: "ok",
+        status: failedChecks.length ? "checks_failed" : "ok",
+        ...(failedChecks.length
+          ? {
+              failedChecks,
+              // Messages are for the reviewer reading this response; only the
+              // structural facts above are persisted on the trace.
+              checkFailures: checkResults.map((r) => ({
+                checkId: r.checkId,
+                message: r.message,
+              })),
+            }
+          : {}),
         via: invoker.name,
         mode: invoker.mode || null,
         agentVersion: agent.version,

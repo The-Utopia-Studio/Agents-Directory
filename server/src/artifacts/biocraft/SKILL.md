@@ -3,7 +3,7 @@ name: biocraft-single-shot
 description: Stateless text-only Biocraft draft from complete source material supplied in one request.
 user-invocable: true
 artifact-mode: single-shot
-artifact_version: biocraft-singleshot-v3
+artifact_version: biocraft-singleshot-v4
 success_criteria:
   - LinkedIn About hook is 200 characters or fewer
   - Full LinkedIn About text is 2,600 characters or fewer
@@ -23,7 +23,7 @@ guardrails:
 checks:
   - about_hook_max_200_characters
   - about_has_no_delimiter_separated_keyword_run
-  - about_final_paragraph_has_cta
+  - about_closing_has_cta
 ---
 
 # Biocraft — Single-Shot Fellow Bio Draft

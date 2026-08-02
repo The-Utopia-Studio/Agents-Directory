@@ -124,11 +124,11 @@ At boot the server computes `artifactDigest` as SHA-256 over the exact
 the UI, and used in the ZIP filename.
 
 The artifact declares its own stable, paste-surviving frontmatter label:
-`artifact_version: biocraft-singleshot-v3`. Runtime parses that label from the
+`artifact_version: biocraft-singleshot-v4`. Runtime parses that label from the
 same bytes; it is not duplicated in configuration. Copy does not prepend or
 alter anything, so re-hashing a pasted copy produces the recorded digest. ZIP
 filenames use the label directly, for example
-`A7-biocraft-singleshot-v3-<digest-prefix>.zip`.
+`A7-biocraft-singleshot-v4-<digest-prefix>.zip`.
 
 The same frontmatter also declares `guardrails`, `success_criteria`, and
 `checks`. The manifest reports the first two, never the mutable directory
@@ -154,9 +154,18 @@ returned against `biocraft-singleshot-v1` are **not comparable** to ratings
 against `biocraft-singleshot-v2`. When any of these bytes change again,
 `artifact_version` must change with them.
 
-### v2 → v3 behaviour change
+### v2 → v3 → v4 behaviour change
 
-`biocraft-singleshot-v3` incorporates Sarah's owner-approved bio method:
+`biocraft-singleshot-v3` incorporated Sarah's owner-approved bio method.
+**v4 renames one check id** in the frontmatter, from
+`about_final_paragraph_has_cta` to `about_closing_has_cta`, because the check
+inspects the closing rather than a single final paragraph. That id is what
+lands in evidence and what the maker reads, so a name describing something else
+is the same failure as any other misleading label. Frontmatter is part of the
+prompt, so the bytes and digest moved with it and the version had to move too.
+Nothing else about the prompt changed between v3 and v4.
+
+`biocraft-singleshot-v4` incorporates Sarah's owner-approved bio method:
 positioning before drafting; 3–5 isolated hook candidates; Context → Proof →
 optional Method body structure; 5–8 keywords integrated into sentences; one
 explicit CTA in the final LinkedIn About paragraph; and a final specificity
@@ -166,9 +175,77 @@ remains prohibited.
 
 The runtime now executes the artifact's three deterministic `checks:` after
 Anthropic returns: hook ≤200, no delimiter-separated keyword run in the About,
-and an explicit CTA in its final paragraph. A failed check returns 502 instead
-of presenting the output as a successful run. Ratings against v2 are **not
-comparable** to ratings against v3.
+and a CTA in its closing. Ratings against v2 are **not comparable** to ratings
+against v3 or v4.
+
+### A failed check is a scored failure, not a refusal
+
+The checks are a **quality** gate; the guardrails are the safety layer. A check
+failure therefore returns the output, marked, rather than throwing it away:
+
+- HTTP **201** with `status: "checks_failed"`, `failedChecks[]`, and the output.
+- The trace is `status: "fail"` — it ran and missed the bar — as distinct from
+  `"error"`, which means it did not run. `getFailingTraces` returns both.
+- The UI re-frames the whole result card (`.run-result-failed`) with a banner
+  naming each failed check. It is never presented as a clean run.
+
+The reasons: Anthropic has already billed by the time a check runs, so a 502
+discarded output we paid for; a reviewer cannot tell a wrong check from a wrong
+draft without seeing the draft; and a returned run is **rateable**, so the miss
+becomes feedback the maker can read.
+
+### The checker's verdict survives the metadata-only rule
+
+`failureReason` used to be stripped in two places — the `metadataOnlyTrace`
+allowlist and the observability adapter's defence-in-depth — because free text
+can carry model output. That also discarded the only failure signal generated
+mechanically, so `collectImprovementEvidence` read `failureReason` off every
+failing trace, always found nothing, and `runImprovement` refused with 422 on
+agents that had genuinely failed runs.
+
+`server/src/core/traceSafety.js` now draws the line at **membership, not
+shape**. `KNOWN_CHECK_IDS` and `KNOWN_FAILURE_CODES` are the complete
+vocabulary a trace may use; an unregistered token rejects the whole string
+rather than passing because it looks like an id. A pattern such as
+`/^[a-z0-9_]+$/` would only prove a value *looks* right, and shape checks are
+how content eventually reaches a layer built to exclude it — a future caller
+deriving a token from model output would sail through. Adding a check means
+adding its id here deliberately, and a test asserts `KNOWN_CHECK_IDS` never
+drifts from `RUNTIME_CHECKS`.
+
+Alongside the id, a trace may carry numeric/boolean facts per failed check:
+paragraph counts, character lengths, whether the section was found, and which
+of the CTA detectors fired. It may never carry a matched substring or excerpt;
+`sanitizeCheckResults` drops unknown keys rather than trusting them. Both write
+paths use the same filter.
+
+### CTA detection is three signals, not a phrase list
+
+A fixed phrase list rejected valid closings ("Available for advisory work",
+"Book a call", "For speaking enquiries, email hello@…", "Currently taking on
+new projects"), and a check that fails good output trains reviewers to ignore
+it. The check now passes if **any one** of three independent signals fires over
+the **trailing two paragraphs** — Sarah's "one or two final lines". The window
+is capped there and never grows: an expand-until-N-characters rule would
+swallow a short About whole and pass a bio whose CTA sits mid-text, which is
+the opposite of what the check is for.
+
+1. **Contact channel** — an email, URL, or handle. Pure pattern.
+2. **Imperative opener** — sentence-initial contact verb. Positional, so "Book
+   a call", "Book a slot", and "Book time with me" all fire on one rule.
+3. **Invitation frame** — the remaining lexical branch, bounded by the
+   artifact's own wording: "what the fellow is open to, or how to reach out".
+
+A closing where none of the three fire still fails, which is the v2 regression
+Sarah caught. The check id is `about_closing_has_cta`, named for the window it
+actually inspects.
+
+**Read the recorded booleans as detector state, not as a verdict.** Three
+`false` values mean no detector fired — which is consistent with the model
+omitting the CTA *and* with a valid CTA the detectors do not recognise. They
+are the best diagnostic available and worth keeping, but neither the failure
+message nor the run banner asserts omission from them, and neither should any
+future evidence text.
 
 The directory record mirrors the artifact's four success criteria and ten
 guardrails for display. Server seed refreshes those fields on boot, and the

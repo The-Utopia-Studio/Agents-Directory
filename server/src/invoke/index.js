@@ -202,39 +202,10 @@ export function runtimeInvoker(config = {}) {
           status: 502,
         });
       }
-      const output = (payload.content || [])
-        .filter((block) => block.type === "text")
-        .map((block) => block.text)
-        .join("\n")
-        .trim();
-      if (!output) {
-        throw Object.assign(
-          new Error("Anthropic Messages API returned no text output"),
-          { status: 502 },
-        );
-      }
-      const checkFailures = validateRuntimeArtifactOutput(agent.id, output);
-      if (checkFailures.length) {
-        throw Object.assign(
-          new Error(
-            `Runtime output failed mechanical checks: ${checkFailures.join("; ")}`,
-          ),
-          { status: 502, runtimeSafe: true },
-        );
-      }
-
-      return {
-        output,
-        artifactDigest:
-          getRuntimeArtifactDescriptor(agent.id)?.artifactDigest || undefined,
-        artifactDigestAlgorithm:
-          getRuntimeArtifactDescriptor(agent.id)?.artifactDigestAlgorithm ||
-          undefined,
-        artifactVersion:
-          getRuntimeArtifactDescriptor(agent.id)?.artifactVersion || undefined,
-        provider: "anthropic",
-        modelId: payload.model || model,
-        latencyMs,
+      // Anthropic has already billed by this point, so every downstream exit
+      // carries usage — a failure whose spend cannot be attributed is a hole
+      // in the cost record, not just a missing diagnostic.
+      const usage = {
         ...(typeof payload.usage?.input_tokens === "number"
           ? { inputTokens: payload.usage.input_tokens }
           : {}),
@@ -248,6 +219,44 @@ export function runtimeInvoker(config = {}) {
                 payload.usage.input_tokens + payload.usage.output_tokens,
             }
           : {}),
+      };
+
+      const output = (payload.content || [])
+        .filter((block) => block.type === "text")
+        .map((block) => block.text)
+        .join("\n")
+        .trim();
+      if (!output) {
+        throw Object.assign(
+          new Error("Anthropic Messages API returned no text output"),
+          { status: 502, failureCode: "empty_output", usage, latencyMs },
+        );
+      }
+
+      // A failed check is a quality miss, not a safety stop: the guardrails are
+      // the safety layer. Returning the output marked failed keeps the tokens
+      // we already paid for, lets a reviewer see whether the check or the model
+      // was wrong, and produces a rateable run instead of a dead error.
+      const checkResults = validateRuntimeArtifactOutput(agent.id, output);
+
+      return {
+        output,
+        ...(checkResults.length ? { checkResults } : {}),
+        artifactDigest:
+          getRuntimeArtifactDescriptor(agent.id)?.artifactDigest || undefined,
+        artifactDigestAlgorithm:
+          getRuntimeArtifactDescriptor(agent.id)?.artifactDigestAlgorithm ||
+          undefined,
+        artifactVersion:
+          getRuntimeArtifactDescriptor(agent.id)?.artifactVersion || undefined,
+        provider: "anthropic",
+        modelId: payload.model || model,
+        latencyMs,
+        // TODO: costUsd is never calculated here, so no run — passed or failed
+        // — carries attributable spend. Token counts are recorded; converting
+        // them to cost needs per-model pricing that this adapter does not have.
+        // Until that exists, treat cost-per-outcome as unimplemented, not zero.
+        ...usage,
       };
     },
   };
