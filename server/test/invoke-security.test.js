@@ -311,7 +311,7 @@ test("single-shot inputs resolve by contract alias, not by editable record label
   );
 });
 
-test("Biocraft v3 mechanical checks reject hook, keyword-run, and CTA regressions", () => {
+test("Biocraft mechanical checks reject hook, keyword-run, and CTA regressions", () => {
   assert.deepEqual(
     validateRuntimeArtifactOutput("A7", VALID_BIOCRAFT_OUTPUT),
     [],
@@ -356,6 +356,27 @@ test("Biocraft v3 mechanical checks reject hook, keyword-run, and CTA regression
   assert.equal(ctaFailure.hasImperativeOpener, false);
   assert.equal(ctaFailure.hasInvitationFrame, false);
   assert.ok(ctaFailure.windowParagraphs >= 2);
+});
+
+// Spoken intro and headline still have zero mechanical coverage under v4.
+// Finding 3 (widen scope + rename About-only ids + digest bump) is deferred to
+// v5 with the queued merge re-import — not half-landed here, because an
+// `about_*` id that fires outside the About would misdescribe its own evidence.
+test("relocating a defect out of the About currently escapes every check", () => {
+  for (const line of [
+    "Test Fellow builds grounded workflow systems for venture teams.",
+    "Agentic workflow builder for venture teams",
+  ]) {
+    const relocated = VALID_BIOCRAFT_OUTPUT.replace(
+      line,
+      "n8n · AI automation · Agentic systems · LLMs",
+    );
+    assert.deepEqual(
+      validateRuntimeArtifactOutput("A7", relocated),
+      [],
+      "no declared check reads outside the LinkedIn About",
+    );
+  }
 });
 
 test("the CTA check accepts real CTAs that a phrase list rejected", () => {
@@ -1033,8 +1054,13 @@ test("usability modes remain separate from the scalar invocation adapter", async
   assert.match(appSource, /Approval records a review decision only/);
   assert.match(appSource, /changes no prompt, check, runtime, or agent behavior/);
   assert.match(appSource, /A human must make, verify, and commit the artifact edit separately/);
-  assert.match(appSource, /Record approval &rarr; catalog v/);
+  assert.match(appSource, /Record approval → catalog v\$\{bumpVersion\(a\.version\)\}/);
   assert.doesNotMatch(appSource, /Approved → shipped/);
+  // One proposal is one defect, so every decision names the proposal it
+  // resolves rather than clearing whatever happens to be pending.
+  assert.match(appSource, /approveImprovement\('\$\{a\.id\}','\$\{escHtml\(p\.id\|\|""\)\}'\)/);
+  assert.match(appSource, /rejectImprovement\('\$\{a\.id\}','\$\{escHtml\(p\.id\|\|""\)\}'\)/);
+  assert.match(appSource, /separate proposals, one per defect/);
   // A capability request that fails must say so. Blanking the slots renders an
   // agent that offers nothing, identical to an agent that legitimately has
   // nothing, and only a manual API audit tells the two apart.

@@ -57,8 +57,17 @@ export function validateProposal(proposal, improvementEvidence) {
     ...(improvementEvidence?.feedback || []).map((record) => record.id),
   ].filter(Boolean));
 
+  // Exactly one. Approval records a single decision on a proposal, so a
+  // proposal carrying several changes renders them as separable rows a reviewer
+  // cannot separately accept or refuse. One defect per proposal keeps what is
+  // shown and what can be decided the same thing.
   if (!Array.isArray(proposal.changes) || proposal.changes.length === 0) {
-    refuse("changes[] must contain at least one concrete change");
+    refuse("changes[] must contain exactly one concrete change");
+  }
+  if (proposal.changes.length > 1) {
+    refuse(
+      `changes[] must contain exactly one change (one proposal is one defect); got ${proposal.changes.length}. Emit one proposal per defect.`,
+    );
   }
 
   const changes = proposal.changes.map((raw, index) => {

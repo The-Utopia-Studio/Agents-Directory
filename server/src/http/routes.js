@@ -110,4 +110,7 @@ export function registerRoutes(router, svc, engine, config = {}) {
   router.post("/api/agents/:id/improvements/:pid/reject", async ({ params }) =>
     svc.rejectImprovement(params.id, params.pid === "current" ? null : params.pid)
   );
+  router.post("/api/agents/:id/improvements/:pid/reopen", async ({ params }) =>
+    svc.reopenVerifierRejectedImprovement(params.id, params.pid)
+  );
 }

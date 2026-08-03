@@ -4,7 +4,7 @@
 //  good as: GOALS · SKILLS · TOOLS · CONTEXT  (see ai-native framing).
 //  Eval is an append-only HISTORY (not a single field) so fleet health
 //  can be trended, and each agent carries a versioned changelog plus an
-//  optional proposedImprovement — the human-in-the-loop hook that turns
+//  optional proposedImprovements — the human-in-the-loop hook that turns
 //  one-shot builds into an eval → improve → approve loop.
 // ═══════════════════════════════════════════════════════════════════
 
@@ -27,7 +27,7 @@ const SEED_AGENTS=[
       {date:"2026-07-10",status:"Performing well",score:81,notes:"Added 3 few-shot voice examples — About rewrites much closer.",knownIssues:"Struggles with non-English profiles.",by:"Sarah",traceUrl:""}
     ],
     changelog:[{version:"1.2",date:"2026-07-10",note:"Added few-shot voice examples to the prompt."}],
-    proposedImprovement:null},
+    proposedImprovements:[]},
 
   {id:"A2",name:"Bio Generator",tagline:"Creates SEO-optimized LinkedIn bios with CTA language. Tries to learn the fellow's voice over time.",description:"",platform:"Claude",status:"Active",category:"Personal Branding",owner:"Sarah",initials:"SA",model:"Claude Sonnet 4.x",version:"1.0",
     objective:"Produce three on-voice bio options a fellow would ship with light edits, not a rewrite.",
@@ -56,7 +56,7 @@ const SEED_AGENTS=[
       {date:"2026-07-08",status:"Needs improvement",score:58,notes:"CTAs sometimes too aggressive. Voice matching inconsistent without enough examples.",knownIssues:"Tends toward generic corporate language without strong examples.",by:"Sarah",traceUrl:""}
     ],
     changelog:[{version:"1.0",date:"2026-06-30",note:"Initial build."}],
-    proposedImprovement:null},
+    proposedImprovements:[]},
 
   {id:"A3",name:"Post Suggester",tagline:"Scrapes trending topics in a fellow's field and generates draft LinkedIn posts with hooks and CTAs.",description:"",platform:"Manus",status:"Active",category:"Marketing & Content",owner:"James",initials:"JA",model:"—",version:"1.1",
     usabilityModes:["download-install"],
@@ -74,7 +74,7 @@ const SEED_AGENTS=[
       {date:"2026-07-12",status:"Performing well",score:78,notes:"Good at identifying trending angles. Hooks are strong. Some posts need fact-checking.",knownIssues:"Occasionally surfaces outdated trends.",by:"James",traceUrl:""}
     ],
     changelog:[{version:"1.1",date:"2026-07-01",note:"Tightened the trend-recency window."}],
-    proposedImprovement:null},
+    proposedImprovements:[]},
 
   {id:"A4",name:"Marketing Scout",tagline:"Scrapes Slack channels and suggests marketing tasks, topics, and content opportunities for the team.",description:"",platform:"Claude",status:"Experimental",category:"Marketing & Content",owner:"Mo",initials:"MO",model:"Claude Sonnet 4.x",version:"0.3",
     usabilityModes:["download-install"],
@@ -90,7 +90,7 @@ const SEED_AGENTS=[
     accessUrl:"",repoUrl:"",
     evalHistory:[],
     changelog:[{version:"0.3",date:"2026-07-09",note:"Early testing build."}],
-    proposedImprovement:null},
+    proposedImprovements:[]},
 
   {id:"A5",name:"Design Agent",tagline:"Claude + MCP integrations for design-system work — component generation, asset management, and design QA.",description:"",platform:"Claude",status:"Experimental",category:"Design & Product",owner:"Aiden",initials:"AI",model:"Claude Opus 4.x",version:"0.2",
     usabilityModes:["download-install"],
@@ -106,7 +106,7 @@ const SEED_AGENTS=[
     accessUrl:"",repoUrl:"",
     evalHistory:[],
     changelog:[{version:"0.2",date:"2026-07-06",note:"Wiring up Figma + GitHub MCP."}],
-    proposedImprovement:null},
+    proposedImprovements:[]},
 
   {id:"A6",name:"Research Assistant",tagline:"Cursor-based agent for deep research tasks — market analysis, competitive intel, and posting reminders.",description:"",platform:"Cursor",status:"Active",category:"Research & Analysis",owner:"Hager",initials:"HA",model:"—",version:"1.0",
     usabilityModes:["download-install"],
@@ -124,7 +124,7 @@ const SEED_AGENTS=[
       {date:"2026-07-05",status:"Performing well",score:84,notes:"Strong on synthesis. Sometimes misses niche sources.",knownIssues:"Cursor context window can limit very large research scopes.",by:"Hager",traceUrl:""}
     ],
     changelog:[{version:"1.0",date:"2026-06-28",note:"Initial build."}],
-    proposedImprovement:null},
+    proposedImprovements:[]},
 
   {id:"A7",name:"Biocraft single-shot draft",tagline:"A stateless text-only draft mode inspired by /biocraft. It requires all source material up front and has no Chrome or Drive tools.",description:"This is not the full /biocraft agent. It makes one Anthropic call with no conversation state, browser tools, Drive tools, or HTML rendering.",platform:"Claude",status:"Experimental",category:"Personal Branding",owner:"Sarah",initials:"SA",model:"Claude Sonnet 4.6",version:"1.0",
     objective:"Draft a LinkedIn About bio, spoken event introduction, and headline from complete source material supplied in one request.",
@@ -139,7 +139,7 @@ const SEED_AGENTS=[
     skills:["biocraft","personal-branding","copywriting"],tools:[],context:["Complete fellow source material supplied up front"],
     accessUrl:"",repoUrl:"",evalHistory:[],
     changelog:[{version:"1.0",date:"2026-08-01",note:"Stateless single-shot draft mode using a server-owned SKILL.md."}],
-    proposedImprovement:null},
+    proposedImprovements:[]},
 
   // A8 is prepared-handoff: the agent lives in Aiden's repo and runs in Codex.
   // Catalogue entry only — engagement terms are in the server handoff registry.
@@ -156,7 +156,7 @@ const SEED_AGENTS=[
     skills:[],tools:[],context:[],
     accessUrl:"",repoUrl:"https://github.com/aiden150/ux-qa-agent",evalHistory:[],
     changelog:[{version:"0.1.0",date:"2026-08-02",note:"Registered as a prepared handoff against a pinned commit."}],
-    proposedImprovement:null}
+    proposedImprovements:[]}
 ];
 
 const SEED_REQUESTS=[
@@ -179,21 +179,136 @@ function displayedAgents(){
   return agents.map(agent=>governedPilotById.get(agent.id)||agent);
 }
 
+// ── WRITE LOCK (Convex-read view) ──
+// Catalog and hand-entered evaluation writes are refused while this view
+// renders Convex. Railway-only evidence and loop collections remain live.
+// A proposal is the one bounded agent-field exception: it may live temporarily
+// on Railway's agent row, is read back explicitly from Railway, and cannot be
+// approved here because approval bumps the divergent Railway catalog version.
+//
+// catalogSource starts as "pending" so boot cannot write localStorage before
+// the Convex outcome is known. A Safari-only edit must survive long enough to
+// export; seed refreshes and empty-store seeding stay in memory only.
+//   pending → locked (outcome unknown)
+//   convex  → locked (Convex is the displayed catalog)
+//   local   → unlocked (Convex unavailable, unconfigured, or failed)
+let catalogSource="pending";
+const WRITE_LOCK_REASON="Catalog editing moves to Convex in the next phase. Local registration, edits and requests are disabled so they cannot diverge per browser.";
+const WRITE_LOCK_PENDING_REASON="Local writes are paused until the Convex catalog read resolves, so a browser-only edit cannot be overwritten on boot.";
+const EVAL_LOCK_REASON="Manual eval logging stays locked during the pilot because an ungoverned score would affect fleet health and triage without a governed eval case or evidence link.";
+const APPROVAL_LOCK_REASON="Approval stays locked during the pilot because it bumps the Railway catalog version while Convex is the displayed authority. You may reject this reversible loop-service proposal.";
+const AUTOMATION_LIVE_NOTE="Run automations stays available under the catalog lock: the cycle stamps reversible proposals and Railway queue/learnings/loop-run records only. Auto-apply is dead, so it never bumps a catalog version. A separately configured Railway scheduler sits outside this UI lock.";
+function writesLocked(){return catalogSource!=="local"}
+function convexReadActive(){return catalogSource==="convex"}
+function catalogPending(){return catalogSource==="pending"}
+function writeLockReason(){return catalogPending()?WRITE_LOCK_PENDING_REASON:WRITE_LOCK_REASON}
+function setCatalogSource(source){
+  if(source!=="pending"&&source!=="convex"&&source!=="local")return;
+  catalogSource=source;
+}
+// Kept for tests and call sites that still speak in the old boolean.
+function setConvexReadActive(active){setCatalogSource(active===true?"convex":"local")}
+function renderWriteLockBanner(){
+  if(!writesLocked())return"";
+  if(catalogPending()){
+    return `<div class="write-lock-banner"><strong>Waiting for the Convex catalog read.</strong> ${escHtml(WRITE_LOCK_PENDING_REASON)}</div>`;
+  }
+  return `<div class="write-lock-banner"><strong>Catalog is read-only while Convex is the source.</strong> ${escHtml(WRITE_LOCK_REASON)} Runs, trace feedback, loop proposals, queue and learnings remain live in the loop service; proposal approval and manual eval logging remain locked. ${escHtml(AUTOMATION_LIVE_NOTE)}</div>`;
+}
+function lockedControl(label,reason,cls){
+  const classes=cls||"btn";
+  return `<span class="locked-control"><button class="${classes}" disabled aria-disabled="true">${escHtml(label)}</button><span class="locked-control-reason">${escHtml(reason)}</span></span>`;
+}
+function writeActionButton(label,onclick,cls){
+  const classes=`btn${cls?" "+cls:""}`;
+  if(writesLocked())return lockedControl(label,writeLockReason(),classes);
+  return `<button class="${classes}" onclick="${onclick}">${escHtml(label)}</button>`;
+}
+function refuseLockedWrite(){toast(writeLockReason());return false}
+// ── END WRITE LOCK ──
+
+// One proposal is one defect with one change, so the approve/reject decision a
+// reviewer makes matches exactly what the row shows. Records written before the
+// split carry a single `proposedImprovement`; read them as a one-element list.
+function proposalsOf(a){
+  if(!a)return[];
+  if(Array.isArray(a.proposedImprovements))return a.proposedImprovements;
+  return a.proposedImprovement?[a.proposedImprovement]:[];
+}
+function pendingProposalsOf(a){return proposalsOf(a).filter(p=>p&&p.status==="proposed")}
+function autoRejectedProposalsOf(a){return proposalsOf(a).filter(p=>p&&p.status==="rejected"&&p.autoRejection&&p.autoRejection.by==="verifier")}
+
+function applyRailwayProposalOverlay(serviceAgents){
+  if(!convexReadActive()||!Array.isArray(serviceAgents))return false;
+  const byId=new Map(serviceAgents.filter(Boolean).map(agent=>[agent.id,agent]));
+  governedPilotById=new Map([...governedPilotById].map(([id,governed])=>{
+    const railway=byId.get(id);
+    return [id,{
+      ...governed,
+      // Never inherit a browser-local proposal into a governed record. The
+      // panel is either a current loop-service read or absent.
+      proposedImprovements:railway?proposalsOf(railway):[],
+      proposedImprovement:null,
+      latestProposalAttempt:railway?.latestProposalAttempt||null,
+      railwayProposalRead:true,
+    }];
+  }));
+  if(state&&state.agent&&governedPilotById.has(state.agent.id)){
+    state.agent=governedPilotById.get(state.agent.id);
+  }
+  return true;
+}
+async function loadRailwayProposalOverlay({renderAfter=true}={}){
+  if(!convexReadActive()||!(window.DirectoryAPI&&DirectoryAPI.enabled))return false;
+  try{
+    const result=await DirectoryAPI.listAgents();
+    applyRailwayProposalOverlay(result&&result.agents);
+    if(renderAfter)render();
+    return true;
+  }catch(_error){
+    // Convex catalog remains usable. Absence of a successful Railway read must
+    // not be presented as a loop-service proposal.
+    applyRailwayProposalOverlay([]);
+    if(renderAfter)render();
+    return false;
+  }
+}
+function setRailwayProposals(agentId,proposals){
+  const governed=governedPilotById.get(agentId);
+  if(!governed)return false;
+  const updated={...governed,proposedImprovements:Array.isArray(proposals)?proposals:[],proposedImprovement:null,railwayProposalRead:true};
+  governedPilotById.set(agentId,updated);
+  if(state.agent&&state.agent.id===agentId)state.agent=updated;
+  return true;
+}
+
 async function loadGovernedDirectoryPilot(){
-  if(!(window.ConvexDirectory&&ConvexDirectory.enabled))return false;
+  // Unconfigured Convex is a known outcome: unlock the legacy local view. Leaving
+  // catalogSource at "pending" would lock the UI forever with no Convex to resolve.
+  if(!(window.ConvexDirectory&&ConvexDirectory.enabled)){
+    governedPilotById=new Map();
+    setCatalogSource("local");
+    render();
+    return false;
+  }
   try{
     const result=await ConvexDirectory.read(agents);
-    const overlaid=result&&result.succeeded&&Array.isArray(result.agents)?result.agents:agents;
+    const succeeded=Boolean(result&&result.succeeded);
+    const overlaid=succeeded&&Array.isArray(result.agents)?result.agents:agents;
     governedPilotById=new Map(
       overlaid
         .filter(agent=>agent&&agent.governedInConvex===true)
-        .map(agent=>[agent.id,agent]),
+        .map(agent=>[agent.id,{...agent,proposedImprovements:[],proposedImprovement:null,railwayProposalRead:false}]),
     );
+    setCatalogSource(succeeded?"convex":"local");
+    if(succeeded)await loadRailwayProposalOverlay({renderAfter:false});
     render();
-    return Boolean(result&&result.succeeded);
+    return succeeded;
   }catch(_error){
-    // Preserve the complete local directory and make no governance claim.
+    // Preserve the complete local directory, make no governance claim, and
+    // unlock local writes — nothing here is Convex-rendered.
     governedPilotById=new Map();
+    setCatalogSource("local");
     render();
     return false;
   }
@@ -210,41 +325,38 @@ async function loadGovernedDirectoryPilot(){
 // becomes the sole allocator in Phase 5.
 let reservedAgentIds=[];
 
-function persist(){try{localStorage.setItem(STORE_KEY,JSON.stringify({agents,requests,nextAgentNum,nextReqNum,reservedAgentIds}))}catch(e){}}
+// Last line of defence: no code path writes the local store while the catalog
+// source is pending or Convex-backed, so a missed affordance cannot silently
+// create a divergent copy or overwrite a browser-only edit before export.
+function persist(){
+  if(writesLocked())return false;
+  try{localStorage.setItem(STORE_KEY,JSON.stringify({agents,requests,nextAgentNum,nextReqNum,reservedAgentIds}))}catch(e){}
+  return true;
+}
 function hydrate(){
+  // Read-only boot. Never call persist() here: a Safari-only edit must survive
+  // until the Convex outcome is known and the operator can export. Missing A7/A8
+  // cards may appear from seed in memory only; existing local records are left
+  // untouched — no seed "refresh" that would later write over them.
   try{const s=JSON.parse(localStorage.getItem(STORE_KEY));
     if(s&&Array.isArray(s.agents)){
       agents=s.agents;requests=s.requests;nextAgentNum=s.nextAgentNum;nextReqNum=s.nextReqNum;
       reservedAgentIds=Array.isArray(s.reservedAgentIds)?s.reservedAgentIds:[];
-      let changed=false;
-      const seededA7=SEED_AGENTS.find(a=>a.id==="A7"),indexA7=agents.findIndex(a=>a.id==="A7");
-      if(indexA7<0){agents.push(JSON.parse(JSON.stringify(seededA7)));changed=true}
-      else{
-        const prior=agents[indexA7],fields=["name","tagline","description","owner","objective","successCriteria","guardrails","invocation","usabilityModes","when","sop","inputs","outputs","skills","tools","context"];
-        if(fields.some(key=>JSON.stringify(prior[key])!==JSON.stringify(seededA7[key]))){
-          agents[indexA7]={...prior,...Object.fromEntries(fields.map(key=>[key,JSON.parse(JSON.stringify(seededA7[key]))]))};
-          changed=true;
-        }
+      if(!agents.some(a=>a.id==="A7")){
+        const seededA7=SEED_AGENTS.find(a=>a.id==="A7");
+        if(seededA7)agents.push(JSON.parse(JSON.stringify(seededA7)));
       }
-      // A8 is server-owned prepared-handoff. Insert when missing so the catalogue
-      // card and briefing affordance appear; sync display fields when present so
-      // a stale local copy cannot drift from the handoff registry.
-      const seededA8=SEED_AGENTS.find(a=>a.id==="A8"),indexA8=agents.findIndex(a=>a.id==="A8");
-      if(indexA8<0){agents.push(JSON.parse(JSON.stringify(seededA8)));changed=true}
-      else{
-        const prior=agents[indexA8],fields=["name","tagline","description","platform","owner","initials","objective","successCriteria","guardrails","invocation","usabilityModes","when","sop","inputs","outputs","skills","tools","context","repoUrl","version"];
-        if(fields.some(key=>JSON.stringify(prior[key])!==JSON.stringify(seededA8[key]))){
-          agents[indexA8]={...prior,...Object.fromEntries(fields.map(key=>[key,JSON.parse(JSON.stringify(seededA8[key]))]))};
-          changed=true;
-        }
+      if(!agents.some(a=>a.id==="A8")){
+        const seededA8=SEED_AGENTS.find(a=>a.id==="A8");
+        if(seededA8)agents.push(JSON.parse(JSON.stringify(seededA8)));
       }
-      nextAgentNum=Number(nextAgentNum)||1;if(changed)persist();return
+      nextAgentNum=Number(nextAgentNum)||1;
+      return;
     }
   }catch(e){}
   agents=JSON.parse(JSON.stringify(SEED_AGENTS));
   requests=JSON.parse(JSON.stringify(SEED_REQUESTS));
   nextAgentNum=agents.length+1;nextReqNum=requests.length+1;
-  persist();
 }
 function agentIdNumber(id){const m=/^A(\d+)$/.exec(String(id||""));return m?Number(m[1]):0}
 function highestAgentNumber(ids){return ids.reduce((max,id)=>Math.max(max,agentIdNumber(id)),0)}
@@ -264,11 +376,23 @@ async function refreshReservedAgentIds(){
   try{
     const r=await DirectoryAPI.listAgents();
     reservedAgentIds=((r&&r.agents)||[]).map(a=>a&&a.id).filter(Boolean);
+    // persist() is a no-op while writes are locked; minting is disabled then too.
     persist();
     return true;
   }catch(e){return false}
 }
-function resetData(){if(!confirm("Reset the directory to seed data? Local changes will be lost."))return;localStorage.removeItem(STORE_KEY);governedPilotById=new Map();hydrate();state.view="list";render();loadGovernedDirectoryPilot();toast("Reset to seed data")}
+function resetData(){
+  if(writesLocked())return refuseLockedWrite();
+  if(!confirm("Reset the directory to seed data? Local changes will be lost."))return;
+  localStorage.removeItem(STORE_KEY);
+  governedPilotById=new Map();
+  setCatalogSource("pending");
+  hydrate();
+  state.view="list";
+  render();
+  loadGovernedDirectoryPilot();
+  toast("Reset to seed data");
+}
 
 const CATEGORIES=["Personal Branding","Marketing & Content","Design & Product","Research & Analysis","Operations & Workflow","Investment & DD","Other"];
 const PLATFORMS=["Claude","Cursor","Manus","ChatGPT","n8n","Custom","Other"];
@@ -318,7 +442,7 @@ function fleetHealth(){
   const avg=scores.length?Math.round(scores.reduce((x,y)=>x+y,0)/scores.length):0;
   const coverage=agents.length?Math.round(evaluated.length/agents.length*100):0;
   const needsReview=agents.filter(a=>{const e=latestEval(a);if(!e)return true;return e.status==="Needs improvement"||e.score<70||daysSince(e.date)>30}).length;
-  const proposals=agents.filter(a=>a.proposedImprovement&&a.proposedImprovement.status==="proposed").length;
+  const proposals=agents.reduce((n,a)=>n+pendingProposalsOf(a).length,0);
   return{avg,coverage,needsReview,proposals,evaluated:evaluated.length,total:agents.length};
 }
 
@@ -466,6 +590,9 @@ function triageFormHtml(req){
 
 // ── MODAL MANAGEMENT ──
 function openModal(type,data){
+  // Every modal in this app is a write form. Refuse to present one at all
+  // rather than render inputs whose save will be rejected.
+  if(writesLocked())return refuseLockedWrite();
   const root=document.getElementById("modal-root");
   let html="";
   if(type==="addAgent") html=agentFormHtml(data||null);
@@ -508,6 +635,7 @@ function readAgentForm(){
 function validAgent(f){return f.name&&f.tagline&&f.objective&&f.when&&f.sop&&f.category&&f.owner&&Array.isArray(f.usabilityModes)&&f.usabilityModes.length>0}
 
 async function saveNewAgent(){
+  if(writesLocked())return refuseLockedWrite();
   const f=readAgentForm();
   if(!validAgent(f)){toast("Fill in all required fields and select a usability mode");return}
   // Re-read the service's known ids immediately before minting. A set fetched
@@ -520,13 +648,14 @@ async function saveNewAgent(){
     return;
   }
   const id=mintAgentId();
-  agents.push(Object.assign({id,initials:getInitials(f.owner),version:f.version||"1.0",evalHistory:[],changelog:[{version:f.version||"1.0",date:new Date().toISOString().split("T")[0],note:"Registered in directory."}],proposedImprovement:null},f));
+  agents.push(Object.assign({id,initials:getInitials(f.owner),version:f.version||"1.0",evalHistory:[],changelog:[{version:f.version||"1.0",date:new Date().toISOString().split("T")[0],note:"Registered in directory."}],proposedImprovements:[]},f));
   if(state.pendingRequestId){const r=requests.find(x=>x.id===state.pendingRequestId);if(r){r.status="Shipped";r.shippedAgentId=id;}state.pendingRequestId=null}
   persist();closeModal();toast("Agent added: "+f.name);
   render();
 }
 
 function saveEditAgent(id){
+  if(writesLocked())return refuseLockedWrite();
   const a=agents.find(x=>x.id===id);if(!a)return;
   const f=readAgentForm();
   if(!validAgent(f)){toast("Fill in all required fields and select a usability mode");return}
@@ -537,6 +666,7 @@ function saveEditAgent(id){
 }
 
 function saveNewRequest(){
+  if(writesLocked())return refuseLockedWrite();
   const title=document.getElementById("r-title").value.trim();
   const desc=document.getElementById("r-desc").value.trim();
   const name=document.getElementById("r-name").value.trim();
@@ -546,6 +676,7 @@ function saveNewRequest(){
 }
 
 function saveEval(id){
+  if(writesLocked())return refuseLockedWrite();
   const a=agents.find(x=>x.id===id);if(!a)return;
   const notes=document.getElementById("e-notes").value.trim();
   if(!notes){toast("Add eval notes");return}
@@ -558,6 +689,7 @@ function saveEval(id){
 }
 
 function saveTriage(id){
+  if(writesLocked())return refuseLockedWrite();
   const r=requests.find(x=>x.id===id);if(!r)return;
   r.status=document.getElementById("t-status").value;
   r.priority=document.getElementById("t-priority").value;
@@ -568,6 +700,7 @@ function saveTriage(id){
 
 // Requests → Agents: open a prefilled Add Agent form, mark request Shipped on save
 function shipRequestAsAgent(id){
+  if(writesLocked())return refuseLockedWrite();
   const r=requests.find(x=>x.id===id);if(!r)return;
   state.pendingRequestId=id;
   openModal("addAgent",{name:r.title.replace(/ Agent$/,""),tagline:r.desc.slice(0,120),description:r.desc,platform:"Claude",status:"Experimental",category:"",owner:r.assignee||"",model:"",version:"1.0",objective:"",successCriteria:[],guardrails:[],when:"",sop:"",inputs:[],outputs:[],skills:[],tools:[],context:[],accessUrl:"",repoUrl:""});
@@ -586,35 +719,77 @@ async function proposeImprovement(id){
     return;
   }
   try{
-    const p=await DirectoryAPI.runImprovement(id);
-    a.proposedImprovement={source:p.source,date:p.date,status:p.status,summary:p.summary,detail:p.detail,changes:p.changes,
-      targetArtifactVersion:p.targetArtifactVersion,targetArtifactDigest:p.targetArtifactDigest,
-      targetAgentVersion:p.targetAgentVersion};
-    persist();state.agent=a;render();toast("Improvement proposed by "+p.source+" — awaiting review");
+    const result=await DirectoryAPI.runImprovement(id);
+    const proposals=(Array.isArray(result)?result:[result]).filter(Boolean).map(p=>({...p}));
+    if(!proposals.length){toast("The optimizer returned no proposal");return}
+    const count=proposals.length===1?"1 proposal":`${proposals.length} proposals`;
+    if(writesLocked()&&setRailwayProposals(id,proposals)){
+      render();
+      toast(`${count} created from Railway evidence, one per defect. Catalog approval remains locked during the Convex pilot.`);
+      return;
+    }
+    a.proposedImprovements=proposals;a.proposedImprovement=null;
+    persist();state.agent=a;render();toast(`${count} by ${proposals[0].source} — each awaiting its own review`);
   }catch(e){
     // Refusals are the expected result with no evidence; show the reason
     // verbatim so it names what is missing.
     toast(String(e&&e.message?e.message:e));
   }
 }
-async function approveImprovement(id){
-  const a=agents.find(x=>x.id===id);if(!a||!a.proposedImprovement)return;
+// Decisions are per proposal, so every caller names the one it acted on. The
+// remaining proposals stay pending rather than being cleared by a decision
+// nobody made about them.
+async function approveImprovement(id,proposalId){
+  if(writesLocked())return refuseLockedWrite();
+  const a=agents.find(x=>x.id===id);if(!a)return;
+  const pending=pendingProposalsOf(a);
+  const target=pending.find(p=>p.id===proposalId)||(pending.length===1?pending[0]:null);
+  if(!target)return;
+  const remaining=proposalsOf(a).filter(p=>p!==target);
   if(window.DirectoryAPI&&DirectoryAPI.enabled){
     try{
-      const r=await DirectoryAPI.approve(id);
-      a.version=r.version;if(r.agent&&r.agent.changelog)a.changelog=r.agent.changelog;a.proposedImprovement=null;
+      const r=await DirectoryAPI.approve(id,target.id);
+      a.version=r.version;if(r.agent&&r.agent.changelog)a.changelog=r.agent.changelog;
+      a.proposedImprovements=remaining;a.proposedImprovement=null;
       persist();state.agent=a;render();toast("Review decision recorded · catalog label v"+r.version+" · agent behavior unchanged");return;
     }catch(e){toast("Approval failed — check connection and retry");return}
   }
   const nv=bumpVersion(a.version);
-  a.changelog.push({version:nv,date:new Date().toISOString().split("T")[0],note:"Approved improvement: "+a.proposedImprovement.summary});
-  a.version=nv;a.proposedImprovement=null;
+  a.changelog.push({version:nv,date:new Date().toISOString().split("T")[0],note:"Approved improvement: "+target.summary});
+  a.version=nv;a.proposedImprovements=remaining;a.proposedImprovement=null;
   persist();state.agent=a;render();toast("Review decision recorded · catalog label v"+nv+" · agent behavior unchanged");
 }
-async function rejectImprovement(id){
-  const a=agents.find(x=>x.id===id);if(!a||!a.proposedImprovement)return;
-  if(window.DirectoryAPI&&DirectoryAPI.enabled){try{await DirectoryAPI.reject(id)}catch(e){}}
-  a.proposedImprovement=null;persist();state.agent=a;render();toast("Improvement rejected");
+async function rejectImprovement(id,proposalId){
+  const a=agents.find(x=>x.id===id);if(!a)return;
+  const displayed=governedPilotById.get(id)||a;
+  const pending=pendingProposalsOf(displayed);
+  const target=pending.find(p=>p.id===proposalId)||(pending.length===1?pending[0]:null);
+  if(!target)return;
+  if(window.DirectoryAPI&&DirectoryAPI.enabled){
+    try{await DirectoryAPI.reject(id,target.id)}
+    catch(e){toast("Reject failed — the loop-service proposal was not changed");return}
+  }
+  const remaining=proposalsOf(displayed).filter(p=>p!==target);
+  if(writesLocked()&&setRailwayProposals(id,remaining)){
+    render();toast("Loop-service proposal rejected and cleared from Railway");return;
+  }
+  a.proposedImprovements=remaining;a.proposedImprovement=null;
+  persist();state.agent=a;render();toast("Improvement rejected");
+}
+async function reopenVerifierRejectedImprovement(id,proposalId){
+  if(!(window.DirectoryAPI&&DirectoryAPI.enabled)){toast("Cannot reopen — the loop service is unavailable");return}
+  try{
+    const reopened=await DirectoryAPI.reopenRejected(id,proposalId);
+    const displayed=governedPilotById.get(id);
+    if(displayed){
+      const proposals=proposalsOf(displayed).map(p=>p&&p.id===reopened.id?reopened:p);
+      setRailwayProposals(id,proposals);
+      const updated=governedPilotById.get(id);
+      if(updated)governedPilotById.set(id,{...updated,latestProposalAttempt:{outcome:"reopened-for-human-review",recordedAt:reopened.reopenedForHumanReviewAt,proposalId:reopened.id}});
+      render();toast("Verifier rejection reopened for human review");return;
+    }
+    toast("Reopened in the loop service — refresh this agent to view it");
+  }catch(e){toast(`Could not reopen: ${String(e&&e.message||e)}`)}
 }
 
 // ── RENDER ──
@@ -714,19 +889,20 @@ function renderAgentsList(){
     return true;
   });
   return `
-    <div class="section-header"><h2>AGENTS</h2><div class="actions"><button class="btn" onclick="prepareMigrationReview(this)">Migration readiness</button><button class="btn" onclick="openModal('request')">Request an Agent</button><button class="btn btn-primary" onclick="openModal('addAgent')">+ Add agent</button></div></div>
+    <div class="section-header"><h2>AGENTS</h2><div class="actions"><button class="btn" onclick="prepareMigrationReview(this)">Migration readiness</button>${writeActionButton("Request an Agent","openModal('request')")}${writeActionButton("+ Add agent","openModal('addAgent')","btn-primary")}</div></div>
     ${renderSubTabs()}
+    ${renderWriteLockBanner()}
     ${renderMigrationReadiness()}
     ${renderHealthStrip()}
     <div id="automations" class="automations"></div>
-    <p class="count-line">${filtered.length} agent${filtered.length!==1?"s":""} across the team. Click one to see its goals, skills, tools, context, and eval history. <a class="reset-link" onclick="resetData()">reset demo data</a></p>
+    <p class="count-line">${filtered.length} agent${filtered.length!==1?"s":""} across the team. Click one to see its goals, skills, tools, context, and eval history. ${writesLocked()?`<span class="locked-inline-reason">Reset disabled: ${escHtml(writeLockReason())}</span>`:`<a class="reset-link" onclick="resetData()">reset demo data</a>`}</p>
     <div class="filters">
       ${cats.map(c=>`<button class="filter-chip ${state.catFilter===c?"active":""}" onclick="setFilter('cat','${escHtml(c)}')">${escHtml(c)}</button>`).join("")}
       <div class="filter-sep"></div>
       ${stats.map(s=>`<button class="filter-chip ${state.statusFilter===s?"active":""}" onclick="setFilter('status','${escHtml(s)}')">${escHtml(s)}</button>`).join("")}
     </div>
     <div class="card-grid">${filtered.map(a=>{
-      const e=latestEval(a);const prop=a.proposedImprovement&&a.proposedImprovement.status==="proposed";
+      const e=latestEval(a);const prop=pendingProposalsOf(a).length>0;
       return `
       <div class="card" onclick="openDetail('${a.id}')">
         <div class="card-top"><span class="card-id">${a.id} · v${escHtml(a.version||"1.0")}</span><span class="pill ${statusClass(a.status)}"><span class="dot"></span>${escHtml(a.status)}</span></div>
@@ -747,7 +923,8 @@ function renderRequests(){
   function grp(name,items){
     if(!items.length)return"";
     return `<div class="status-group"><div class="status-group-title">${name}<span class="group-count">${items.length}</span></div><div class="request-list">${items.map(r=>`
-      <div class="request-card" onclick="openModal('triage',requests.find(x=>x.id==='${r.id}'))">
+      <div class="request-card${writesLocked()?" request-card-locked":""}" ${writesLocked()?"":`onclick="openModal('triage',requests.find(x=>x.id==='${r.id}'))"`}>
+${writesLocked()?`<div class="locked-inline-reason">${escHtml(writeLockReason())}</div>`:""}
         <div class="request-left"><h3>${escHtml(r.title)}</h3><p>${escHtml(r.desc)}</p>${r.shippedAgentId?`<span class="shipped-tag">→ shipped as ${escHtml(r.shippedAgentId)}</span>`:""}</div>
         <div class="request-right">
           <span class="pill ${reqStatusClass(r.status)}"><span class="dot"></span>${escHtml(r.status)}</span>
@@ -759,10 +936,11 @@ function renderRequests(){
   const active=["In Progress","Approved","Requested"].map(g=>grp(g,groups[g])).join("");
   const done=["Shipped","Declined"].filter(g=>groups[g].length).map(g=>grp(g,groups[g])).join("");
   return `
-    <div class="section-header"><h2>AGENTS</h2><div class="actions"><button class="btn" onclick="prepareMigrationReview(this)">Migration readiness</button><button class="btn btn-primary" onclick="openModal('request')">+ New request</button><button class="btn" onclick="openModal('addAgent')">Add agent</button></div></div>
+    <div class="section-header"><h2>AGENTS</h2><div class="actions"><button class="btn" onclick="prepareMigrationReview(this)">Migration readiness</button>${writeActionButton("+ New request","openModal('request')","btn-primary")}${writeActionButton("Add agent","openModal('addAgent')")}</div></div>
     ${renderSubTabs()}
+    ${renderWriteLockBanner()}
     ${renderMigrationReadiness()}
-    <p class="count-line">Agent requests from the team. Click a request to triage it — or ship an approved one straight into the catalog.</p>
+    <p class="count-line">${writesLocked()?`Requests are visible but triage and shipping are locked. ${escHtml(writeLockReason())}`:"Agent requests from the team. Click a request to triage it — or ship an approved one straight into the catalog."}</p>
     ${active}
     ${done?`<div class="resolved-divider"><div class="resolved-title">RESOLVED</div>${done}</div>`:""}`;
 }
@@ -770,22 +948,24 @@ function renderRequests(){
 function pillarList(items,empty){return items&&items.length?items.map(i=>`<div class="item">&bull; ${escHtml(i)}</div>`).join(""):`<div class="item empty">${empty}</div>`}
 function chips(items){return items&&items.length?items.map(i=>`<span class="chip">${escHtml(i)}</span>`).join(""):'<span class="chip empty">None specified</span>'}
 function isGovernedPilot(a){return a&&a.governedInConvex===true}
+function isReadOnlyRecord(a){return writesLocked()||isGovernedPilot(a)}
 function governedBadge(a){return isGovernedPilot(a)?'<span class="pill pill-blue pill-xs governed-badge">Governed in Convex</span>':""}
 function renderGovernedPilotNotice(a){
-  if(!isGovernedPilot(a))return"";
-  return `<div class="governed-pilot-notice">This governed record is read-only during the Convex pilot. Editing, evaluation and proposals will move to Convex in a later phase.</div>`;
+  if(isGovernedPilot(a))return `<div class="governed-pilot-notice"><strong>Convex governs this catalog record.</strong> Editing, approval and manual eval logging are locked during the pilot. Runs, feedback and reversible proposals continue in the loop service and are labelled separately.</div>`;
+  if(writesLocked())return `<div class="governed-pilot-notice">${escHtml(writeLockReason())}</div>`;
+  return "";
 }
 function renderDetailEditControl(a){
-  if(isGovernedPilot(a))return"";
+  if(isReadOnlyRecord(a))return lockedControl("Edit",WRITE_LOCK_REASON,"btn btn-sm");
   return `<button class="btn btn-sm" onclick="openModal('editAgent',agents.find(x=>x.id==='${a.id}'))">Edit</button>`;
 }
 function renderEvalTitleActions(a){
-  if(isGovernedPilot(a))return"";
+  if(isReadOnlyRecord(a))return `<span class="eval-title-actions"><button class="btn-ghost btn-sm" onclick="proposeImprovement('${a.id}')">Propose improvement</button>${lockedControl("Log eval",EVAL_LOCK_REASON,"btn-ghost btn-sm")}</span>`;
   return `<span class="eval-title-actions"><button class="btn-ghost btn-sm" onclick="proposeImprovement('${a.id}')">Propose improvement</button><button class="btn-ghost btn-sm" onclick="openModal('eval',agents.find(x=>x.id==='${a.id}'))">Log eval</button></span>`;
 }
 function renderEmptyEval(a){
-  if(isGovernedPilot(a)){
-    return `<div class="empty-eval"><p>This agent hasn't been evaluated yet.</p></div>`;
+  if(isReadOnlyRecord(a)){
+    return `<div class="empty-eval"><p>This agent hasn't been evaluated yet.</p><div class="locked-inline-reason">${escHtml(EVAL_LOCK_REASON)}</div></div>`;
   }
   return `<div class="empty-eval"><p>This agent hasn't been evaluated yet.</p><div class="cta" onclick="openModal('eval',agents.find(x=>x.id==='${a.id}'))">Log the first evaluation &rarr;</div></div>`;
 }
@@ -805,10 +985,35 @@ function renderGovernedIdentity(a){
   </div>`;
 }
 
+function renderProposalAttempt(a){
+  const attempt=a&&a.latestProposalAttempt;
+  if(!attempt)return"";
+  if(attempt.outcome==="maker-refused-no-evidence")return `<div class="proposal-attempt proposal-attempt-refused"><strong>Maker produced no proposal.</strong> It refused because no eligible defect evidence was available (${escHtml(String(attempt.failingTraces||0))} failing trace(s), ${escHtml(String(attempt.feedbackWithNotes||0))} feedback note(s)).</div>`;
+  if(attempt.outcome==="verifier-rejected")return `<div class="proposal-attempt proposal-attempt-rejected"><strong>Verifier rejected a proposal.</strong> The retained proposal below includes its checker verdict and can be reopened for human review.</div>`;
+  if(attempt.outcome==="reopened-for-human-review")return `<div class="proposal-attempt"><strong>Proposal reopened for human review.</strong> The verifier's earlier rejection remains on the proposal as context.</div>`;
+  return"";
+}
+function renderProposalCard(a,p,index,total){
+  const approveLabel=`Record approval → catalog v${bumpVersion(a.version)}`;
+  const hasChange=Array.isArray(p.changes)&&p.changes.length===1;
+  const autoRejected=p.status==="rejected"&&p.autoRejection&&p.autoRejection.by==="verifier";
+  return `<div class="loop-card${autoRejected?" loop-card-auto-rejected":""}">
+    <div class="loop-head"><span class="loop-badge">● ${autoRejected?"AUTO-REJECTED BY VERIFIER":"IMPROVEMENT PROPOSED"}${total>1?` · ${index+1} of ${total}`:""}</span><span class="loop-src">${escHtml(p.source)} · ${formatDate(p.date)}</span></div>
+    ${isGovernedPilot(a)?`<div class="railway-proposal-source"><strong>Loop-service proposal · Railway file store · pilot-only.</strong> This reversible proposal is read from Railway evidence and is not governed Convex catalog state.</div>`:""}
+    <div class="loop-summary">${escHtml(p.summary)}</div>
+    <div class="loop-detail">${escHtml(p.detail)}</div>
+    ${renderProposalChanges(p.changes)}
+    ${p.verdict?`<div class="loop-verdict"><span class="pill pill-xs ${p.verdict.verdict==="ship"?"pill-green":p.verdict.verdict==="reject"?"pill-amber":"pill-blue"}">checker: ${escHtml(p.verdict.verdict)} · ${p.verdict.confidence}</span>${(p.verdict.reasons||[]).length?`<span class="loop-verdict-why">${escHtml(p.verdict.reasons[0])}</span>`:""}</div>`:""}
+    ${p.targetArtifactVersion?`<div class="loop-target">Derived against artifact <strong>${escHtml(p.targetArtifactVersion)}</strong>${p.targetArtifactDigest?` · <code>${escHtml(String(p.targetArtifactDigest).slice(0,7))}</code>`:""}.</div>`:""}
+    <div class="loop-approval-notice"><strong>Approval records a review decision only.</strong> It bumps the catalog label and clears this proposal, but changes no prompt, check, runtime, or agent behavior. A human must make, verify, and commit the artifact edit separately.</div>
+    <div class="loop-actions">${autoRejected?`<button class="btn btn-sm" onclick="reopenVerifierRejectedImprovement('${a.id}','${escHtml(p.id||"")}')">Re-open for human review</button>`:`${isReadOnlyRecord(a)?lockedControl(approveLabel,APPROVAL_LOCK_REASON,"btn btn-primary btn-sm"):`<button class="btn btn-primary btn-sm" onclick="approveImprovement('${a.id}','${escHtml(p.id||"")}')" ${hasChange?"":"disabled"}>${escHtml(approveLabel)}</button>`}<button class="btn btn-sm" onclick="rejectImprovement('${a.id}','${escHtml(p.id||"")}')">Reject proposal</button>`}</div>
+  </div>`;
+}
+
 function renderDetail(a){
   const sopLines=(a.sop||"").split("\n").filter(Boolean);
   const e=latestEval(a);
-  const prop=!isGovernedPilot(a)&&a.proposedImprovement&&a.proposedImprovement.status==="proposed";
+  const prop=pendingProposalsOf(a),autoRejected=autoRejectedProposalsOf(a);
   return `<div class="detail">
     <button class="back-btn" onclick="goBack()"><span>&lsaquo;</span> Back to Directory</button>
     <div class="detail-header">
@@ -838,16 +1043,9 @@ function renderDetail(a){
       <div id="run-panel" class="run-panel"></div>
     </div>
 
-    ${prop?`<div class="loop-card">
-      <div class="loop-head"><span class="loop-badge">● IMPROVEMENT PROPOSED</span><span class="loop-src">${escHtml(a.proposedImprovement.source)} · ${formatDate(a.proposedImprovement.date)}</span></div>
-      <div class="loop-summary">${escHtml(a.proposedImprovement.summary)}</div>
-      <div class="loop-detail">${escHtml(a.proposedImprovement.detail)}</div>
-      ${renderProposalChanges(a.proposedImprovement.changes)}
-      ${a.proposedImprovement.verdict?`<div class="loop-verdict"><span class="pill pill-xs ${a.proposedImprovement.verdict.verdict==="ship"?"pill-green":a.proposedImprovement.verdict.verdict==="reject"?"pill-amber":"pill-blue"}">checker: ${escHtml(a.proposedImprovement.verdict.verdict)} · ${a.proposedImprovement.verdict.confidence}</span>${(a.proposedImprovement.verdict.reasons||[]).length?`<span class="loop-verdict-why">${escHtml(a.proposedImprovement.verdict.reasons[0])}</span>`:""}</div>`:""}
-      ${a.proposedImprovement.targetArtifactVersion?`<div class="loop-target">Derived against artifact <strong>${escHtml(a.proposedImprovement.targetArtifactVersion)}</strong>${a.proposedImprovement.targetArtifactDigest?` · <code>${escHtml(String(a.proposedImprovement.targetArtifactDigest).slice(0,7))}</code>`:""}.</div>`:""}
-      <div class="loop-approval-notice"><strong>Approval records a review decision only.</strong> It bumps the catalog label and clears this proposal, but changes no prompt, check, runtime, or agent behavior. A human must make, verify, and commit the artifact edit separately.</div>
-      <div class="loop-actions"><button class="btn btn-primary btn-sm" onclick="approveImprovement('${a.id}')" ${Array.isArray(a.proposedImprovement.changes)&&a.proposedImprovement.changes.length?"":"disabled"}>Record approval &rarr; catalog v${bumpVersion(a.version)}</button><button class="btn btn-sm" onclick="rejectImprovement('${a.id}')">Reject proposal</button></div>
-    </div>`:""}
+    ${renderProposalAttempt(a)}
+    ${prop.length?`${prop.length>1?`<div class="loop-set-note">${prop.length} separate proposals, one per defect. Each is approved or rejected on its own; deciding one leaves the others pending.</div>`:""}${prop.map((p,i)=>renderProposalCard(a,p,i,prop.length)).join("")}`:""}
+    ${autoRejected.length?`<div class="loop-set-note">Verifier-rejected proposals are retained below. They are checker opinions, not human decisions.</div>${autoRejected.map((p,i)=>renderProposalCard(a,p,i,autoRejected.length)).join("")}`:""}
 
     <div class="pillar-block pillar-goals">
       <div class="pillar-tag">① GOALS<span class="autonomy-pill" title="Action scope only — proposals always require human approval">${escHtml(a.autonomyLevel||"L1")} · ${autonomyLabel(a.autonomyLevel||"L1")}</span>${a.costPerOutcome&&a.costPerOutcome.target?`<span class="cost-pill">target ${"$"+a.costPerOutcome.target}/outcome</span>`:""}</div>
@@ -929,6 +1127,7 @@ async function loadAutomations(){
         <div><span class="auto-title">◷ Automations</span><span class="auto-sub">${last?`last cycle ${formatDate(last.ts)} · scanned ${last.scanned} · improved ${last.selected} · $${last.budget.spentUsd}${last.queue?` · queue ${last.queue.open} open`:""}`:"heartbeat idle — run a cycle to discover + improve"}</span></div>
         <button class="btn btn-sm btn-primary" onclick="runLoopNow(this)">Run automations now</button>
       </div>
+      <div class="auto-live-note">${escHtml(AUTOMATION_LIVE_NOTE)}</div>
       ${openq.length?`<div class="auto-queue"><div class="auto-inbox-title">Research queue <span class="auto-sub2">discover → improve</span><span class="count-badge">${q.filter(x=>x.status==="open").length}</span></div>${openq.map(x=>`<div class="auto-item"><span class="rq-score" title="score 1–3">${x.score}</span><span class="auto-agent">${escHtml(x.agentId)}</span><span class="auto-summary">${escHtml(x.title)}</span><span class="pill pill-xs ${sClass(x.status)}">${escHtml(x.status)}</span></div>`).join("")}</div>`:""}
       <div class="auto-inbox">
         <div class="auto-inbox-title">Triage inbox<span class="count-badge">${items.length}</span></div>
@@ -938,9 +1137,15 @@ async function loadAutomations(){
   }catch(e){el.innerHTML=""}
 }
 async function runLoopNow(btn){
+  // Allowed under the catalog lock (b′): runCycle stamps proposedImprovements,
+  // research-queue rows, learnings and loopRuns on Railway only. It never calls
+  // approveImprovement, so it cannot bump a catalog version. Auto-apply is dead.
+  // A separately configured Railway scheduler is outside this UI guard.
   if(btn){btn.disabled=true;btn.textContent="Running…"}
   try{const r=await DirectoryAPI.runLoop();toast(`Cycle: scanned ${r.scanned}, ${r.jobs.length} job(s) run, $${r.budget.spentUsd} spent`)}
   catch(e){toast("Loop service unreachable")}
+  if(btn){btn.disabled=false;btn.textContent="Run automations now"}
+  await loadRailwayProposalOverlay();
   loadAutomations();
 }
 
@@ -1146,6 +1351,7 @@ if(window.DirectoryAPI)DirectoryAPI.ready.then(()=>{
   // Observe the service's known ids as early as possible, so the first mint in
   // a fresh browser already avoids them when the service is reachable.
   refreshReservedAgentIds();
+  loadRailwayProposalOverlay();
   if(state.view==="list"&&state.subTab==="agents")loadAutomations();
   // Re-load capability once the probe has resolved — first paint may have
   // rendered the detail view before DirectoryAPI.enabled was true.

@@ -84,8 +84,12 @@ window.DirectoryAPI = (function () {
     // not an id reservation: the directory record stays local.
     listAgents: () => j("GET", "/api/agents"),
     runImprovement: (id) => j("POST", `/api/agents/${id}/improvements`),
-    approve: (id) => j("POST", `/api/agents/${id}/improvements/current/approve`),
-    reject: (id) => j("POST", `/api/agents/${id}/improvements/current/reject`),
+    // A decision names its proposal. "current" is only valid when exactly one
+    // is pending; with several, an unnamed decision would resolve an arbitrary
+    // one of them.
+    approve: (id, pid) => j("POST", `/api/agents/${id}/improvements/${encodeURIComponent(pid || "current")}/approve`),
+    reject: (id, pid) => j("POST", `/api/agents/${id}/improvements/${encodeURIComponent(pid || "current")}/reject`),
+    reopenRejected: (id, pid) => j("POST", `/api/agents/${id}/improvements/${encodeURIComponent(pid)}/reopen`),
     logEval: (id, record) => j("POST", `/api/agents/${id}/evals`, record),
     recordTrace: (id, trace) => j("POST", `/api/agents/${id}/traces`, trace),
     fleetHealth: () => j("GET", "/api/fleet/health"),

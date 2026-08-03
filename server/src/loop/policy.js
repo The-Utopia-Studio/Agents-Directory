@@ -1,6 +1,8 @@
 // Triage policy — decides which agents the loop should look at this cycle.
 // Approval remains a human action; the retired guard below fails closed for
 // compatibility with any caller that still asks about auto-application.
+import { pendingProposals } from "../core/proposals.js";
+
 const latestEval = (a) => (a.evalHistory || []).at(-1);
 
 /**
@@ -9,7 +11,7 @@ const latestEval = (a) => (a.evalHistory || []).at(-1);
  */
 export function selectForTriage(agents, { lowScore = 70 } = {}) {
   return agents.filter((a) => {
-    if (a.proposedImprovement?.status === "proposed") return false; // already queued
+    if (pendingProposals(a).length) return false; // already queued
     const e = latestEval(a);
     if (!e) return false; // nothing evaluated to improve against yet
     return e.status === "Needs improvement" || (typeof e.score === "number" && e.score < lowScore);
@@ -40,7 +42,7 @@ export function defaultContract(overrides = {}) {
       "retry an identical proposal after it was rejected",
       "exceed the token/cost budget",
     ],
-    artifacts: ["proposedImprovement", "loopRun", "learning"],
+    artifacts: ["proposedImprovements", "loopRun", "learning"],
     humanGate: "irreversible",
     ...overrides,
   };

@@ -65,7 +65,7 @@ test("verifier rejects a proposal with no failing signal", async () => {
 
 test("verifier ships a well-evidenced, high-gain proposal", async () => {
   const { svc, verifier } = await freshStack();
-  const proposal = await svc.runImprovement("A2");           // real proposal from failing traces
+  const [proposal] = await svc.runImprovement("A2");         // real proposal from failing traces
   const traces = await svc.listTraces("A2");
   const agent = await svc.getAgent("A2");
   const v = await verifier.assess(agent, proposal, traces, agent.evalHistory.at(-1));
@@ -79,9 +79,14 @@ test("runCycle triages the fleet and queues to the inbox (no auto-apply)", async
   assert.ok(run.selected >= 1, "A2 (score 58) should be selected");
   const a2job = run.jobs.find((j) => j.agentId === "A2");
   assert.equal(a2job.action, "queued:inbox");
-  assert.ok(a2job.verdict);
-  const { inbox } = { inbox: await svc.listInbox() };
-  assert.ok(inbox.some((x) => x.agentId === "A2" && x.proposal.verdict));
+  // One verdict per proposal: grading the set as a unit would let one weak
+  // defect reject the well-evidenced ones alongside it.
+  assert.equal(a2job.verdicts.length, a2job.proposals);
+  assert.ok(a2job.verdicts.every((entry) => entry.verdict && entry.proposalId));
+  const inbox = await svc.listInbox();
+  const a2Inbox = inbox.filter((x) => x.agentId === "A2");
+  assert.equal(a2Inbox.length, a2job.proposals - a2job.rejected);
+  assert.ok(a2Inbox.every((x) => x.proposal.verdict));
   const runs = await svc.recentLoopRuns();
   assert.equal(runs.length, 1);
 });
@@ -98,7 +103,7 @@ test("auto-approval is structurally disabled even with stale enabling config", a
   const { svc, engine } = await freshStack({ autoApply: true, autoApplyConfidence: 0.8 });
   // Even a stale true flag plus maximum autonomy cannot approve.
   const a2 = await svc.getAgent("A2");
-  await svc.putAgent({ ...a2, autonomyLevel: "L3", proposedImprovement: null });
+  await svc.putAgent({ ...a2, autonomyLevel: "L3", proposedImprovements: [] });
   const before = await svc.getAgent("A2");
   const run = await engine.runCycle();
   assert.equal(run.jobs.find((j) => j.agentId === "A2").action, "queued:inbox");
@@ -132,6 +137,11 @@ test("a verifier rejection blocks the queue item and isn't retried next cycle", 
   assert.ok(["voice", "aggressive"].includes(learning.signal));
   assert.ok(await svc.isBlockedSignal("A2", learning.signal));
   assert.ok((await svc.listResearchQueue()).some((x) => x.agentId === "A2" && x.status === "blocked"));
+  const rejected = (await svc.getAgent("A2")).proposedImprovements;
+  assert.ok(rejected.length > 0, "verifier rejection must retain the maker output");
+  assert.ok(rejected.every((proposal) => proposal.status === "rejected"));
+  assert.ok(rejected.every((proposal) => proposal.autoRejection?.by === "verifier"));
+  assert.ok(rejected.every((proposal) => proposal.verdict?.reasons?.includes("forced")));
 
   // Second cycle: the blocked signal is not retried.
   const run2 = await engine.runCycle();
@@ -147,7 +157,7 @@ test("runGoal stops at the human gate on a verifier ship", async () => {
   assert.equal(result.steps[0].action, "verified:ship-awaiting-human");
   const after = await svc.getAgent("A2");
   assert.equal(after.version, before.version);
-  assert.ok(after.proposedImprovement);
+  assert.ok(after.proposedImprovements.length);
 });
 
 test("runCycle respects the token budget", async () => {

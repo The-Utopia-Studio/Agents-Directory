@@ -72,6 +72,9 @@
  * @property {string} [diff]            prompt/skill diff, when the optimizer returns one
  * @property {number} [expectedGain]    estimated points on the target metric
  * @property {"proposed"|"approved"|"rejected"} status
+ * @property {{by:"verifier", recordedAt:string}|undefined} [autoRejection]
+ *   Present only when the checker rejected the proposal. This is a verifier
+ *   opinion, not a human review decision, and may be reopened for review.
  * @property {string} date
  * @property {Object} [evidence]        traces/signals the proposal was derived from
  * @property {string} [targetAgentVersion]     directory label at proposal time

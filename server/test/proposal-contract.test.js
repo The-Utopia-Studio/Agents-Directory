@@ -46,7 +46,7 @@ test("proposal contract accepts bounded structured changes with real evidence id
 test("proposal contract refuses zero changes and missing evidence records", () => {
   assert.throws(
     () => validateProposal({ ...valid, changes: [] }, evidence),
-    (error) => error.status === 422 && /at least one concrete change/.test(error.message),
+    (error) => error.status === 422 && /exactly one concrete change/.test(error.message),
   );
   assert.throws(
     () =>
@@ -69,6 +69,36 @@ test("proposal contract refuses zero changes and missing evidence records", () =
         evidence,
       ),
     (error) => error.status === 422 && /non-empty id/.test(error.message),
+  );
+});
+
+// Approval is one decision per proposal. A proposal carrying several changes
+// renders rows a reviewer cannot separately accept or refuse, so the contract
+// refuses the bundle rather than the UI implying a granularity it lacks.
+test("proposal contract refuses more than one change per proposal", () => {
+  assert.throws(
+    () =>
+      validateProposal(
+        {
+          ...valid,
+          changes: [
+            valid.changes[0],
+            {
+              surface: "prompt",
+              target: "server/src/artifacts/biocraft/SKILL.md#guardrails",
+              current: "No general instruction against generic positioning.",
+              proposed: "Add a guardrail against generic positioning language.",
+              rationale: "A second, separately approvable defect.",
+              evidence: ["feedback_1"],
+            },
+          ],
+        },
+        evidence,
+      ),
+    (error) =>
+      error.status === 422 &&
+      /exactly one change \(one proposal is one defect\); got 2/.test(error.message) &&
+      /Emit one proposal per defect/.test(error.message),
   );
 });
 

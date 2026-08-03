@@ -9,6 +9,7 @@
 //   runCycle() — one heartbeat across the fleet (Automations)
 //   runGoal(agentId, …) — run-until-done on one agent (the /goal primitive)
 import { selectForTriage, createBudget, defaultContract } from "./policy.js";
+import { pendingProposals } from "../core/proposals.js";
 
 const dominantSignal = (proposal, agent) =>
   proposal?.evidence?.signalKeys?.[0] ||
@@ -60,7 +61,7 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
         const score = e && typeof e.score === "number" && e.score < 60 ? 3
           : e && e.status === "Needs improvement" ? 2 : 1;
         // in-progress while a proposal is pending in the inbox; else open.
-        const status = blocked ? "blocked" : agent.proposedImprovement ? "in-progress" : "open";
+        const status = blocked ? "blocked" : pendingProposals(agent).length ? "in-progress" : "open";
         await svc.upsertResearchItem({
           agentId: agent.id, focus,
           title: `${agent.name}: ${focus}`,
@@ -91,28 +92,48 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
 
         // A refusal is a valid maker outcome, not a crash: block the item and
         // keep the cycle moving rather than aborting the whole run.
-        let proposal;
+        let proposals;
         try {
-          proposal = await svc.runImprovement(item.agentId);          // maker
+          proposals = await svc.runImprovement(item.agentId);          // maker
         } catch (e) {
           if (e?.status !== 422) throw e;
           await svc.setResearchStatus(item.id, "blocked", e.message);
           jobs.push({ agentId: item.agentId, item: item.id, action: "refused:no-evidence" });
           continue;
         }
-        const verdict = await verify(agent, proposal);                // checker
-        await svc.attachVerdict(item.agentId, verdict);
 
-        let action = "queued:inbox", nextStatus = "in-progress";
-        if (verdict.verdict === "reject") {
-          await svc.rejectImprovement(item.agentId);
-          await learn("runCycle", agent, dominantSignal(proposal, agent),
-            `Verifier rejected the fix for "${dominantSignal(proposal, agent)}": ${verdict.reasons?.[0] || "no evidence"}.`,
-            "re-propose the same fix without new evidence");
-          action = "rejected:verifier→learning"; nextStatus = "blocked";
+        // One defect per proposal, so one verdict per proposal. Grading the set
+        // as a unit would let one weak defect reject three well-evidenced ones.
+        const verdicts = [];
+        let rejected = 0;
+        for (const proposal of proposals) {
+          const signal = dominantSignal(proposal, agent);
+          const verdict = await verify(agent, proposal);               // checker
+          await svc.attachVerdict(item.agentId, verdict, proposal.id);
+          verdicts.push({ proposalId: proposal.id, signal, verdict });
+          if (verdict.verdict === "reject") {
+            await svc.markVerifierRejected(item.agentId, proposal.id);
+            await learn("runCycle", agent, signal,
+              `Verifier marked the fix for "${signal}" rejected: ${verdict.reasons?.[0] || "no evidence"}.`,
+              "keep it visible for human review; reopen only with a reason");
+            rejected += 1;
+          }
         }
+
+        // Only a fully rejected item is blocked; anything still pending is a
+        // live decision waiting on a human.
+        const allRejected = rejected === proposals.length;
+        const action = allRejected ? "rejected:verifier→learning" : "queued:inbox";
+        const nextStatus = allRejected ? "blocked" : "in-progress";
         await svc.setResearchStatus(item.id, nextStatus);
-        jobs.push({ agentId: item.agentId, item: item.id, action, verdict });
+        jobs.push({
+          agentId: item.agentId,
+          item: item.id,
+          action,
+          proposals: proposals.length,
+          rejected,
+          verdicts,
+        });
       }
 
       const q = await svc.listResearchQueue();
@@ -144,14 +165,19 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
         if (typeof score === "number" && score >= targetScore) {
           return { done: true, reason: "target-met", contract, iterations: i, finalScore: score, steps };
         }
-        let proposal;
+        let proposals;
         try {
-          proposal = await svc.runImprovement(agentId);               // maker
+          proposals = await svc.runImprovement(agentId);               // maker
         } catch (e) {
           if (e?.status !== 422) throw e;
           return { done: false, reason: "no-evidence", detail: e.message, contract, iterations: i, steps };
         }
-        const signal = dominantSignal(proposal, agent);
+        // The identical-attempt guard compares the whole set: re-proposing the
+        // same defects in the same order is the same attempt, even split across
+        // several proposals.
+        const signal = proposals
+          .map((proposal) => dominantSignal(proposal, agent))
+          .join(" + ");
 
         // SPF: never recurse after a failed identical attempt — stop when the
         // same rejected signal repeats. Verified proposals stop at the human
@@ -163,25 +189,32 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
           return { done: false, reason: "repeated-failure", contract, iterations: i, steps };
         }
 
-        const verdict = await verify(agent, proposal);                // checker
-        await svc.attachVerdict(agentId, verdict);
+        const verdicts = [];
+        let rejected = 0;
+        for (const proposal of proposals) {
+          const verdict = await verify(agent, proposal);              // checker
+          await svc.attachVerdict(agentId, verdict, proposal.id);
+          verdicts.push({ proposalId: proposal.id, verdict });
+          if (verdict.verdict === "reject") {
+            await svc.markVerifierRejected(agentId, proposal.id);
+            rejected += 1;
+          }
+        }
 
-        if (verdict.verdict === "reject") {
-          await svc.rejectImprovement(agentId);
-          await learn("runGoal", agent, signal, `Verifier rejected "${signal}".`, "re-propose without new evidence");
-          steps.push({ i, action: "rejected", verdict });
+        if (rejected === proposals.length) {
+          await learn("runGoal", agent, signal, `Verifier marked "${signal}" rejected.`, "keep it visible for human review; reopen only with a reason");
+          steps.push({ i, action: "rejected", verdicts });
           lastSignal = signal; lastWasReject = true;
           continue;
         }
         // Both hold and ship are verifier opinions, not review decisions.
-        // Leave the proposal pending and stop at the human gate.
+        // Leave surviving proposals pending and stop at the human gate.
         steps.push({
           i,
-          action:
-            verdict.verdict === "ship"
-              ? "verified:ship-awaiting-human"
-              : "held-for-human",
-          verdict,
+          action: verdicts.some(({ verdict }) => verdict.verdict === "ship")
+            ? "verified:ship-awaiting-human"
+            : "held-for-human",
+          verdicts,
         });
         return {
           done: false,

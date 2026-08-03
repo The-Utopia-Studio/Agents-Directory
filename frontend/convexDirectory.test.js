@@ -112,14 +112,45 @@ const governedRows = [
   },
 ];
 
-function loadGovernedWriteHelpers() {
-  const start = appSource.indexOf("function isGovernedPilot");
-  const end = appSource.indexOf("function renderGovernedIdentity");
+function sliceSource(startMarker, endMarker) {
+  const start = appSource.indexOf(startMarker);
+  const end = appSource.indexOf(endMarker);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
-  const context = createContext({});
-  runInContext(appSource.slice(start, end), context);
+  return appSource.slice(start, end);
+}
+
+const escHtmlStub = (value) =>
+  String(value ?? "").replace(
+    /[&<>"']/g,
+    (char) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[char],
+  );
+
+/** Evaluates the write-lock block plus the governed render helpers together. */
+function loadWriteGuards({ convexReadActive = false, catalogSource } = {}) {
+  const context = createContext({ escHtml: escHtmlStub, toast: () => {} });
+  runInContext(
+    sliceSource("// ── WRITE LOCK", "// ── END WRITE LOCK"),
+    context,
+  );
+  runInContext(
+    sliceSource("function isGovernedPilot", "function renderGovernedIdentity"),
+    context,
+  );
+  if (catalogSource) context.setCatalogSource(catalogSource);
+  else context.setConvexReadActive(convexReadActive);
   return context;
+}
+
+function loadGovernedWriteHelpers() {
+  return loadWriteGuards();
 }
 
 describe("Phase 4 Convex directory pilot", () => {
@@ -204,32 +235,246 @@ describe("Phase 4 Convex directory pilot", () => {
     expect(clientSource).not.toMatch(/https:\/\/[^\s"']+\.convex\.cloud/);
   });
 
-  test("governed A7/A8 hide local Edit, Log eval, and Propose improvement controls", () => {
+  test("governed A7/A8 lock catalog edits and manual evals but keep proposals live", () => {
     const helpers = loadGovernedWriteHelpers();
     const overlaid = overlayGovernedPilotAgents(localAgents, governedRows);
     for (const id of ["A7", "A8"]) {
       const agent = overlaid.find((row) => row.id === id);
       expect(helpers.isGovernedPilot(agent)).toBe(true);
-      expect(helpers.renderDetailEditControl(agent)).toBe("");
-      expect(helpers.renderEvalTitleActions(agent)).toBe("");
+      expect(helpers.renderDetailEditControl(agent)).toContain("disabled");
+      expect(helpers.renderDetailEditControl(agent)).not.toContain("onclick");
+      expect(helpers.renderDetailEditControl(agent)).toContain(
+        "Catalog editing moves to Convex",
+      );
+      expect(helpers.renderEvalTitleActions(agent)).toContain(
+        `onclick="proposeImprovement('${id}')"`,
+      );
+      expect(helpers.renderEvalTitleActions(agent)).toContain("Log eval");
+      expect(helpers.renderEvalTitleActions(agent)).toContain("disabled");
+      expect(helpers.renderEvalTitleActions(agent)).toContain(
+        "ungoverned score would affect fleet health",
+      );
       expect(helpers.renderGovernedPilotNotice(agent)).toContain(
-        "This governed record is read-only during the Convex pilot. Editing, evaluation and proposals will move to Convex in a later phase.",
+        "Runs, feedback and reversible proposals continue in the loop service",
       );
       expect(helpers.renderEmptyEval(agent)).not.toContain("Log the first evaluation");
       expect(helpers.renderEmptyEval(agent)).not.toContain("openModal('eval'");
     }
   });
 
-  test("A1-A6 keep their normal local Edit, Log eval, and Propose improvement controls", () => {
+  test("hydration/boot never writes localStorage before the Convex outcome", () => {
+    const hydrateBody = sliceSource("function hydrate()", "function agentIdNumber");
+    // Comment may mention persist; executable lines must not invoke it or touch storage.
+    const hydrateCode = hydrateBody
+      .split("\n")
+      .filter((line) => !/^\s*\/\//.test(line))
+      .join("\n");
+    expect(hydrateCode).not.toMatch(/\bpersist\s*\(/);
+    expect(hydrateCode).not.toMatch(/localStorage\.(setItem|removeItem)\s*\(/);
+    // Existing local A7/A8 records are left alone — seed only fills a missing card.
+    expect(hydrateBody).toMatch(/if\(!agents\.some\(a=>a\.id==="A7"\)\)/);
+    expect(hydrateBody).toMatch(/if\(!agents\.some\(a=>a\.id==="A8"\)\)/);
+    expect(hydrateBody).not.toMatch(/fields\.some\(key=>JSON\.stringify\(prior/);
+
+    // Boot starts pending-locked so persist cannot fire until resolution.
+    const pending = loadWriteGuards({ catalogSource: "pending" });
+    expect(pending.writesLocked()).toBe(true);
+    expect(pending.catalogPending()).toBe(true);
+    expect(pending.renderWriteLockBanner()).toContain(
+      "Waiting for the Convex catalog read",
+    );
+    expect(pending.writeActionButton("+ Add agent", "openModal('addAgent')")).toContain(
+      "disabled",
+    );
+    expect(pending.writeActionButton("+ Add agent", "openModal('addAgent')")).not.toContain(
+      "onclick",
+    );
+
+    // Unconfigured / failed Convex unlocks only after that outcome is recorded.
+    const pilot = sliceSource(
+      "async function loadGovernedDirectoryPilot()",
+      "let reservedAgentIds",
+    );
+    expect(pilot).toMatch(
+      /if\(!\(window\.ConvexDirectory&&ConvexDirectory\.enabled\)\)\{[\s\S]*?setCatalogSource\("local"\)/,
+    );
+    expect(pilot).toMatch(/setCatalogSource\(succeeded\?"convex":"local"\)/);
+    expect(pilot).toMatch(/catch\(_error\)\{[\s\S]*?setCatalogSource\("local"\)/);
+
+    const unlocked = loadWriteGuards({ catalogSource: "local" });
+    expect(unlocked.writesLocked()).toBe(false);
+    expect(unlocked.renderWriteLockBanner()).toBe("");
+  });
+
+  test("A1-A6 keep their normal local controls while no Convex read is active", () => {
     const helpers = loadGovernedWriteHelpers();
+    expect(helpers.writesLocked()).toBe(false);
     for (const agent of localAgents.slice(0, 6)) {
       expect(helpers.isGovernedPilot(agent)).toBe(false);
-      expect(helpers.renderDetailEditControl(agent)).toContain(">Edit</button>");
-      expect(helpers.renderEvalTitleActions(agent)).toContain("Propose improvement");
-      expect(helpers.renderEvalTitleActions(agent)).toContain(">Log eval</button>");
+      expect(helpers.renderDetailEditControl(agent)).toContain("onclick");
+      expect(helpers.renderEvalTitleActions(agent)).toContain("proposeImprovement(");
+      expect(helpers.renderEvalTitleActions(agent)).toContain("openModal('eval'");
       expect(helpers.renderGovernedPilotNotice(agent)).toBe("");
       expect(helpers.renderEmptyEval(agent)).toContain("Log the first evaluation");
+      expect(helpers.writeActionButton("+ Add agent", "openModal('addAgent')")).toContain(
+        "onclick",
+      );
     }
+    expect(helpers.renderWriteLockBanner()).toBe("");
+  });
+
+  test("an active Convex read disables every local write affordance, including A1-A6", () => {
+    const helpers = loadWriteGuards({ convexReadActive: true });
+    expect(helpers.writesLocked()).toBe(true);
+    expect(helpers.convexReadActive()).toBe(true);
+    expect(helpers.renderWriteLockBanner()).toContain(
+      "Catalog is read-only while Convex is the source.",
+    );
+
+    for (const label of ["+ Add agent", "Request an Agent", "+ New request"]) {
+      const button = helpers.writeActionButton(label, "openModal('addAgent')");
+      expect(button).toContain("disabled");
+      expect(button).not.toContain("onclick");
+      expect(button).toContain("Catalog editing moves to Convex in the next phase");
+      expect(button).toContain("locked-control-reason");
+    }
+
+    // A1-A6 are ordinary local records, but the view is Convex-rendered, so a
+    // saved edit here would diverge from what another browser shows.
+    for (const agent of localAgents.slice(0, 6)) {
+      expect(helpers.isGovernedPilot(agent)).toBe(false);
+      expect(helpers.isReadOnlyRecord(agent)).toBe(true);
+      expect(helpers.renderDetailEditControl(agent)).not.toContain("onclick");
+      expect(helpers.renderEvalTitleActions(agent)).toContain("proposeImprovement(");
+      expect(helpers.renderEvalTitleActions(agent)).not.toContain("openModal('eval'");
+      expect(helpers.renderEmptyEval(agent)).not.toContain("openModal('eval'");
+      expect(helpers.renderGovernedPilotNotice(agent)).toContain(
+        "Catalog editing moves to Convex in the next phase",
+      );
+    }
+  });
+
+  test("Run automations stays live under b′ and does not bump a catalog version", () => {
+    // Under the catalog lock the button remains a real control — not a title-
+    // only disabled state. runCycle writes Railway proposals/queue/learnings
+    // only; auto-apply is dead so no version bump.
+    const autoBody = sliceSource(
+      "async function loadAutomations()",
+      "// ── Using an agent across platforms",
+    );
+    expect(autoBody).toMatch(
+      /<button class="btn btn-sm btn-primary" onclick="runLoopNow\(this\)">Run automations now<\/button>/,
+    );
+    expect(autoBody).toContain("AUTOMATION_LIVE_NOTE");
+    const runLoopBody = sliceSource(
+      "async function runLoopNow(btn){",
+      "// ── Using an agent across platforms",
+    );
+    expect(runLoopBody).toMatch(/Allowed under the catalog lock \(b′\)/);
+    expect(runLoopBody).not.toMatch(/if\(writesLocked\(\)\)return refuseLockedWrite\(\)/);
+    const runLoopCode = runLoopBody
+      .split("\n")
+      .filter((line) => !/^\s*\/\//.test(line))
+      .join("\n");
+    expect(runLoopCode).not.toMatch(/approveImprovement|DirectoryAPI\.approve/);
+    expect(appSource).toContain(
+      "A separately configured Railway scheduler sits outside this UI lock",
+    );
+  });
+
+  test("every localStorage write path is guarded by the write lock", () => {
+    // persist() is the only writer of the catalogue blob, and resetData() is the
+    // only remover. Both must refuse while the view renders Convex.
+    const persistBody = sliceSource("function persist()", "function hydrate()");
+    expect(persistBody).toMatch(/if\(writesLocked\(\)\)return false/);
+
+    const writeEntryPoints = [
+      "function openModal(type,data){",
+      "async function saveNewAgent(){",
+      "function saveEditAgent(id){",
+      "function saveNewRequest(){",
+      "function saveEval(id){",
+      "function saveTriage(id){",
+      "function shipRequestAsAgent(id){",
+      "async function approveImprovement(id,proposalId){",
+    ];
+    for (const entry of writeEntryPoints) {
+      const index = appSource.indexOf(entry);
+      expect(index, `${entry} not found`).toBeGreaterThan(-1);
+      expect(
+        appSource.slice(index, index + 420),
+        `${entry} is missing a write-lock guard`,
+      ).toMatch(/if\(writesLocked\(\)\)return refuseLockedWrite\(\)/);
+    }
+
+    expect(appSource).toMatch(
+      /function resetData\(\)\{\s*if\(writesLocked\(\)\)return refuseLockedWrite\(\)/,
+    );
+    // Exactly two direct localStorage mutations remain: persist and resetData.
+    expect(appSource.match(/localStorage\.(setItem|removeItem)\(/g)).toHaveLength(2);
+  });
+
+  test("proposal and reject use the Railway overlay without localStorage writes under the lock", () => {
+    const proposeBody = sliceSource(
+      "async function proposeImprovement(id){",
+      "async function approveImprovement(id,proposalId){",
+    );
+    expect(proposeBody).not.toMatch(
+      /if\(writesLocked\(\)\)return refuseLockedWrite\(\)/,
+    );
+    expect(proposeBody).toMatch(
+      /if\(writesLocked\(\)&&setRailwayProposals\(id,proposals\)\)/,
+    );
+
+    const rejectBody = sliceSource(
+      "async function rejectImprovement(id,proposalId){",
+      "// ── RENDER",
+    );
+    expect(rejectBody).not.toMatch(
+      /if\(writesLocked\(\)\)return refuseLockedWrite\(\)/,
+    );
+    expect(rejectBody).toMatch(
+      /if\(writesLocked\(\)&&setRailwayProposals\(id,remaining\)\)/,
+    );
+    expect(appSource).toContain(
+      "Loop-service proposal · Railway file store · pilot-only.",
+    );
+    expect(appSource).toContain(
+      "This reversible proposal is read from Railway evidence and is not governed Convex catalog state.",
+    );
+    expect(appSource).toMatch(/const prop=pendingProposalsOf\(a\)/);
+    // Each defect is decided on its own, so a rejection under the lock replaces
+    // the overlay with the survivors rather than clearing the whole set.
+    expect(rejectBody).toMatch(
+      /const remaining=proposalsOf\(displayed\)\.filter\(p=>p!==target\)/,
+    );
+  });
+
+  test("approval remains locked and visibly explains the Railway catalog bump", () => {
+    const approveBody = sliceSource(
+      "async function approveImprovement(id,proposalId){",
+      "async function rejectImprovement(id,proposalId){",
+    );
+    expect(approveBody).toMatch(
+      /if\(writesLocked\(\)\)return refuseLockedWrite\(\)/,
+    );
+    expect(appSource).toContain(
+      "Approval stays locked during the pilot because it bumps the Railway catalog version",
+    );
+    expect(appSource).toContain(
+      "const approveLabel=`Record approval → catalog v${bumpVersion(a.version)}`",
+    );
+    expect(appSource).toContain(
+      "lockedControl(approveLabel,APPROVAL_LOCK_REASON,",
+    );
+  });
+
+  test("the agent page distinguishes maker refusal from a retained verifier rejection", () => {
+    expect(appSource).toContain("Maker produced no proposal.");
+    expect(appSource).toContain("AUTO-REJECTED BY VERIFIER");
+    expect(appSource).toContain("Re-open for human review");
+    expect(appSource).toContain("reopenVerifierRejectedImprovement");
+    expect(appSource).toContain("Verifier-rejected proposals are retained below.");
   });
 
   test("the browser pilot contains a query path and no mutation path", () => {

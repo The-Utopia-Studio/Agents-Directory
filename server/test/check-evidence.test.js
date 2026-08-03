@@ -121,7 +121,7 @@ test("a check failure reaches the maker, which refuses an ambiguous edit", async
     () => svc.runImprovement("A7"),
     (error) => {
       assert.equal(error.status, 422);
-      assert.match(error.message, /cannot classify it into an exact/);
+          assert.match(error.message, /could not be classified into an exact/);
       return true;
     },
   );

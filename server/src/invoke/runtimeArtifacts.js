@@ -17,6 +17,13 @@ const RUNTIME_CHECKS = new Set([
   "about_has_no_delimiter_separated_keyword_run",
   "about_closing_has_cta",
 ]);
+// Finding 3 (section-scope widening) is deferred to biocraft-singleshot-v5 and
+// must land as one change: widen the scan to every generated section, rename
+// About-only ids that no longer are, bump the digest, and re-import governed
+// A7 with the queued merge (A8 thin-seed / missing A7 repoUrl). Do NOT widen
+// the scanner while keeping `about_*` ids — a check id that fires on the spoken
+// intro while naming About produces self-misdescribing evidence the maker then
+// reads. Ratings against v4 are not comparable to v5 once those checks change.
 
 /** Exported so the boot-failure test can assert the same throw the module uses at import. */
 export function snapshotArtifact(directoryUrl, primaryName) {

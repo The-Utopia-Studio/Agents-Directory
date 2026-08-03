@@ -10,18 +10,23 @@ import {
   getInstallArtifactCapability,
   loadInstallSkill,
 } from "../artifacts/installArtifacts.js";
-import { getRuntimeArtifactDescriptor } from "../invoke/runtimeArtifacts.js";
+import {
+  getRuntimeArtifactDescriptor,
+  loadRuntimeArtifact,
+} from "../invoke/runtimeArtifacts.js";
 import {
   getHandoffCapability,
   loadHandoffBriefing,
 } from "../handoff/handoffArtifacts.js";
 import { sanitizeCheckResults, sanitizeFailureReason } from "./traceSafety.js";
 import { validateProposal } from "../improve/proposalContract.js";
+import { readProposals, writeProposals, selectProposal } from "./proposals.js";
 import { buildServiceMigrationSnapshot } from "../migration/export.js";
 
 function outputDigest(output) {
   return createHash("sha256").update(String(output)).digest("hex");
 }
+
 
 function metadataOnlyTrace(agentId, trace) {
   const metadata = {
@@ -406,6 +411,13 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         (f) => typeof f.rating === "number" && f.rating <= 3,
       );
 
+      // The live artifact travels with the evidence so the optimizer can verify
+      // a claim before making it. Without this an optimizer describes `current`
+      // from a hardcoded string and can assert that a guardrail is missing when
+      // the file plainly contains it. Custody stays here: the service resolves
+      // the bytes by agent id, the optimizer only reads them.
+      const artifact = await this.loadImprovementArtifact(agentId, agent);
+
       return {
         traces,
         failingTraces,
@@ -413,6 +425,48 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         lowRatings,
         defectSignals,
         latestEval,
+        artifact,
+      };
+    },
+
+    /**
+     * The authoritative definition of what this agent currently does.
+     *
+     * For a runtime agent that is the server-owned artifact bytes. For a
+     * catalog-defined agent there is no artifact file, and the stored record is
+     * the definition — so its own goals and guardrails are what a `current`
+     * claim must be checked against. Returning null for those agents would make
+     * the maker refuse every proposal it can legitimately raise.
+     */
+    async loadImprovementArtifact(agentId, agent) {
+      const descriptor = getRuntimeArtifactDescriptor(agentId);
+      if (descriptor) {
+        try {
+          return {
+            source: "runtime-artifact",
+            text: await loadRuntimeArtifact(agentId),
+            checks: descriptor.checks || [],
+            artifactVersion: descriptor.artifactVersion,
+            artifactDigest: descriptor.artifactDigest,
+          };
+        } catch {
+          // Unreadable bytes mean no verified `current`; the optimizer refuses
+          // rather than describing a file it could not open.
+          return null;
+        }
+      }
+      if (!agent) return null;
+      return {
+        source: "agent-record",
+        text: [
+          agent.objective,
+          ...(agent.successCriteria || []),
+          ...(agent.guardrails || []),
+          agent.sop,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+        checks: [],
       };
     },
 
@@ -425,6 +479,19 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       // template produces a proposal with an Approve button and nothing behind
       // it, which is worse than no proposal at all.
       if (!evidence.defectSignals.length) {
+        // This is a maker refusal, not a rejected proposal. Preserve only
+        // structural counts so the agent page can distinguish it from a
+        // verifier-rejected proposal without storing reviewer prose.
+        agent.latestProposalAttempt = {
+          outcome: "maker-refused-no-evidence",
+          recordedAt: new Date().toISOString(),
+          traces: evidence.traces.length,
+          failingTraces: evidence.failingTraces.length,
+          feedback: evidence.feedback.length,
+          feedbackWithNotes: evidence.feedback.filter((f) => String(f.notes || "").trim()).length,
+          hasEval: Boolean(evidence.latestEval),
+        };
+        await store.put("agents", agent);
         throw httpError(
           422,
           `Cannot propose for ${agentId} without evidence of a defect. ` +
@@ -440,29 +507,37 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       // Optimizers are untrusted adapter boundaries. A better model with an
       // untyped output is still unsafe: enforce concrete changes, bounded text,
       // and evidence ids that exist for this agent before anything is queued.
-      const proposal = validateProposal(
-        await optimizer.propose(agent, evidence),
-        evidence,
-      );
-      proposal.id = `imp_${Date.now().toString(36)}`;
-      // Stamp what this proposal was derived against, so approval cannot be
-      // applied to a build that has since changed underneath it.
-      proposal.targetAgentVersion = agent.version;
-      if (artifact) {
-        proposal.targetArtifactVersion = artifact.artifactVersion;
-        proposal.targetArtifactDigest = artifact.artifactDigest;
-        proposal.targetArtifactDigestAlgorithm = artifact.artifactDigestAlgorithm;
-      }
-      agent.proposedImprovement = proposal;
+      const raw = await optimizer.propose(agent, evidence);
+      const proposals = (Array.isArray(raw) ? raw : [raw]).map((candidate, index) => {
+        const proposal = validateProposal(candidate, evidence);
+        proposal.id = `imp_${Date.now().toString(36)}_${index}`;
+        // Stamp what this proposal was derived against, so approval cannot be
+        // applied to a build that has since changed underneath it.
+        proposal.targetAgentVersion = agent.version;
+        if (artifact) {
+          proposal.targetArtifactVersion = artifact.artifactVersion;
+          proposal.targetArtifactDigest = artifact.artifactDigest;
+          proposal.targetArtifactDigestAlgorithm = artifact.artifactDigestAlgorithm;
+        }
+        return proposal;
+      });
+      writeProposals(agent, proposals);
+      agent.latestProposalAttempt = {
+        outcome: "proposals-created",
+        recordedAt: new Date().toISOString(),
+        proposalIds: proposals.map((proposal) => proposal.id),
+      };
       await store.put("agents", agent);
-      return proposal;
+      return proposals;
     },
 
     async approveImprovement(agentId, proposalId) {
       const agent = await store.get("agents", agentId);
-      const prop = agent?.proposedImprovement;
-      if (!agent || !prop) throw httpError(404, "No pending improvement");
-      if (proposalId && prop.id !== proposalId) throw httpError(409, "Proposal id mismatch");
+      const proposals = agent ? readProposals(agent) : [];
+      const pending = proposals.filter((proposal) => proposal.status === "proposed");
+      const prop = selectProposal(pending, proposalId);
+      if (!agent || !pending.length) throw httpError(404, "No pending improvement");
+      if (!prop) throw httpError(409, "Proposal id mismatch");
       // Defend the approval boundary too. This catches legacy or externally
       // written records that predate changes[] instead of treating them as
       // approvable proposals.
@@ -492,35 +567,102 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         note: `Approved improvement (${prop.source}): ${prop.summary}`,
       }];
       agent.version = nv;
-      agent.proposedImprovement = null;
+      // Approve one defect, leave the rest pending. Clearing the whole set here
+      // would silently discard proposals nobody decided on.
+      writeProposals(agent, proposals.filter((candidate) => candidate.id !== prop.id));
       await store.put("agents", agent);
       return { version: nv, agent };
     },
 
+    // A manual rejection is deliberately destructive: the operator saw this
+    // proposal and chose to clear it. The loop must use markVerifierRejected
+    // below instead, so an unreliable checker cannot erase its own evidence.
     async rejectImprovement(agentId, proposalId) {
       const agent = await store.get("agents", agentId);
-      if (!agent?.proposedImprovement) throw httpError(404, "No pending improvement");
-      if (proposalId && agent.proposedImprovement.id !== proposalId) throw httpError(409, "Proposal id mismatch");
-      agent.proposedImprovement = null;
+      const proposals = agent ? readProposals(agent) : [];
+      const pending = proposals.filter((proposal) => proposal.status === "proposed");
+      if (!pending.length) throw httpError(404, "No pending improvement");
+      const prop = selectProposal(pending, proposalId);
+      if (!prop) throw httpError(409, "Proposal id mismatch");
+      writeProposals(agent, proposals.filter((candidate) => candidate.id !== prop.id));
       await store.put("agents", agent);
       return { ok: true };
     },
 
-    // Attach a verifier verdict to the pending proposal (maker/checker split).
-    async attachVerdict(agentId, verdict) {
+    // Checker rejection is evidence, not a review decision. Keep the full
+    // proposal and its attached verdict so a human can see and reopen it.
+    async markVerifierRejected(agentId, proposalId) {
       const agent = await store.get("agents", agentId);
-      if (!agent?.proposedImprovement) return null;
-      agent.proposedImprovement.verdict = verdict;
+      const proposals = agent ? readProposals(agent) : [];
+      const prop = selectProposal(
+        proposals.filter((candidate) => candidate?.status === "proposed"),
+        proposalId,
+      );
+      if (!agent || !prop) throw httpError(404, "No pending improvement");
+      if (prop.verdict?.verdict !== "reject") {
+        throw httpError(409, "Only a verifier reject verdict can mark a proposal rejected");
+      }
+      prop.status = "rejected";
+      prop.autoRejection = { by: "verifier", recordedAt: new Date().toISOString() };
+      agent.latestProposalAttempt = {
+        outcome: "verifier-rejected",
+        recordedAt: prop.autoRejection.recordedAt,
+        proposalId: prop.id,
+      };
+      writeProposals(agent, proposals);
       await store.put("agents", agent);
-      return agent.proposedImprovement;
+      return prop;
+    },
+
+    // This records only that the proposal re-entered the human review queue;
+    // Railway has no authenticated user principal, so do not invent one.
+    async reopenVerifierRejectedImprovement(agentId, proposalId) {
+      const agent = await store.get("agents", agentId);
+      const proposals = agent ? readProposals(agent) : [];
+      const prop = proposals.find((candidate) => candidate?.id === proposalId);
+      if (!agent || !prop) throw httpError(404, "No rejected improvement");
+      if (prop.status !== "rejected" || prop.autoRejection?.by !== "verifier") {
+        throw httpError(409, "Only a verifier-rejected proposal can be reopened");
+      }
+      prop.status = "proposed";
+      prop.reopenedForHumanReviewAt = new Date().toISOString();
+      delete prop.autoRejection;
+      agent.latestProposalAttempt = {
+        outcome: "reopened-for-human-review",
+        recordedAt: prop.reopenedForHumanReviewAt,
+        proposalId: prop.id,
+      };
+      writeProposals(agent, proposals);
+      await store.put("agents", agent);
+      return prop;
+    },
+
+    // Attach a verifier verdict to a pending proposal (maker/checker split).
+    async attachVerdict(agentId, verdict, proposalId) {
+      const agent = await store.get("agents", agentId);
+      const proposals = agent ? readProposals(agent) : [];
+      const pending = proposals.filter((proposal) => proposal.status === "proposed");
+      const prop = selectProposal(pending, proposalId);
+      if (!prop) return null;
+      prop.verdict = verdict;
+      writeProposals(agent, proposals);
+      await store.put("agents", agent);
+      return prop;
     },
 
     // ── the loop's state: triage inbox + run history ──
     async listInbox() {
       const agents = await store.all("agents");
-      return agents
-        .filter((a) => a.proposedImprovement?.status === "proposed")
-        .map((a) => ({ agentId: a.id, name: a.name, version: a.version, proposal: a.proposedImprovement }));
+      return agents.flatMap((a) =>
+        readProposals(a)
+          .filter((proposal) => proposal.status === "proposed")
+          .map((proposal) => ({
+            agentId: a.id,
+            name: a.name,
+            version: a.version,
+            proposal,
+          })),
+      );
     },
     async recordLoopRun(run) {
       const saved = await store.append("loopRuns", { ...run, ts: run.ts || new Date().toISOString() });
@@ -591,7 +733,11 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         const e = latest(a);
         return !e || e.status === "Needs improvement" || (typeof e.score === "number" && e.score < 70);
       }).length;
-      const proposals = agents.filter((a) => a.proposedImprovement?.status === "proposed").length;
+      const proposals = agents.reduce(
+        (count, a) =>
+          count + readProposals(a).filter((p) => p.status === "proposed").length,
+        0,
+      );
       return {
         total: agents.length,
         evaluated: evaluated.length,

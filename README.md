@@ -178,6 +178,19 @@ Anthropic returns: hook ≤200, no delimiter-separated keyword run in the About,
 and a CTA in its closing. Ratings against v2 are **not comparable** to ratings
 against v3 or v4.
 
+### Deferred: v4 → v5 (section-scope widening)
+
+Finding 3 — extending mechanical checks beyond the LinkedIn About — is
+**deferred** to `biocraft-singleshot-v5`. It must land as one change: widen the
+scanner to every generated section, rename any `about_*` id that no longer is
+About-only, bump the digest, and re-import governed A7 with the queued merge
+(A8 thin-seed correction / missing A7 `repoUrl`). Do not widen the scanner
+while keeping About-scoped ids: a check id that fires on the spoken intro while
+naming About produces self-misdescribing evidence the maker then reads.
+
+Ratings against v4 will **not be comparable** to ratings against v5 once those
+checks change — same note as the v1→v2 frontmatter change.
+
 ### A failed check is a scored failure, not a refusal
 
 The checks are a **quality** gate; the guardrails are the safety layer. A check

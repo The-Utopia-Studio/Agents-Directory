@@ -198,6 +198,20 @@ function extractAgentNested(records, source, path, agent) {
         : evaluation,
     );
   }
+  // Both shapes are exported under their own legacy path. A record written
+  // before the one-defect-per-proposal split still carries the singular field,
+  // and dropping it here would lose a pending proposal from the snapshot.
+  for (const [index, proposal] of arrayAt(agent, "proposedImprovements").entries()) {
+    pushRecord(
+      records,
+      "proposals",
+      source,
+      `${path}.proposedImprovements[${index}]`,
+      isObject(proposal)
+        ? { ...proposal, agentId, legacyShape: "agent.proposedImprovements" }
+        : proposal,
+    );
+  }
   if (agent.proposedImprovement != null) {
     pushRecord(
       records,
