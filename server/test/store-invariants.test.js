@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createStore } from "../src/core/store.js";
@@ -12,6 +12,17 @@ async function tempStore() {
   const dir = await mkdtemp(join(tmpdir(), "adir-invariants-"));
   return createStore(dir);
 }
+
+test("a corrupt collection file fails closed instead of being seeded over", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "adir-corrupt-store-"));
+  await writeFile(join(dir, "agents.json"), "{ not valid JSON", "utf8");
+  const store = createStore(dir);
+
+  await assert.rejects(
+    () => seed(store),
+    /Cannot load agents store.*Refusing to treat existing data as an empty collection/,
+  );
+});
 
 test("an already-populated store still gains agents whose artifact the server owns", async () => {
   const store = await tempStore();

@@ -33,7 +33,17 @@ export async function buildApp(overrides = {}) {
   // seedIfEmpty is a first-boot path only. On a volume that already has
   // agents.json it is a no-op; new server-owned agents (A7, A8, …) still need
   // the explicit upsert inside seed(), not a seed entry alone.
-  await seed(store);
+  const seedResult = await seed(store);
+  // This is intentionally aggregate-only: Railway logs can prove whether the
+  // mounted volume was seeded/upserted without exposing agent records or any
+  // fellow data. A seed failure is still fatal because it is awaited above.
+  const seededAgentCount = (await store.all("agents")).length;
+  console.log(
+    `[seed] agents=${seededAgentCount} ` +
+      `seededEmpty=${seedResult.agents} ` +
+      `serverOwnedAdded=${seedResult.serverOwnedAgentsAdded.join(",") || "none"} ` +
+      `usabilityBackfilled=${seedResult.usabilityModesBackfilled}`,
+  );
   const obs = overrides.obs || getObservability(appConfig, { store });
   const optimizer = overrides.optimizer || getOptimizer(appConfig);
   const memory = overrides.memory || getMemory(appConfig, { store });

@@ -33,7 +33,25 @@ export function createStore(dataDir, { createIfMissing = true } = {}) {
   async function load(coll) {
     if (cache.has(coll)) return cache.get(coll);
     let docs = [];
-    try { docs = JSON.parse(await readFile(file(coll), "utf8")); } catch { /* new */ }
+    try {
+      docs = JSON.parse(await readFile(file(coll), "utf8"));
+    } catch (error) {
+      // A genuinely new collection has no file yet. Anything else — corrupt
+      // JSON, a permissions problem, or an I/O failure — must stop boot. Treating
+      // it as empty makes seedIfEmpty overwrite a real but unreadable store.
+      if (error?.code !== "ENOENT") {
+        throw new Error(
+          `Cannot load ${coll} store at ${file(coll)}: ${error?.message || error}. ` +
+            "Refusing to treat existing data as an empty collection.",
+        );
+      }
+    }
+    if (!Array.isArray(docs)) {
+      throw new Error(
+        `Cannot load ${coll} store at ${file(coll)}: expected a JSON array. ` +
+          "Refusing to treat existing data as an empty collection.",
+      );
+    }
     const map = new Map(docs.map((d) => [d.id, d]));
     cache.set(coll, map);
     return map;
