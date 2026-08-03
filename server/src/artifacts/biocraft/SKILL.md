@@ -3,7 +3,7 @@ name: biocraft-single-shot
 description: Stateless text-only Biocraft draft from complete source material supplied in one request.
 user-invocable: true
 artifact-mode: single-shot
-artifact_version: biocraft-singleshot-v4
+artifact_version: biocraft-singleshot-v5
 success_criteria:
   - LinkedIn About hook is 200 characters or fewer
   - Full LinkedIn About text is 2,600 characters or fewer
@@ -22,7 +22,7 @@ guardrails:
   - Do not add a CTA to the third-person event introduction. The required CTA belongs only in the LinkedIn About.
 checks:
   - about_hook_max_200_characters
-  - about_has_no_delimiter_separated_keyword_run
+  - generated_sections_have_no_delimiter_separated_keyword_run
   - about_closing_has_cta
 ---
 

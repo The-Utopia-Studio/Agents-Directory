@@ -46,6 +46,11 @@ const governedRows = [
       owner: "Sarah",
       initials: "S",
       model: "Claude Sonnet 4.6",
+      description: "Governed A7 description",
+      objective: "Governed A7 objective",
+      whenToUse: "Use A7 from governed material",
+      sop: "1. Use the governed SOP",
+      outputs: ["Governed A7 output"],
       runner: "native",
       invocation: { type: "runtime", configRef: "server-owned:a7" },
       usabilityModes: ["hosted-run", "download-install"],
@@ -84,6 +89,11 @@ const governedRows = [
       owner: "Aiden Kim",
       initials: "AK",
       model: "—",
+      description: "Governed A8 description",
+      objective: "Governed A8 objective",
+      whenToUse: "Use A8 from governed material",
+      sop: "1. Use the governed A8 SOP",
+      outputs: ["Governed A8 output"],
       runner: "foreign-runtime-handoff",
       usabilityModes: ["prepared-handoff"],
       executionContract: {
@@ -175,6 +185,11 @@ describe("Phase 4 Convex directory pilot", () => {
       runner: "native",
       invocation: { type: "runtime" },
       usabilityModes: ["hosted-run", "download-install"],
+      description: "Governed A7 description",
+      objective: "Governed A7 objective",
+      when: "Use A7 from governed material",
+      sop: "1. Use the governed SOP",
+      outputs: ["Governed A7 output"],
       governedInConvex: true,
       convexGovernance: {
         artifact: {
@@ -187,6 +202,11 @@ describe("Phase 4 Convex directory pilot", () => {
       id: "A8",
       runner: "foreign-runtime-handoff",
       usabilityModes: ["prepared-handoff"],
+      description: "Governed A8 description",
+      objective: "Governed A8 objective",
+      when: "Use A8 from governed material",
+      sop: "1. Use the governed A8 SOP",
+      outputs: ["Governed A8 output"],
       governedInConvex: true,
     });
     expect(appSource.match(/\$\{governedBadge\(a\)\}/g)?.length).toBeGreaterThanOrEqual(

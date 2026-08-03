@@ -114,6 +114,7 @@
  * @property {boolean} [hasInvitationFrame]
  * @property {"·"|"|"|"•"} [delimiter]
  * @property {number} [segmentCount]
+ * @property {"LinkedIn About"|"Spoken event introduction"|"Suggested headline"} [section]
  */
 
 /**

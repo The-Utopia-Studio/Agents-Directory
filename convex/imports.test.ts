@@ -9,6 +9,7 @@ import {
   APPROVED_IMPORT_SPEC,
   stableStringify,
 } from "./importSpec";
+import { MERGED_REIMPORT_SPEC } from "./reimportSpec";
 import schema from "./schema";
 import { modules } from "./test.setup";
 
@@ -67,16 +68,21 @@ describe("Phase 2.5B narrow canonical import", () => {
     );
   });
 
-  test("A7 import identity exactly matches the live server artifact", () => {
+  test("the historical v4 identity stays explicit while merged v5 matches the live artifact", () => {
     const live = getRuntimeArtifactDescriptor("A7");
-    const approved = APPROVED_IMPORT_SPEC.imports.A7.version;
+    const approvedV4 = APPROVED_IMPORT_SPEC.imports.A7.version;
+    const approvedV5 = MERGED_REIMPORT_SPEC.imports.A7.version;
     expect(live).not.toBeNull();
-    expect(approved.version).toBe(live!.artifactVersion);
-    expect(approved.artifact.declaredDigest).toBe(live!.artifactDigest);
-    expect(approved.artifact.declaredDigestAlgorithm).toBe(
+    expect(approvedV4.version).toBe("biocraft-singleshot-v4");
+    expect(approvedV4.artifact.declaredDigest).toBe(
+      "991cadea10401307215254098644342ccb551f7f498eb64994e328eafdf0b6f9",
+    );
+    expect(approvedV5.version).toBe(live!.artifactVersion);
+    expect(approvedV5.artifact.declaredDigest).toBe(live!.artifactDigest);
+    expect(approvedV5.artifact.declaredDigestAlgorithm).toBe(
       live!.artifactDigestAlgorithm,
     );
-    expect(approved.artifact.locator).toBe(
+    expect(approvedV5.artifact.locator).toBe(
       "server/src/artifacts/biocraft/SKILL.md",
     );
   });

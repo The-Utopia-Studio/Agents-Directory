@@ -124,11 +124,11 @@ At boot the server computes `artifactDigest` as SHA-256 over the exact
 the UI, and used in the ZIP filename.
 
 The artifact declares its own stable, paste-surviving frontmatter label:
-`artifact_version: biocraft-singleshot-v4`. Runtime parses that label from the
+`artifact_version: biocraft-singleshot-v5`. Runtime parses that label from the
 same bytes; it is not duplicated in configuration. Copy does not prepend or
 alter anything, so re-hashing a pasted copy produces the recorded digest. ZIP
 filenames use the label directly, for example
-`A7-biocraft-singleshot-v4-<digest-prefix>.zip`.
+`A7-biocraft-singleshot-v5-<digest-prefix>.zip`.
 
 The same frontmatter also declares `guardrails`, `success_criteria`, and
 `checks`. The manifest reports the first two, never the mutable directory
@@ -178,18 +178,14 @@ Anthropic returns: hook ≤200, no delimiter-separated keyword run in the About,
 and a CTA in its closing. Ratings against v2 are **not comparable** to ratings
 against v3 or v4.
 
-### Deferred: v4 → v5 (section-scope widening)
+### v4 → v5 section-scope widening
 
-Finding 3 — extending mechanical checks beyond the LinkedIn About — is
-**deferred** to `biocraft-singleshot-v5`. It must land as one change: widen the
-scanner to every generated section, rename any `about_*` id that no longer is
-About-only, bump the digest, and re-import governed A7 with the queued merge
-(A8 thin-seed correction / missing A7 `repoUrl`). Do not widen the scanner
-while keeping About-scoped ids: a check id that fires on the spoken intro while
-naming About produces self-misdescribing evidence the maker then reads.
-
-Ratings against v4 will **not be comparable** to ratings against v5 once those
-checks change — same note as the v1→v2 frontmatter change.
+`biocraft-singleshot-v5` widens the delimiter-separated keyword-run detector
+from the LinkedIn About to all three generated sections: About, spoken event
+introduction, and suggested headline. Its check id is therefore
+`generated_sections_have_no_delimiter_separated_keyword_run`, not an
+About-scoped name. The artifact bytes and SHA-256 moved with this behaviour
+change. Ratings against v4 are **not comparable** to ratings against v5.
 
 ### A failed check is a scored failure, not a refusal
 

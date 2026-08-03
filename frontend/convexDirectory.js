@@ -81,6 +81,10 @@ export function mapGovernedPilotAgent(localAgent, row) {
   for (const optional of [
     "description",
     "model",
+    "objective",
+    "whenToUse",
+    "sop",
+    "outputs",
     "invocation",
     "autonomyLevel",
     "accessUrl",
@@ -88,6 +92,10 @@ export function mapGovernedPilotAgent(localAgent, row) {
   ]) {
     if (governed[optional] !== undefined) mapped[optional] = governed[optional];
   }
+  // The legacy browser record calls this field `when`; Convex deliberately
+  // uses the clearer `whenToUse`. Map it at this read boundary so the pilot
+  // page renders its governed value rather than a localStorage fallback.
+  if (governed.whenToUse !== undefined) mapped.when = governed.whenToUse;
   return mapped;
 }
 

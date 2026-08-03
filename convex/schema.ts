@@ -47,6 +47,12 @@ export default defineSchema({
     owner: v.string(),
     initials: v.string(),
     model: v.optional(v.string()),
+    // Directory-facing workflow metadata. Optional so existing imported A7/A8
+    // rows stay valid until the authorised merged re-import fills them.
+    objective: v.optional(v.string()),
+    whenToUse: v.optional(v.string()),
+    sop: v.optional(v.string()),
+    outputs: v.optional(v.array(v.string())),
     runner,
     usabilityModes: v.array(usabilityMode),
     invocation: v.optional(invocation),

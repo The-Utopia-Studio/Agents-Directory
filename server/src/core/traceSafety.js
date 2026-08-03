@@ -22,7 +22,7 @@
 export const KNOWN_CHECK_IDS = Object.freeze([
   "about_section_present",
   "about_hook_max_200_characters",
-  "about_has_no_delimiter_separated_keyword_run",
+  "generated_sections_have_no_delimiter_separated_keyword_run",
   "about_closing_has_cta",
 ]);
 
@@ -53,6 +53,11 @@ const BOOLEAN_FACTS = new Set([
 
 /** Punctuation only. A delimiter character is not content about anyone. */
 const DELIMITER_VALUES = new Set(["·", "|", "•"]);
+const SECTION_VALUES = new Set([
+  "LinkedIn About",
+  "Spoken event introduction",
+  "Suggested headline",
+]);
 
 /**
  * Keep a checker verdict only if every field is provably shape.
@@ -73,6 +78,8 @@ export function sanitizeCheckResults(value) {
       } else if (BOOLEAN_FACTS.has(key) && typeof raw === "boolean") {
         clean[key] = raw;
       } else if (key === "delimiter" && DELIMITER_VALUES.has(raw)) {
+        clean[key] = raw;
+      } else if (key === "section" && SECTION_VALUES.has(raw)) {
         clean[key] = raw;
       }
       // Anything else — messages, excerpts, matched text — is dropped.

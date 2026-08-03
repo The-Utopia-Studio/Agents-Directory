@@ -336,7 +336,7 @@ test("Biocraft mechanical checks reject hook, keyword-run, and CTA regressions",
   const runFailure = validateRuntimeArtifactOutput("A7", keywordRun)[0];
   assert.equal(
     runFailure.checkId,
-    "about_has_no_delimiter_separated_keyword_run",
+    "generated_sections_have_no_delimiter_separated_keyword_run",
   );
   assert.equal(runFailure.delimiter, "·");
   assert.ok(runFailure.segmentCount >= 2);
@@ -358,24 +358,18 @@ test("Biocraft mechanical checks reject hook, keyword-run, and CTA regressions",
   assert.ok(ctaFailure.windowParagraphs >= 2);
 });
 
-// Spoken intro and headline still have zero mechanical coverage under v4.
-// Finding 3 (widen scope + rename About-only ids + digest bump) is deferred to
-// v5 with the queued merge re-import — not half-landed here, because an
-// `about_*` id that fires outside the About would misdescribe its own evidence.
-test("relocating a defect out of the About currently escapes every check", () => {
-  for (const line of [
-    "Test Fellow builds grounded workflow systems for venture teams.",
-    "Agentic workflow builder for venture teams",
+test("v5 catches delimiter-separated keyword runs in every generated section", () => {
+  for (const [section, line] of [
+    ["Spoken event introduction", "Test Fellow builds grounded workflow systems for venture teams."],
+    ["Suggested headline", "Agentic workflow builder for venture teams"],
   ]) {
     const relocated = VALID_BIOCRAFT_OUTPUT.replace(
       line,
       "n8n · AI automation · Agentic systems · LLMs",
     );
-    assert.deepEqual(
-      validateRuntimeArtifactOutput("A7", relocated),
-      [],
-      "no declared check reads outside the LinkedIn About",
-    );
+    const failure = validateRuntimeArtifactOutput("A7", relocated)[0];
+    assert.equal(failure.checkId, "generated_sections_have_no_delimiter_separated_keyword_run");
+    assert.equal(failure.section, section);
   }
 });
 
@@ -686,7 +680,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     ["LinkedIn URL", "Google Drive folder or pitch deck", "Local file path"],
   );
   assert.equal(installArtifact.available, true);
-  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v4");
+  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v5");
   assert.match(installArtifact.artifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(installArtifact.artifactDigestAlgorithm, "sha256");
 
@@ -725,7 +719,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(run.via, "runtime");
   assert.equal(run.mode, "single-shot");
   assert.equal(run.agentVersion, "1.0");
-  assert.equal(run.artifactVersion, "biocraft-singleshot-v4");
+  assert.equal(run.artifactVersion, "biocraft-singleshot-v5");
   assert.equal(
     run.artifactDigest,
     createHash("sha256").update(request.body.system).digest("hex"),
@@ -756,7 +750,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(trace.metadata.via, "runtime");
   assert.equal(trace.metadata.mode, "single-shot");
   assert.equal(trace.agentVersion, "1.0");
-  assert.equal(trace.artifactVersion, "biocraft-singleshot-v4");
+  assert.equal(trace.artifactVersion, "biocraft-singleshot-v5");
   assert.equal(trace.artifactDigest, run.artifactDigest);
   assert.equal(trace.artifactDigestAlgorithm, "sha256");
   assert.equal("agentVersionId" in trace, false);

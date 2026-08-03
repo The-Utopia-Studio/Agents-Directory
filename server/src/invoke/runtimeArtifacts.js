@@ -14,16 +14,12 @@ const ARTIFACTS_ROOT = new URL("../artifacts/", import.meta.url);
 // them being declared (about_section_present). A test asserts no drift.
 const RUNTIME_CHECKS = new Set([
   "about_hook_max_200_characters",
-  "about_has_no_delimiter_separated_keyword_run",
+  "generated_sections_have_no_delimiter_separated_keyword_run",
   "about_closing_has_cta",
 ]);
-// Finding 3 (section-scope widening) is deferred to biocraft-singleshot-v5 and
-// must land as one change: widen the scan to every generated section, rename
-// About-only ids that no longer are, bump the digest, and re-import governed
-// A7 with the queued merge (A8 thin-seed / missing A7 repoUrl). Do NOT widen
-// the scanner while keeping `about_*` ids — a check id that fires on the spoken
-// intro while naming About produces self-misdescribing evidence the maker then
-// reads. Ratings against v4 are not comparable to v5 once those checks change.
+// v5 widens the keyword-run detector to every generated section. The ID names
+// that scope rather than implying an About-only failure. Ratings against v4 are
+// not comparable to v5: they ran under different mechanical checks.
 
 /** Exported so the boot-failure test can assert the same throw the module uses at import. */
 export function snapshotArtifact(directoryUrl, primaryName) {
@@ -308,6 +304,11 @@ const INVITATION_FRAME =
   /\b(?:available (?:for|to)|open (?:to|for)|currently taking on|taking on new|now booking|accepting|happy to|looking to|reach out|get in touch|contact me|email me|message me|send me|dm me|drop me|write to me|say hello|let'?s (?:connect|talk|chat)|work with me|hear from you|find me at|book a|schedule a)\b/i;
 
 const KEYWORD_RUN = /(?:([·|•])[^·|•\n]*){2,}/;
+const GENERATED_SECTIONS = Object.freeze([
+  "LinkedIn About",
+  "Spoken event introduction",
+  "Suggested headline",
+]);
 
 /** The closing: at most the trailing two paragraphs, never more. */
 function trailingWindow(paragraphs) {
@@ -369,14 +370,20 @@ export function validateRuntimeArtifactOutput(agentId, output) {
     });
   }
 
-  if (checks.includes("about_has_no_delimiter_separated_keyword_run")) {
-    const match = about.match(KEYWORD_RUN);
-    if (match) {
+  if (checks.includes("generated_sections_have_no_delimiter_separated_keyword_run")) {
+    for (const section of GENERATED_SECTIONS) {
+      const content = section === "LinkedIn About"
+        ? about
+        : markdownSection(output, section);
+      if (!content) continue;
+      const match = content.match(KEYWORD_RUN);
+      if (!match) continue;
       failures.push({
-        checkId: "about_has_no_delimiter_separated_keyword_run",
-        message: "LinkedIn About contains a delimiter-separated keyword run",
+        checkId: "generated_sections_have_no_delimiter_separated_keyword_run",
+        message: `${section} contains a delimiter-separated keyword run`,
+        section,
         sectionFound: true,
-        paragraphCount: paragraphs.length,
+        paragraphCount: content.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean).length,
         delimiter: match[1],
         segmentCount: match[0].split(match[1]).filter(Boolean).length,
       });

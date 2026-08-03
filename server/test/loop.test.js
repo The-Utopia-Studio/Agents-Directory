@@ -224,7 +224,7 @@ test("a proposal records the artifact it was derived against", async () => {
     notes: "the hook uses an em dash",
   });
   const [proposal] = await svc.runImprovement("A7");
-  assert.equal(proposal.targetArtifactVersion, "biocraft-singleshot-v4");
+  assert.equal(proposal.targetArtifactVersion, "biocraft-singleshot-v5");
   assert.match(proposal.targetArtifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(proposal.targetArtifactDigestAlgorithm, "sha256");
   assert.equal(proposal.targetAgentVersion, (await svc.getAgent("A7")).version);
@@ -251,7 +251,7 @@ test("approval is refused when the targeted artifact has moved", async () => {
     () => svc.approveImprovement("A7", proposal.id),
     (e) => {
       assert.equal(e.status, 409);
-      assert.match(e.message, /but the live artifact is biocraft-singleshot-v4/);
+      assert.match(e.message, /but the live artifact is biocraft-singleshot-v5/);
       return true;
     },
   );
