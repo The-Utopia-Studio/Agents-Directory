@@ -1,7 +1,7 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { nextDisplayId, todayIso } from "./lib/helpers";
-import { requireIdentity } from "./lib/auth";
+import { requireActorOrApprover, requireIdentity } from "./lib/auth";
 import {
   requestPriority,
   requestStatus,
@@ -13,6 +13,7 @@ export const listRequests = query({
     priority: v.optional(requestPriority),
   },
   handler: async (ctx, args) => {
+    await requireIdentity(ctx);
     let rows;
     if (args.status !== undefined) {
       rows = await ctx.db
@@ -43,7 +44,7 @@ export const createRequest = mutation({
     date: v.optional(v.string()), // ISO; defaults to today
   },
   handler: async (ctx, args) => {
-    await requireIdentity(ctx);
+    const actor = await requireIdentity(ctx);
     const existing = await ctx.db.query("requests").collect();
     const displayId = nextDisplayId(
       existing.map((r) => r.displayId),
@@ -54,6 +55,9 @@ export const createRequest = mutation({
       title: args.title.trim(),
       desc: args.desc.trim(),
       requestedBy: args.requestedBy.trim(),
+      createdBy: actor,
+      updatedBy: actor,
+      updatedAt: Date.now(),
       date: args.date || todayIso(),
       priority: args.priority,
       status: "Requested",
@@ -75,9 +79,13 @@ export const updateRequest = mutation({
     desc: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    await requireIdentity(ctx);
     const req = await ctx.db.get(args.id);
     if (!req) throw new Error(`Request ${args.id} not found`);
+    const actor = await requireActorOrApprover(
+      ctx,
+      req.createdBy,
+      "Updating this request",
+    );
     const { id, ...rest } = args;
     const patch: Record<string, unknown> = {};
     if (rest.status !== undefined) patch.status = rest.status;
@@ -86,7 +94,10 @@ export const updateRequest = mutation({
     if (rest.notes !== undefined) patch.notes = rest.notes.trim();
     if (rest.title !== undefined) patch.title = rest.title.trim();
     if (rest.desc !== undefined) patch.desc = rest.desc.trim();
-    await ctx.db.patch(id, patch);
+    if (!Object.keys(patch).length) {
+      throw new Error("At least one editable request field is required");
+    }
+    await ctx.db.patch(id, { ...patch, updatedBy: actor, updatedAt: Date.now() });
     return id;
   },
 });

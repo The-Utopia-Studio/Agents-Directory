@@ -165,6 +165,13 @@ export const actorIdentity = v.object({
   email: v.optional(v.string()),
 });
 
+export const ownershipClaimStatus = v.union(
+  v.literal("pending"),
+  v.literal("accepted"),
+  v.literal("rejected"),
+  v.literal("stale"),
+);
+
 export const evidenceSource = v.union(
   v.literal("real"),
   v.literal("mock"),

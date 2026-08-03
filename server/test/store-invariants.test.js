@@ -76,7 +76,7 @@ test("server backfills stored usability modes without client inference", async (
   );
 });
 
-test("server refreshes A7 display contract to match Biocraft v3", async () => {
+test("server does not overwrite A7 directory-owned display fields at boot", async () => {
   const store = await tempStore();
   await store.seedIfEmpty("agents", [
     {
@@ -94,19 +94,12 @@ test("server refreshes A7 display contract to match Biocraft v3", async () => {
 
   await seed(store);
   const a7 = await store.get("agents", "A7");
-  assert.equal(a7.successCriteria.length, 4);
-  assert.equal(
-    a7.successCriteria[0],
-    "LinkedIn About hook is 200 characters or fewer",
-  );
-  assert.equal(a7.guardrails.length, 10);
-  assert.match(
-    a7.guardrails.at(-1),
-    /CTA belongs only in the LinkedIn About/,
-  );
-  assert.match(a7.when, /refresh the bio every 2–3 months/);
-  assert.match(a7.sop, /check the fold on a phone/);
-  assert.match(a7.sop, /Set a reminder to refresh the bio in 2–3 months/);
+  assert.deepEqual(a7.successCriteria, [
+    "LinkedIn About hook is 300 characters or fewer",
+  ]);
+  assert.deepEqual(a7.guardrails, ["stale v2 display guardrail"]);
+  assert.equal(a7.when, "stale");
+  assert.equal(a7.sop, "stale");
 });
 
 test("file trace writes are a visible no-op and persist no raw input", async () => {

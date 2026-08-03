@@ -1,6 +1,11 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
-import { requireIdentity } from "./lib/auth";
+import {
+  requireActorOrApprover,
+  requireApprover,
+  requireIdentity,
+  type AuthorityActor,
+} from "./lib/auth";
 import {
   assertRunnerInvocation,
   assertUsabilityModes,
@@ -54,6 +59,62 @@ const registrationFields = {
   draftVersion: v.string(),
   draftArtifact: v.optional(artifactReference),
 };
+
+// This is deliberately a field allowlist, not a body spread. Identity,
+// display-id, version, release, and artifact fields do not appear here.
+const editableAgentFields = {
+  name: v.optional(v.string()),
+  tagline: v.optional(v.string()),
+  description: v.optional(v.string()),
+  platform: v.optional(platform),
+  status: v.optional(agentStatus),
+  category: v.optional(category),
+  owner: v.optional(v.string()),
+  model: v.optional(v.string()),
+  objective: v.optional(v.string()),
+  whenToUse: v.optional(v.string()),
+  sop: v.optional(v.string()),
+  outputs: v.optional(v.array(v.string())),
+  runner: v.optional(runner),
+  usabilityModes: v.optional(v.array(usabilityMode)),
+  invocation: v.optional(invocation),
+  autonomyLevel: v.optional(autonomyLevel),
+  executionContract: v.optional(executionContract),
+  evidenceContract: v.optional(evidenceContract),
+  optimisableUnit: v.optional(optimisableUnit),
+  guardrails: v.optional(v.array(guardrailDefinition)),
+  successCriteria: v.optional(
+    v.array(v.object({ id: v.string(), label: v.string() })),
+  ),
+  skills: v.optional(v.array(v.string())),
+  tools: v.optional(v.array(toolItem)),
+  context: v.optional(v.array(contextItem)),
+  accessUrl: v.optional(v.string()),
+  repoUrl: v.optional(v.string()),
+};
+
+function cleanText(value: string) {
+  return value.trim();
+}
+
+async function isArtifactBacked(ctx: any, agent: any): Promise<boolean> {
+  if (
+    agent.optimisableUnit?.kind !== "artifact" &&
+    agent.optimisableUnit?.kind !== "artifact-section"
+  ) {
+    return false;
+  }
+  if (!agent.currentApprovedVersionId) return false;
+  const version = await ctx.db.get(agent.currentApprovedVersionId);
+  return Boolean(version?.artifact);
+}
+
+function sameIdentity(
+  left: AuthorityActor | undefined,
+  right: AuthorityActor | undefined,
+) {
+  return left?.subject === right?.subject && left?.issuer === right?.issuer;
+}
 
 export const listAgents = query({
   args: {
@@ -177,6 +238,7 @@ export const registerAgent = mutation({
       category: args.category,
       owner: args.owner.trim(),
       initials: initialsFrom(args.owner),
+      ownerIdentity: actor,
       model: args.model,
       objective: args.objective,
       whenToUse: args.whenToUse,
@@ -213,18 +275,140 @@ export const registerAgent = mutation({
   },
 });
 
+/** Directory metadata only. Versions and release state have separate mutations. */
+export const updateAgent = mutation({
+  args: { agentId: v.id("agents"), ...editableAgentFields },
+  handler: async (ctx, args) => {
+    const agent = await ctx.db.get(args.agentId);
+    if (!agent) throw new Error(`Agent ${args.agentId} not found`);
+    await requireActorOrApprover(ctx, agent.ownerIdentity, "Editing this agent");
+
+    const { agentId, successCriteria, guardrails, ...rest } = args;
+    const supplied = [...Object.values(rest), successCriteria, guardrails].some(
+      (value) => value !== undefined,
+    );
+    if (!supplied) throw new Error("At least one editable agent field is required");
+
+    if (rest.runner !== undefined || rest.invocation !== undefined) {
+      assertRunnerInvocation(
+        rest.runner ?? agent.runner,
+        rest.invocation ?? agent.invocation,
+      );
+    }
+    if (rest.usabilityModes !== undefined) {
+      assertUsabilityModes(rest.runner ?? agent.runner, rest.usabilityModes);
+    }
+
+    if (
+      (guardrails !== undefined || successCriteria !== undefined) &&
+      (await isArtifactBacked(ctx, agent))
+    ) {
+      throw new Error(
+        "Artifact-backed guardrails and success criteria are read-only; create a new artifact version and review it instead",
+      );
+    }
+
+    const patch: Record<string, unknown> = {};
+    for (const [key, value] of Object.entries(rest)) {
+      if (value !== undefined) {
+        patch[key] = typeof value === "string" ? cleanText(value) : value;
+      }
+    }
+    if (guardrails !== undefined) patch.guardrails = guardrails;
+    if (successCriteria !== undefined) {
+      patch.outcomeContract = {
+        ...agent.outcomeContract,
+        successCriteria,
+      };
+    }
+    await ctx.db.patch(agentId, patch);
+    return agentId;
+  },
+});
+
+/** A claimant proves their own Clerk identity; an approver decides the transfer. */
+export const requestOwnershipClaim = mutation({
+  args: { agentId: v.id("agents") },
+  handler: async (ctx, args) => {
+    const claimant = await requireIdentity(ctx);
+    const agent = await ctx.db.get(args.agentId);
+    if (!agent) throw new Error(`Agent ${args.agentId} not found`);
+    const existing = await ctx.db
+      .query("ownershipClaims")
+      .withIndex("by_agentId_and_claimant", (q) =>
+        q.eq("agentId", args.agentId).eq("claimant.subject", claimant.subject),
+      )
+      .collect();
+    if (
+      existing.some(
+        (claim) =>
+          claim.status === "pending" && claim.claimant.issuer === claimant.issuer,
+      )
+    ) {
+      throw new Error("You already have a pending ownership claim for this agent");
+    }
+    return await ctx.db.insert("ownershipClaims", {
+      agentId: args.agentId,
+      claimant,
+      expectedOwnerIdentity: agent.ownerIdentity,
+      status: "pending",
+      requestedAt: Date.now(),
+    });
+  },
+});
+
+export const transferOwnership = mutation({
+  args: { claimId: v.id("ownershipClaims") },
+  handler: async (ctx, args) => {
+    const approver = await requireApprover(ctx);
+    const claim = await ctx.db.get(args.claimId);
+    if (!claim) throw new Error(`Ownership claim ${args.claimId} not found`);
+    if (claim.status !== "pending") throw new Error("Ownership claim is no longer pending");
+    const agent = await ctx.db.get(claim.agentId);
+    if (!agent) throw new Error(`Agent ${claim.agentId} not found`);
+    if (!sameIdentity(agent.ownerIdentity, claim.expectedOwnerIdentity)) {
+      await ctx.db.patch(claim._id, {
+        status: "stale",
+        resolvedBy: approver,
+        resolvedAt: Date.now(),
+      });
+      throw new Error("Ownership changed after this claim was made; request a new claim");
+    }
+    const now = Date.now();
+    await ctx.db.patch(agent._id, { ownerIdentity: claim.claimant });
+    await ctx.db.patch(claim._id, {
+      status: "accepted",
+      resolvedBy: approver,
+      resolvedAt: now,
+    });
+    const eventId = await ctx.db.insert("ownershipEvents", {
+      agentId: agent._id,
+      claimId: claim._id,
+      previousOwnerIdentity: agent.ownerIdentity,
+      newOwnerIdentity: claim.claimant,
+      transferredBy: approver,
+      transferredAt: now,
+    });
+    return { agentId: agent._id, eventId };
+  },
+});
+
 export const linkOutcomeEvalSet = mutation({
   args: {
     agentId: v.id("agents"),
     evalSetId: v.id("evalSets"),
   },
   handler: async (ctx, args) => {
-    await requireIdentity(ctx);
     const [agent, evalSet] = await Promise.all([
       ctx.db.get(args.agentId),
       ctx.db.get(args.evalSetId),
     ]);
     if (!agent) throw new Error(`Agent ${args.agentId} not found`);
+    await requireActorOrApprover(
+      ctx,
+      agent.ownerIdentity,
+      "Linking this agent's eval set",
+    );
     if (!evalSet || evalSet.agentId !== args.agentId) {
       throw new Error("Eval set must belong to the same agent");
     }

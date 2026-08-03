@@ -193,7 +193,7 @@ describe("Order 1 authority model", () => {
     ).rejects.toThrow("Authentication required");
   });
 
-  test("request creation and update require identity, while authenticated writes succeed", async () => {
+  test("request reads, creation and update require identity", async () => {
     const base = convexTest(schema, modules);
     const request = {
       title: "Authenticated request",
@@ -207,7 +207,11 @@ describe("Order 1 authority model", () => {
     ).rejects.toMatchObject({
       data: expect.objectContaining({ status: 401 }),
     });
-    expect(await base.query(authorityApi.requests.listRequests, {})).toEqual([]);
+    await expect(
+      base.query(authorityApi.requests.listRequests, {}),
+    ).rejects.toMatchObject({
+      data: expect.objectContaining({ status: 401 }),
+    });
 
     const authenticated = base.withIdentity({
       name: "Operator",
@@ -217,6 +221,7 @@ describe("Order 1 authority model", () => {
       authorityApi.requests.createRequest,
       request,
     );
+    expect(await authenticated.query(authorityApi.requests.listRequests, {})).toHaveLength(1);
     await expect(
       base.mutation(authorityApi.requests.updateRequest, {
         id: requestId,

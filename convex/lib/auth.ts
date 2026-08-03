@@ -56,3 +56,29 @@ export async function requireApprover(ctx: AuthCtx): Promise<AuthorityActor> {
   }
   return authorityActor(identity);
 }
+
+/**
+ * Resource edits are owner-or-approver. A display name is never an authority
+ * check: the stored owner identity and signed Clerk identity must match.
+ */
+export async function requireActorOrApprover(
+  ctx: AuthCtx,
+  owner: AuthorityActor | undefined,
+  resource: string,
+): Promise<AuthorityActor> {
+  const identity = await authenticatedIdentity(ctx);
+  const actor = authorityActor(identity);
+  if (identity.role === "approver") return actor;
+  if (
+    owner &&
+    owner.subject === actor.subject &&
+    owner.issuer === actor.issuer
+  ) {
+    return actor;
+  }
+  throw new ConvexError({
+    code: "FORBIDDEN",
+    status: 403,
+    message: `${resource} requires the assigned owner or a release approver`,
+  });
+}

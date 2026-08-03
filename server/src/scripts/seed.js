@@ -126,41 +126,8 @@ export async function seed(store) {
   await store.ready();
   const a = await store.seedIfEmpty("agents", SEED_AGENTS);
   const serverOwnedAgentsAdded = await upsertServerOwnedAgents(store);
-  await syncA7DisplayContract(store);
   const usabilityModesBackfilled = await backfillStoredUsabilityModes(store);
   return { agents: a, serverOwnedAgentsAdded, usabilityModesBackfilled };
-}
-
-// The Biocraft artifact owns these displayed contract fields. Refresh them on
-// boot so a stored record cannot silently show v2's 300-character rule or omit
-// a guardrail while the runtime executes v3.
-async function syncA7DisplayContract(store) {
-  const seededA7 = SEED_AGENTS.find((agent) => agent.id === "A7");
-  const storedA7 = await store.get("agents", "A7");
-  if (!storedA7) return;
-  const artifactDisplayFields = [
-    "name",
-    "objective",
-    "successCriteria",
-    "guardrails",
-    "invocation",
-    "usabilityModes",
-    "when",
-    "sop",
-    "skills",
-    "tools",
-    "context",
-  ];
-  const needsSync = artifactDisplayFields.some(
-    (key) => JSON.stringify(storedA7[key]) !== JSON.stringify(seededA7[key]),
-  );
-  if (!needsSync) return;
-  await store.put("agents", {
-    ...storedA7,
-    ...Object.fromEntries(
-      artifactDisplayFields.map((key) => [key, seededA7[key]]),
-    ),
-  });
 }
 
 // Run directly: `npm run seed`

@@ -17,6 +17,7 @@ import {
   guardrailResult,
   importProvenance,
   invocation,
+  ownershipClaimStatus,
   optimisableUnit,
   outcomeContract,
   platform,
@@ -46,6 +47,8 @@ export default defineSchema({
     category,
     owner: v.string(),
     initials: v.string(),
+    // Display ownership is a string. Authority uses this signed identity.
+    ownerIdentity: v.optional(actorIdentity),
     model: v.optional(v.string()),
     // Directory-facing workflow metadata. Optional so existing imported A7/A8
     // rows stay valid until the authorised merged re-import fills them.
@@ -76,6 +79,30 @@ export default defineSchema({
     .index("by_status", ["status"])
     .index("by_owner", ["owner"])
     .index("by_displayId", ["displayId"]),
+
+  ownershipClaims: defineTable({
+    agentId: v.id("agents"),
+    claimant: actorIdentity,
+    // A claim cannot silently transfer an agent after a later reassignment.
+    expectedOwnerIdentity: v.optional(actorIdentity),
+    status: ownershipClaimStatus,
+    requestedAt: v.number(),
+    resolvedBy: v.optional(actorIdentity),
+    resolvedAt: v.optional(v.number()),
+  })
+    .index("by_agentId_and_status", ["agentId", "status"])
+    .index("by_agentId_and_claimant", ["agentId", "claimant.subject"]),
+
+  ownershipEvents: defineTable({
+    agentId: v.id("agents"),
+    claimId: v.id("ownershipClaims"),
+    previousOwnerIdentity: v.optional(actorIdentity),
+    newOwnerIdentity: actorIdentity,
+    transferredBy: actorIdentity,
+    transferredAt: v.number(),
+  })
+    .index("by_agentId", ["agentId"])
+    .index("by_claimId", ["claimId"]),
 
   agentVersions: defineTable({
     agentId: v.id("agents"),
@@ -204,6 +231,9 @@ export default defineSchema({
     title: v.string(),
     desc: v.string(),
     requestedBy: v.string(),
+    createdBy: actorIdentity,
+    updatedBy: actorIdentity,
+    updatedAt: v.number(),
     date: v.string(),
     priority: requestPriority,
     status: requestStatus,
