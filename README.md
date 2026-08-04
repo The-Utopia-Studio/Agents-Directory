@@ -391,6 +391,15 @@ matched zero tests — re-check the spelling.
 These are deliberate and known. Nothing here is aspirational — if a thing is
 off, it is off.
 
+- **Mechanical compare UI is unverified in a browser.** The A7 mechanical-compare
+  API (`POST /api/agents/A7/mechanical-compare`, preview, and mechanical-results)
+  is tested and working (coverage vs quality experiments, canned provenance
+  labelled as plumbing, live path wired). The agent-detail compare panel has
+  not been exercised end-to-end in a browser against a running loop service —
+  local static serving without `deployment-config.js` blocks the governed
+  directory UI, so recent verification was API-only. Do not treat the panel as
+  confirmed until someone runs it with Clerk/Convex config generated and the
+  loop pointed at the same origin.
 - **On Railway, `DATA_DIR` must be `/data`.** Container disk is ephemeral.
   The loop service detects Railway via `RAILWAY_ENVIRONMENT` /
   `RAILWAY_SERVICE_ID` and refuses to start unless `DATA_DIR` is exactly

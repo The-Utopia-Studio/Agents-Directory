@@ -1141,6 +1141,7 @@ function renderDetail(a){
           ${h.notes?`<div class="eval-note">${escHtml(h.notes)}</div>`:""}
           ${h.knownIssues?`<div class="eval-issue"><b>Known issues:</b> ${escHtml(h.knownIssues)}</div>`:""}
         </div>`).join("")}</div>`:renderEmptyEval(a)}
+      ${a.id==="A7"&&window.DirectoryAPI&&DirectoryAPI.enabled?renderMechanicalComparePanel(a):""}
     </div>
 
     ${a.changelog&&a.changelog.length?`<div class="section"><div class="section-title">Version history</div><div class="section-body">${a.changelog.slice().reverse().map(c=>`<div class="change-row"><span class="change-ver">v${escHtml(c.version)}</span><span class="change-date">${formatDate(c.date)}</span><span class="change-note">${escHtml(c.note)}</span></div>`).join("")}</div></div>`:""}
@@ -1409,6 +1410,229 @@ async function submitRunFeedback(id,button){
     form.querySelectorAll("input,textarea,button").forEach(el=>el.disabled=true);
     status.textContent=notes?"Rating and notes saved.":"Rating saved (no notes).";
   }catch(e){button.disabled=false;status.textContent=`Feedback failed: ${String(e.message||e)}`}
+}
+
+function renderMechanicalComparePanel(a){
+  queueMicrotask(()=>loadMechanicalInventoryUI(a.id));
+  return `<div class="mech-compare" id="mech-compare-panel">
+    <h4>MECHANICAL CHECKS <span class="golden-sub">not an eval score · does not feed fleet health · not written to evalHistory</span></h4>
+    <div id="mech-inventory" class="mech-inventory">Loading inventory…</div>
+    <div class="mech-compare-controls">
+      <label>Golden case <select id="mech-case"><option value="a7-mira-okonkwo-v1">a7-mira-okonkwo-v1 (synthetic)</option></select></label>
+      <label>Score version <select id="mech-score-version"><option value="biocraft-singleshot-v5">v5</option><option value="biocraft-singleshot-v6" selected>v6</option></select></label>
+      <label>Left <select id="mech-left"><option value="biocraft-singleshot-v5" selected>v5</option><option value="biocraft-singleshot-v6">v6</option></select></label>
+      <label>Right <select id="mech-right"><option value="biocraft-singleshot-v5">v5</option><option value="biocraft-singleshot-v6" selected>v6</option></select></label>
+      <label>Ruler (quality only) <select id="mech-ruler"><option value="biocraft-singleshot-v6" selected>v6 checks</option><option value="biocraft-singleshot-v5">v5 checks</option></select></label>
+    </div>
+    <div class="mech-compare-actions">
+      <button class="btn btn-sm" onclick="runMechanicalScoreUI('${a.id}','canned')">Score version (canned)</button>
+      <button class="btn btn-sm" onclick="runMechanicalScoreUI('${a.id}','live')">Score version (live · paid)</button>
+      <button class="btn btn-sm" onclick="runMechanicalCompareUI('${a.id}','check_coverage','canned')">A · Check coverage</button>
+      <button class="btn btn-sm" onclick="runMechanicalCompareUI('${a.id}','output_quality','canned')">B · Quality plumbing</button>
+      <button class="btn btn-sm btn-primary" onclick="runMechanicalCompareUI('${a.id}','output_quality','live')">B · Output quality (live · paid)</button>
+      <button class="btn btn-sm" onclick="previewMechanicalCompareUI('${a.id}')">Preview comparability</button>
+    </div>
+    <div class="mech-compare-hint">A = same output, different check sets (lower score = better detection). B live = two prompt runs, one ruler (only that answers “did the improvement help”). B canned = plumbing only. Live buttons confirm before spending.</div>
+    <div id="mech-compare-out" class="mech-compare-out"></div>
+  </div>`;
+}
+
+async function loadMechanicalInventoryUI(id){
+  const box=document.getElementById("mech-inventory");if(!box)return;
+  try{
+    const inv=await DirectoryAPI.mechanicalInventory(id);
+    const failed=(inv.artifactVersions||[]).filter(v=>v.verification==="failed");
+    const ok=(inv.artifactVersions||[]).filter(v=>v.verification==="ok");
+    box.innerHTML=`<div class="mech-inventory-summary">${escHtml(inv.summary||"")}</div>
+      <ul class="mech-inventory-list">
+        ${(inv.goldenCases||[]).map(c=>`<li>Case <code>${escHtml(c.id)}</code>${c.synthetic?" · synthetic":""} · ${c.sourceGroundingCheckCount||0} source-grounding checks</li>`).join("")}
+        ${ok.map(v=>`<li>Version <code>${escHtml(v.artifactVersion)}</code> · digest <code>${escHtml((v.artifactDigest||"").slice(0,12))}…</code> · ${v.checkCount} checks · verified</li>`).join("")}
+        ${failed.map(v=>`<li class="mech-verify-fail">Version <code>${escHtml(v.artifactVersion)}</code> · verification failed — not scoreable · ${escHtml(v.verificationError||"digest mismatch")}</li>`).join("")}
+      </ul>`;
+    const scoreSel=document.getElementById("mech-score-version");
+    const leftSel=document.getElementById("mech-left");
+    const rightSel=document.getElementById("mech-right");
+    const rulerSel=document.getElementById("mech-ruler");
+    const opts=ok.map(v=>`<option value="${escHtml(v.artifactVersion)}">${escHtml(v.artifactVersion)}</option>`).join("");
+    if(scoreSel&&opts){scoreSel.innerHTML=opts;const prefer=ok.find(v=>v.artifactVersion.includes("v6"))||ok[ok.length-1];if(prefer)scoreSel.value=prefer.artifactVersion}
+    if(leftSel&&opts){leftSel.innerHTML=opts;leftSel.value=ok[0]?.artifactVersion||leftSel.value}
+    if(rightSel&&opts){rightSel.innerHTML=opts;rightSel.value=(ok.find(v=>v.artifactVersion.includes("v6"))||ok[ok.length-1])?.artifactVersion||rightSel.value}
+    if(rulerSel&&opts){rulerSel.innerHTML=opts;rulerSel.value=(ok.find(v=>v.artifactVersion.includes("v6"))||ok[ok.length-1])?.artifactVersion||rulerSel.value}
+  }catch(e){
+    box.innerHTML=`<div class="mech-refuse">Inventory unavailable: ${escHtml(String(e.message||e))}. Point localStorage.directory_api_base at a loop service that has these routes.</div>`;
+  }
+}
+
+function mechCompareVersions(){
+  return {
+    caseId:document.getElementById("mech-case")?.value||"a7-mira-okonkwo-v1",
+    scoreVersion:document.getElementById("mech-score-version")?.value||"biocraft-singleshot-v6",
+    leftVersion:document.getElementById("mech-left")?.value||"biocraft-singleshot-v5",
+    rightVersion:document.getElementById("mech-right")?.value||"biocraft-singleshot-v6",
+    rulerVersion:document.getElementById("mech-ruler")?.value||"biocraft-singleshot-v6",
+  };
+}
+
+function mechProvenanceBadge(r){
+  const src=r.outputSource||r.outputProvenance||"unknown";
+  if(src==="live"||r.outputProvenance==="live_generation"){
+    return `<div class="mech-provenance mech-provenance-live">Outputs: live model runs under each artifact prompt</div>`;
+  }
+  if(src==="canned"||r.outputProvenance==="canned_fixtures"){
+    return `<div class="mech-provenance mech-provenance-canned">Outputs: canned fixtures (not model runs)</div>`;
+  }
+  return `<div class="mech-provenance">Outputs: ${escHtml(String(src))}</div>`;
+}
+
+function renderMechCheckTable(left,right,leftLabel,rightLabel){
+  const ids=[...new Set([
+    ...(left?.checkResults||[]).map(r=>r.checkId),
+    ...(right?.checkResults||[]).map(r=>r.checkId),
+  ])].sort();
+  if(!ids.length)return"";
+  const statusOf=(side,id)=>{
+    const row=(side?.checkResults||[]).find(r=>r.checkId===id);
+    if(!row)return"absent";
+    const hist=row.historicalImplementation?" · historical":"";
+    return `${row.status}${hist}`;
+  };
+  return `<div class="mech-table-wrap"><table class="mech-table">
+    <thead><tr><th>Check id</th><th>${escHtml(leftLabel||"Left")}</th><th>${escHtml(rightLabel||"Right")}</th></tr></thead>
+    <tbody>${ids.map(id=>{
+      const L=statusOf(left,id),R=statusOf(right,id);
+      const changed=L!==R?' class="mech-row-changed"':"";
+      return `<tr${changed}><td><code>${escHtml(id)}</code></td><td>${escHtml(L)}</td><td>${escHtml(R)}</td></tr>`;
+    }).join("")}</tbody>
+  </table></div>`;
+}
+
+function renderMechScoreSide(side,label){
+  if(!side)return"";
+  if(side.verification==="failed"){
+    return `<div class="mech-side mech-side-fail"><div class="mech-side-head">${escHtml(label)}</div>
+      <div class="mech-refuse">Verification failed — not a score. ${escHtml(side.error||side.verificationError||"digest mismatch")}</div></div>`;
+  }
+  const src=side.outputSource;
+  const digest=side.artifactDigest?String(side.artifactDigest):"";
+  return `<div class="mech-side"><div class="mech-side-head">${escHtml(label)} · <code>${escHtml(side.artifactVersion||"")}</code></div>
+    <div class="mech-score">${side.mechanicalCheckScore==null?"—":side.mechanicalCheckScore}<span class="mech-score-unit"> mechanical check score</span></div>
+    <div class="mech-meta">digest <code>${escHtml(digest?digest.slice(0,16)+"…":"—")}</code></div>
+    ${src?`<div class="mech-meta">output source: ${escHtml(src)}</div>`:""}
+    ${side.scoredWith?`<div class="mech-meta">scored with ruler <code>${escHtml(side.scoredWith)}</code></div>`:""}
+    <div class="mech-meta">passed ${side.passed?.length||0} · failed ${side.failed?.length||0}</div>
+  </div>`;
+}
+
+function renderMechanicalScoreResult(r){
+  if(r.verification==="failed"||r.ok===false){
+    return `<div class="mech-refuse">Verification failed — not a score. ${escHtml(r.error||"Fixture digest does not match declared digest.")}</div>`;
+  }
+  const provenance=mechProvenanceBadge(r);
+  const rows=(r.checkResults||[]).map(row=>{
+    const hist=row.historicalImplementation?" · historicalImplementation":"";
+    return `<tr><td><code>${escHtml(row.checkId)}</code>${row.family?` <span class="mech-fam">${escHtml(row.family)}</span>`:""}</td><td>${escHtml(row.status)}${escHtml(hist)}</td></tr>`;
+  }).join("");
+  return `${provenance}
+    <div class="mech-banner mech-banner-coverage">Single-version mechanical check score · ${escHtml(r.artifactVersion||"")} · digest <code>${escHtml((r.artifactDigest||"").slice(0,16))}…</code></div>
+    <div class="mech-score">${r.mechanicalCheckScore==null?"—":r.mechanicalCheckScore}<span class="mech-score-unit"> mechanical check score</span></div>
+    <div class="mech-meta">${escHtml(r.findingKind||"")} · does not feed fleet health · not written to evalHistory</div>
+    <div class="mech-table-wrap"><table class="mech-table"><thead><tr><th>Check id</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function renderMechanicalCompareResult(r){
+  const provenance=mechProvenanceBadge(r);
+  if(r.experiment==="check_coverage"){
+    const refuse=`<div class="mech-refuse">Not comparable — the check set changed between these versions. This is check coverage only. Lower mechanical check score = better detection on the same output. No quality delta.</div>`;
+    return `${provenance}${r.checkSetsDiffer?refuse:""}
+      <div class="mech-banner mech-banner-coverage">Experiment A · check coverage · ${escHtml(r.interpretation||"")}</div>
+      <div class="mech-pair">${renderMechScoreSide({...r.left,outputSource:r.outputSource},"Left")}${renderMechScoreSide({...r.right,outputSource:r.outputSource},"Right")}</div>
+      <div class="mech-meta">Comparable quality number: refused (${r.mechanicalCheckScoreDelta===null?"null":escHtml(String(r.mechanicalCheckScoreDelta))})</div>
+      ${r.coverageReading?`<div class="mech-reading">${escHtml(r.coverageReading.detail)}</div>`:""}
+      ${renderMechCheckTable(r.left,r.right,r.left?.artifactVersion,r.right?.artifactVersion)}
+      ${renderMechChanged(r.changed)}`;
+  }
+  if(r.experiment==="output_quality"){
+    const delta=r.mechanicalCheckScoreDelta;
+    const deltaLabel=delta==null?"—":(delta>0?`+${delta}`:String(delta));
+    const isFinding=r.answersDidImprovementHelp===true&&r.findingKind==="prompt_comparison";
+    const findingBanner=isFinding
+      ?`<div class="mech-banner mech-banner-quality">Experiment B · output quality (live) · ruler <code>${escHtml(r.rulerVersion||"")}</code></div>
+         <div class="mech-delta">Ruler score delta (right − left): ${escHtml(deltaLabel)} · live pair — may answer whether the prompt change helped</div>`
+      :`<div class="mech-banner mech-banner-plumbing">Experiment B · plumbing verification · ruler <code>${escHtml(r.rulerVersion||"")}</code></div>
+         <div class="mech-refuse">Fixture comparison — verifies the scoring path, not the prompts. Delta ${escHtml(deltaLabel)} is not a finding that an improvement helped.</div>`;
+    return `${provenance}${findingBanner}
+      ${r.checkSetsDiffer?`<div class="mech-note">${escHtml(r.checkSetNote||"Artifact check sets differ; both outputs scored with the ruler.")}</div>`:""}
+      <div class="mech-pair">${renderMechScoreSide(r.left,"Left artifact")}${renderMechScoreSide(r.right,"Right artifact")}</div>
+      ${renderMechCheckTable(r.left,r.right,r.left?.artifactVersion,r.right?.artifactVersion)}
+      ${renderMechChanged(r.changed)}`;
+  }
+  return `<div class="mech-refuse">${escHtml(r.note||r.error||"Unknown compare result")}</div>`;
+}
+
+function renderMechChanged(changed){
+  if(!changed||!changed.length)return`<div class="mech-meta">No check status changes.</div>`;
+  return `<div class="mech-changed"><div class="mech-meta">Check status changes</div><ul>${changed.map(c=>`<li><code>${escHtml(c.checkId)}</code>: ${escHtml(c.from)} → ${escHtml(c.to)}</li>`).join("")}</ul></div>`;
+}
+
+async function previewMechanicalCompareUI(id){
+  const box=document.getElementById("mech-compare-out");if(!box)return;
+  const v=mechCompareVersions();
+  box.innerHTML="Checking comparability…";
+  try{
+    const p=await DirectoryAPI.mechanicalComparePreview(id,v.leftVersion,v.rightVersion);
+    if(p.checkSetsDiffer){
+      box.innerHTML=`<div class="mech-refuse">${escHtml(p.note||"Not comparable — the check set changed between these versions")}</div>
+        <div class="mech-note">Use Experiment A for coverage on one output, or Experiment B with an explicit ruler for prompt quality.</div>
+        <div class="mech-meta">Left checks: ${(p.leftChecks||[]).map(c=>`<code>${escHtml(c)}</code>`).join(" ")}</div>
+        <div class="mech-meta">Right checks: ${(p.rightChecks||[]).map(c=>`<code>${escHtml(c)}</code>`).join(" ")}</div>`;
+    }else{
+      box.innerHTML=`<div class="mech-note">Check sets match. Live output quality can use either version as ruler.</div>`;
+    }
+  }catch(e){box.innerHTML=`<div class="mech-refuse">${escHtml(String(e.message||e))}</div>`}
+}
+
+async function runMechanicalScoreUI(id,outputSource){
+  const box=document.getElementById("mech-compare-out");if(!box)return;
+  const v=mechCompareVersions();
+  const src=outputSource||"canned";
+  if(src==="live"&&!confirm(`Live score calls Anthropic once under ${v.scoreVersion}. Spend API budget?`)){
+    box.innerHTML=`<div class="mech-meta">Live score cancelled.</div>`;
+    return;
+  }
+  box.innerHTML=src==="live"?`Scoring ${escHtml(v.scoreVersion)} (live Anthropic call)…`:`Scoring ${escHtml(v.scoreVersion)} (canned, no paid call)…`;
+  try{
+    const r=await DirectoryAPI.mechanicalScore(id,{
+      caseId:v.caseId,
+      artifactVersion:v.scoreVersion,
+      outputSource:src,
+    });
+    box.innerHTML=renderMechanicalScoreResult(r);
+  }catch(e){box.innerHTML=`<div class="mech-refuse">${escHtml(String(e.message||e))}</div>`}
+}
+
+async function runMechanicalCompareUI(id,experiment,outputSource){
+  const box=document.getElementById("mech-compare-out");if(!box)return;
+  const v=mechCompareVersions();
+  const src=outputSource||"canned";
+  if(src==="live"&&!confirm("Live output quality calls Anthropic twice (left prompt + right prompt). Spend API budget?")){
+    box.innerHTML=`<div class="mech-meta">Live compare cancelled.</div>`;
+    return;
+  }
+  box.innerHTML=src==="live"
+    ?`Running Experiment B live (two Anthropic calls)…`
+    :`Running ${experiment==="check_coverage"?"Experiment A · check coverage":"Experiment B · quality plumbing"} (canned)…`;
+  try{
+    const body={
+      experiment,
+      caseId:v.caseId,
+      leftVersion:v.leftVersion,
+      rightVersion:v.rightVersion,
+      outputSource:src,
+      ...(experiment==="output_quality"?{rulerVersion:v.rulerVersion}:{}),
+    };
+    const r=await DirectoryAPI.mechanicalCompare(id,body);
+    box.innerHTML=renderMechanicalCompareResult(r);
+  }catch(e){box.innerHTML=`<div class="mech-refuse">${escHtml(String(e.message||e))}</div>`}
 }
 
 async function recallContext(id){

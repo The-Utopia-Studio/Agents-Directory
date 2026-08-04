@@ -777,6 +777,112 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       return store.put("researchQueue", it);
     },
 
+    /**
+     * Mechanical-check inventory + score + compare.
+     * Never writes evalHistory; never feeds fleet health.
+     */
+    async mechanicalInventory(agentId) {
+      if (agentId !== "A7") {
+        throw httpError(400, "Mechanical inventory is only wired for A7");
+      }
+      const { getMechanicalInventory } = await import(
+        "../eval/mechanicalInventory.js"
+      );
+      return getMechanicalInventory(agentId);
+    },
+
+    async mechanicalScore(agentId, body = {}) {
+      if (agentId !== "A7") {
+        throw httpError(400, "Mechanical score is only wired for A7");
+      }
+      const {
+        caseId = "a7-mira-okonkwo-v1",
+        artifactVersion = "biocraft-singleshot-v6",
+        outputSource = "canned",
+      } = body;
+      try {
+        const { runMechanicalScore } = await import("../eval/runCompare.js");
+        return await runMechanicalScore({
+          caseId,
+          artifactVersion,
+          outputSource,
+          agentId,
+          config,
+          store,
+        });
+      } catch (error) {
+        throw httpError(error.status || 500, error.message);
+      }
+    },
+
+    /**
+     * Mechanical-check compare. Two experiments — never a bare score delta:
+     *   check_coverage  — same output, different check sets (detection)
+     *   output_quality  — different outputs, one ruler; canned = plumbing only,
+     *                     live = may answer whether the prompt change helped
+     */
+    async mechanicalCompare(agentId, body = {}) {
+      if (agentId !== "A7") {
+        throw httpError(400, "Mechanical compare is only wired for A7");
+      }
+      const {
+        experiment,
+        caseId = "a7-mira-okonkwo-v1",
+        leftVersion = "biocraft-singleshot-v5",
+        rightVersion = "biocraft-singleshot-v6",
+        rulerVersion,
+        outputSource = "canned",
+      } = body;
+      if (!experiment) {
+        throw httpError(
+          400,
+          "experiment is required: check_coverage or output_quality. " +
+            "A bare score delta across versions is refused.",
+        );
+      }
+      try {
+        const { runMechanicalCompare } = await import("../eval/runCompare.js");
+        return await runMechanicalCompare(store, {
+          experiment,
+          caseId,
+          leftVersion,
+          rightVersion,
+          rulerVersion,
+          outputSource,
+          agentId,
+          config,
+        });
+      } catch (error) {
+        throw httpError(error.status || 500, error.message);
+      }
+    },
+
+    async mechanicalComparePreview(agentId, query = {}) {
+      if (agentId !== "A7") {
+        throw httpError(400, "Mechanical compare is only wired for A7");
+      }
+      const leftVersion = query.leftVersion || "biocraft-singleshot-v5";
+      const rightVersion = query.rightVersion || "biocraft-singleshot-v6";
+      const { previewVersionComparability } = await import(
+        "../eval/runCompare.js"
+      );
+      try {
+        return previewVersionComparability(leftVersion, rightVersion);
+      } catch (error) {
+        throw httpError(error.status || 500, error.message);
+      }
+    },
+
+    async listMechanicalResults(agentId, { limit = 20 } = {}) {
+      const rows = await store.query(
+        "mechanicalResults",
+        (row) => row.agentId === agentId,
+      );
+      return rows
+        .sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")))
+        .slice(0, limit);
+    },
+
     // ── fleet health roll-up ──
     async fleetHealth() {
       const agents = await store.all("agents");

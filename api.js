@@ -128,6 +128,18 @@ window.DirectoryAPI = (function () {
     loopLearnings: (n = 5) => j("GET", `/api/loop/learnings?limit=${n}`),
     loopQueue: (status) => j("GET", `/api/loop/queue${status ? "?status=" + status : ""}`),
     runGoal: (id, opts) => j("POST", `/api/agents/${id}/goal`, opts || {}),
+    mechanicalInventory: (id) => j("GET", `/api/agents/${id}/mechanical-inventory`),
+    mechanicalScore: (id, body) =>
+      j("POST", `/api/agents/${id}/mechanical-score`, body),
+    mechanicalComparePreview: (id, leftVersion, rightVersion) =>
+      j(
+        "GET",
+        `/api/agents/${id}/mechanical-compare/preview?leftVersion=${encodeURIComponent(leftVersion)}&rightVersion=${encodeURIComponent(rightVersion)}`,
+      ),
+    mechanicalCompare: (id, body) =>
+      j("POST", `/api/agents/${id}/mechanical-compare`, body),
+    mechanicalResults: (id, n = 10) =>
+      j("GET", `/api/agents/${id}/mechanical-results?limit=${n}`),
   };
 
   api.ready = api.probe();

@@ -119,4 +119,23 @@ export function registerRoutes(router, svc, engine, config = {}) {
   router.post("/api/agents/:id/improvements/:pid/reopen", async ({ params }) =>
     svc.reopenVerifierRejectedImprovement(params.id, params.pid)
   );
+
+  // Mechanical-check compare (not fleet-health eval). Two experiments only.
+  router.get("/api/agents/:id/mechanical-inventory", async ({ params }) =>
+    svc.mechanicalInventory(params.id)
+  );
+  router.post("/api/agents/:id/mechanical-score", async ({ params, body }) =>
+    reply(201, await svc.mechanicalScore(params.id, body || {}))
+  );
+  router.get("/api/agents/:id/mechanical-compare/preview", async ({ params, query }) =>
+    svc.mechanicalComparePreview(params.id, query || {})
+  );
+  router.post("/api/agents/:id/mechanical-compare", async ({ params, body }) =>
+    reply(201, await svc.mechanicalCompare(params.id, body || {}))
+  );
+  router.get("/api/agents/:id/mechanical-results", async ({ params, query }) => ({
+    results: await svc.listMechanicalResults(params.id, {
+      limit: Number(query.limit) || 20,
+    }),
+  }));
 }

@@ -55,6 +55,9 @@ export const A7_MIRA_OKONKWO_V1 = Object.freeze({
   getCannedBadOutput() {
     return readGoldenFile("a7-mira-okonkwo-v1", "canned-bad-output.md");
   },
+  getCannedImprovedOutput() {
+    return readGoldenFile("a7-mira-okonkwo-v1", "canned-improved-output.md");
+  },
 });
 
 export const GOLDEN_CASES_BY_AGENT = Object.freeze({
