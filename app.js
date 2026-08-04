@@ -1246,6 +1246,9 @@ async function loadRunCapability(id){
     if(!capabilityIdentityMatches(a,capability)){
       delete runCapabilities[id];
       showCapabilityFailure(a,{slot,installSlot,handoffSlot},GOVERNED_RUNTIME_MISMATCH);
+      if(id==="A7"&&slot&&authCanWrite()&&window.ConvexDirectory&&typeof ConvexDirectory.releaseApprovedA7V6==="function"){
+        slot.innerHTML+=` <button class="btn btn-sm btn-primary" onclick="releaseApprovedA7V6(this)">Approve governed v6</button>`;
+      }
       return;
     }
     capability.governedIdentityMatched=true;
@@ -1274,6 +1277,20 @@ async function loadRunCapability(id){
     delete runCapabilities[id];
     const detail=e&&e.status===404?`${id} is not registered on the server.`:String((e&&e.message)||e);
     showCapabilityFailure(a,{slot,installSlot,handoffSlot},detail);
+  }
+}
+async function releaseApprovedA7V6(button){
+  if(!authCanWrite()||!(window.ConvexDirectory&&typeof ConvexDirectory.releaseApprovedA7V6==="function")){
+    toast("A real signed approver session is required to release v6.");return;
+  }
+  if(button){button.disabled=true;button.textContent="Approving v6…"}
+  try{
+    await ConvexDirectory.releaseApprovedA7V6();
+    toast("A7 v6 approved in Convex");
+    await loadGovernedDirectoryPilot();
+  }catch(error){
+    toast(`A7 v6 approval failed — ${String(error&&error.message||"the governed release was not changed")}`);
+    if(button){button.disabled=false;button.textContent="Approve governed v6"}
   }
 }
 

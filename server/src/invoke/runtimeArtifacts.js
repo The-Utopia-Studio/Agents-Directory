@@ -14,12 +14,13 @@ const ARTIFACTS_ROOT = new URL("../artifacts/", import.meta.url);
 // them being declared (about_section_present). A test asserts no drift.
 const RUNTIME_CHECKS = new Set([
   "about_hook_max_200_characters",
-  "generated_sections_have_no_delimiter_separated_keyword_run",
+  "about_has_no_delimiter_separated_keyword_run",
   "about_closing_has_cta",
+  "draft_has_no_em_dash",
+  "draft_has_no_ai_cliche_phrase",
 ]);
-// v5 widens the keyword-run detector to every generated section. The ID names
-// that scope rather than implying an About-only failure. Ratings against v4 are
-// not comparable to v5: they ran under different mechanical checks.
+// v6 restores the keyword-run detector to its intended About-only scope and
+// adds the two guardrail checks repeatedly observed in reviewer feedback.
 
 /** Exported so the boot-failure test can assert the same throw the module uses at import. */
 export function snapshotArtifact(directoryUrl, primaryName) {
@@ -301,7 +302,7 @@ const IMPERATIVE_OPENER =
 // The remaining branch is lexical, bounded by the artifact's own wording:
 // "state what the fellow is open to, or how to reach out."
 const INVITATION_FRAME =
-  /\b(?:available (?:for|to)|open (?:to|for)|currently taking on|taking on new|now booking|accepting|happy to|looking to|reach out|get in touch|contact me|email me|message me|send me|dm me|drop me|write to me|say hello|let'?s (?:connect|talk|chat)|work with me|hear from you|find me at|book a|schedule a)\b/i;
+  /\b(?:available (?:for|to)|open (?:to|for)|currently taking on|taking on new|now booking|accepting|happy to|looking to|reach out|get in touch|contact me|connect with me|(?:i )?would like to connect|email me|message me|send me|dm me|drop me|write to me|say hello|let'?s (?:connect|talk|chat)|work with me|hear from you|find me at|book a|schedule a)\b/i;
 
 const KEYWORD_RUN = /(?:([·|•])[^·|•\n]*){2,}/;
 const GENERATED_SECTIONS = Object.freeze([
@@ -309,6 +310,18 @@ const GENERATED_SECTIONS = Object.freeze([
   "Spoken event introduction",
   "Suggested headline",
 ]);
+const EM_DASH_OR_DOUBLE_HYPHEN = /—|--/;
+const AI_CLICHE_SINGLE_TERMS = Object.freeze([
+  "utilize", "leverage", "facilitate", "innovative", "robust", "seamless",
+  "cutting-edge", "unlock", "elevate", "passionate", "synergy", "game-changer",
+  "revolutionize", "revolutionary",
+]);
+const AI_CLICHE_PHRASES = Object.freeze(["sits at the intersection of"]);
+
+function hasCompletePhrase(content, phrase) {
+  const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, "i").test(content);
+}
 
 /** The closing: at most the trailing two paragraphs, never more. */
 function trailingWindow(paragraphs) {
@@ -370,24 +383,17 @@ export function validateRuntimeArtifactOutput(agentId, output) {
     });
   }
 
-  if (checks.includes("generated_sections_have_no_delimiter_separated_keyword_run")) {
-    for (const section of GENERATED_SECTIONS) {
-      const content = section === "LinkedIn About"
-        ? about
-        : markdownSection(output, section);
-      if (!content) continue;
-      const match = content.match(KEYWORD_RUN);
-      if (!match) continue;
-      failures.push({
-        checkId: "generated_sections_have_no_delimiter_separated_keyword_run",
-        message: `${section} contains a delimiter-separated keyword run`,
-        section,
-        sectionFound: true,
-        paragraphCount: content.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean).length,
-        delimiter: match[1],
-        segmentCount: match[0].split(match[1]).filter(Boolean).length,
-      });
-    }
+  if (checks.includes("about_has_no_delimiter_separated_keyword_run")) {
+    const match = about.match(KEYWORD_RUN);
+    if (match) failures.push({
+      checkId: "about_has_no_delimiter_separated_keyword_run",
+      message: "LinkedIn About contains a delimiter-separated keyword run",
+      section: "LinkedIn About",
+      sectionFound: true,
+      paragraphCount: paragraphs.length,
+      delimiter: match[1],
+      segmentCount: match[0].split(match[1]).filter(Boolean).length,
+    });
   }
 
   if (checks.includes("about_closing_has_cta")) {
@@ -405,6 +411,34 @@ export function validateRuntimeArtifactOutput(agentId, output) {
         windowParagraphs: window.paragraphs,
         windowChars: window.text.length,
         ...signals,
+      });
+    }
+  }
+
+  if (checks.includes("draft_has_no_em_dash")) {
+    for (const section of GENERATED_SECTIONS) {
+      const content = section === "LinkedIn About" ? about : markdownSection(output, section);
+      if (content && EM_DASH_OR_DOUBLE_HYPHEN.test(content)) failures.push({
+        checkId: "draft_has_no_em_dash",
+        message: `${section} contains an em dash or double-hyphen substitute`,
+        section,
+        sectionFound: true,
+      });
+    }
+  }
+
+  if (checks.includes("draft_has_no_ai_cliche_phrase")) {
+    for (const section of GENERATED_SECTIONS) {
+      const content = section === "LinkedIn About" ? about : markdownSection(output, section);
+      const containsRegisteredCliche = content && [
+        ...AI_CLICHE_SINGLE_TERMS,
+        ...AI_CLICHE_PHRASES,
+      ].some((phrase) => hasCompletePhrase(content, phrase));
+      if (containsRegisteredCliche) failures.push({
+        checkId: "draft_has_no_ai_cliche_phrase",
+        message: `${section} contains a registered AI cliche term or phrase`,
+        section,
+        sectionFound: true,
       });
     }
   }

@@ -125,7 +125,7 @@ test("reviewer feedback notes count as evidence without any failing trace", asyn
   // Four stars, so no low rating and no failing trace — only the notes.
   const svc = await serviceWithA7Feedback({
     rating: 4,
-    notes: "em dash in the hook; AI cliche 'sits at the intersection of'",
+    notes: "the draft says founder for a company she only interned at",
   });
 
   const [proposal] = await svc.runImprovement("A7");
@@ -137,31 +137,29 @@ test("reviewer feedback notes count as evidence without any failing trace", asyn
   assert.equal(proposal.evidence.averageRating, 4);
   assert.doesNotMatch(
     JSON.stringify(proposal),
-    /em dash in the hook; AI cliche/,
+    /the draft says founder for a company she only interned at/,
     "feedback is cited by id, not copied into proposal text",
   );
 });
 
-// The reviewer's real note. It mentions an em dash (a genuine defect) and
-// praises the absence of fabricated character counts. The maker used to emit a
-// character-count guardrail the artifact already contains, and to drop the em
-// dash entirely because another sentence in the same note set a note-level
-// "asks for a prompt change" flag.
+// The reviewer's note names two defects whose checks are now present in v6 and
+// one source-relationship defect that the artifact still does not address.
 const REVIEWER_NOTE =
   "The hook still uses an em dash. Good that it no longer invents character " +
-  "counts. The prompt should also say something about generic positioning.";
+  "counts. It also calls her founder of a company where she was an intern.";
 
 test("the maker verifies current state against the artifact before claiming it", async () => {
   const svc = await serviceWithA7Feedback({ rating: 3, notes: REVIEWER_NOTE });
   const proposals = await svc.runImprovement("A7");
   const targets = proposals.flatMap((p) => p.changes.map((c) => c.target));
 
-  // Routing: the em dash is its own defect and cannot be vetoed by a flag set
-  // by an unrelated sentence in the same note.
+  // Verification: the v6 em-dash check already exists, so the maker must not
+  // claim it is missing. The still-unaddressed relationship defect remains.
   assert.ok(
-    targets.includes("draft_has_no_em_dash"),
-    `expected an em-dash change, got ${JSON.stringify(targets)}`,
+    targets.includes("server/src/artifacts/biocraft/SKILL.md#method"),
+    `expected a source-relationship prompt change, got ${JSON.stringify(targets)}`,
   );
+  assert.equal(targets.includes("draft_has_no_em_dash"), false);
 
   // Verification: SKILL.md already carries "Do not report or annotate
   // character counts", so asserting it is missing would be a false claim.
@@ -179,25 +177,20 @@ test("the maker verifies current state against the artifact before claiming it",
   assert.match(artifact, /Do not report or annotate character counts/);
 });
 
-// Polarity is NOT solved, and the code says so. The gate above suppresses this
-// instance only because the guardrail happens to be present; praise about a
-// rule that is absent would still be read as a defect.
-test("praise and defect are indistinguishable once the artifact rule is absent", async () => {
+// Polarity is still not solved generally, but a rule already present in the
+// artifact must never be proposed again even when keyword matching sees it.
+test("praise about a registered check does not create a duplicate proposal", async () => {
   const svc = await serviceWithA7Feedback({
     rating: 5,
     notes: "No em dashes anywhere this time, which is a real improvement.",
   });
-  const proposals = await svc.runImprovement("A7");
-  assert.deepEqual(
-    proposals.flatMap((p) => p.changes.map((c) => c.target)),
-    ["draft_has_no_em_dash"],
-    "keyword matching cannot tell praise from a defect; only a real maker can",
+  await assert.rejects(
+    () => svc.runImprovement("A7"),
+    (e) => e.status === 422 && /already addressed/i.test(e.message),
   );
 });
 
-// Two defects in one note are two separately approvable proposals. Bundling
-// them would render two rows behind a single verdict.
-test("one feedback note produces separate checker and prompt proposals", async () => {
+test("a registered checker defect is suppressed while an unresolved prompt defect remains", async () => {
   const note =
     "Defect one: the AI cliche checker treats its phrase list as a word list. " +
     "Fix the detector at phrase level. Defect two: the draft claims a job title " +
@@ -205,26 +198,24 @@ test("one feedback note produces separate checker and prompt proposals", async (
   const svc = await serviceWithA7Feedback({ rating: 3, notes: note });
 
   const proposals = await svc.runImprovement("A7");
-  assert.equal(proposals.length, 2);
+  assert.equal(proposals.length, 1);
   assert.ok(proposals.every((p) => p.changes.length === 1));
   const changes = proposals.map((p) => p.changes[0]);
-  const checker = changes.find((change) => change.surface === "check");
   const prompt = changes.find((change) => change.surface === "prompt");
-  assert.equal(checker.target, "draft_has_no_ai_cliche_phrase");
   // Derived from the edit: a final-cut instruction targets Method, not the
   // Guardrails section a single hardcoded constant used to name.
   assert.equal(prompt.target, "server/src/artifacts/biocraft/SKILL.md#method");
-  assert.deepEqual(checker.evidence, prompt.evidence);
+  assert.equal(changes.some((change) => change.surface === "check"), false);
   assert.equal(JSON.stringify(proposals).includes(note), false);
 });
 
 test("a proposal records the artifact it was derived against", async () => {
   const svc = await serviceWithA7Feedback({
     rating: 2,
-    notes: "the hook uses an em dash",
+    notes: "the draft says founder for a company she only interned at",
   });
   const [proposal] = await svc.runImprovement("A7");
-  assert.equal(proposal.targetArtifactVersion, "biocraft-singleshot-v5");
+  assert.equal(proposal.targetArtifactVersion, "biocraft-singleshot-v6");
   assert.match(proposal.targetArtifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(proposal.targetArtifactDigestAlgorithm, "sha256");
   assert.equal(proposal.targetAgentVersion, (await svc.getAgent("A7")).version);
@@ -233,7 +224,7 @@ test("a proposal records the artifact it was derived against", async () => {
 test("approval is refused when the targeted artifact has moved", async () => {
   const svc = await serviceWithA7Feedback({
     rating: 2,
-    notes: "the hook uses an em dash",
+    notes: "the draft says founder for a company she only interned at",
   });
   const [proposal] = await svc.runImprovement("A7");
 
@@ -251,7 +242,7 @@ test("approval is refused when the targeted artifact has moved", async () => {
     () => svc.approveImprovement("A7", proposal.id),
     (e) => {
       assert.equal(e.status, 409);
-      assert.match(e.message, /but the live artifact is biocraft-singleshot-v5/);
+      assert.match(e.message, /but the live artifact is biocraft-singleshot-v6/);
       return true;
     },
   );

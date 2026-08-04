@@ -336,7 +336,7 @@ test("Biocraft mechanical checks reject hook, keyword-run, and CTA regressions",
   const runFailure = validateRuntimeArtifactOutput("A7", keywordRun)[0];
   assert.equal(
     runFailure.checkId,
-    "generated_sections_have_no_delimiter_separated_keyword_run",
+    "about_has_no_delimiter_separated_keyword_run",
   );
   assert.equal(runFailure.delimiter, "·");
   assert.ok(runFailure.segmentCount >= 2);
@@ -358,7 +358,7 @@ test("Biocraft mechanical checks reject hook, keyword-run, and CTA regressions",
   assert.ok(ctaFailure.windowParagraphs >= 2);
 });
 
-test("v5 catches delimiter-separated keyword runs in every generated section", () => {
+test("v6 scopes delimiter-separated keyword runs to the LinkedIn About", () => {
   for (const [section, line] of [
     ["Spoken event introduction", "Test Fellow builds grounded workflow systems for venture teams."],
     ["Suggested headline", "Agentic workflow builder for venture teams"],
@@ -367,9 +367,12 @@ test("v5 catches delimiter-separated keyword runs in every generated section", (
       line,
       "n8n · AI automation · Agentic systems · LLMs",
     );
-    const failure = validateRuntimeArtifactOutput("A7", relocated)[0];
-    assert.equal(failure.checkId, "generated_sections_have_no_delimiter_separated_keyword_run");
-    assert.equal(failure.section, section);
+    const failures = validateRuntimeArtifactOutput("A7", relocated);
+    assert.equal(
+      failures.some((failure) => failure.checkId === "about_has_no_delimiter_separated_keyword_run"),
+      false,
+      `${section} may use its normal delimiter format`,
+    );
   }
 });
 
@@ -381,6 +384,10 @@ test("the CTA check accepts real CTAs that a phrase list rejected", () => {
     imperativeOpener: "Book a call.",
     contactChannel: "For speaking enquiries, email hello@example.com.",
     availabilityPresent: "Currently taking on new projects.",
+    conditionalConnect: "If you're working on agentic systems and want to compare notes, connect with me here on LinkedIn.",
+    firstPersonWillingness: "I would like to connect with teams working on responsible agentic systems.",
+    firstPersonInvitation: "I'd love to hear from you.",
+    conversationalInvitation: "Happy to chat.",
   };
   for (const [name, closing] of Object.entries(closings)) {
     const output = VALID_BIOCRAFT_OUTPUT.replace(
@@ -404,6 +411,68 @@ test("the CTA check accepts real CTAs that a phrase list rejected", () => {
     "Test Fellow builds grounded workflow systems for venture teams. Reach out.",
   );
   assert.equal(validateRuntimeArtifactOutput("A7", noCta).length, 1);
+});
+
+test("v6 rejects em dashes and double-hyphen substitutes in every generated section", () => {
+  for (const [section, line] of [
+    ["LinkedIn About", "One delivery validated 167 acceptance criteria across five working screens."],
+    ["Spoken event introduction", "Test Fellow builds grounded workflow systems for venture teams."],
+    ["Suggested headline", "Agentic workflow builder for venture teams"],
+  ]) {
+    for (const mark of ["—", "--"]) {
+      const output = VALID_BIOCRAFT_OUTPUT.replace(line, `${line} ${mark} grounded delivery`);
+      const failure = validateRuntimeArtifactOutput("A7", output).find(
+        (candidate) => candidate.checkId === "draft_has_no_em_dash",
+      );
+      assert.equal(failure?.section, section);
+    }
+  }
+});
+
+test("v6 rejects registered multi-word AI cliche phrases in every generated section", () => {
+  for (const [section, line] of [
+    ["LinkedIn About", "One delivery validated 167 acceptance criteria across five working screens."],
+    ["Spoken event introduction", "Test Fellow builds grounded workflow systems for venture teams."],
+    ["Suggested headline", "Agentic workflow builder for venture teams"],
+  ]) {
+    const output = VALID_BIOCRAFT_OUTPUT.replace(line, "This work sits at the intersection of AI and product development.");
+    const failure = validateRuntimeArtifactOutput("A7", output).find(
+      (candidate) => candidate.checkId === "draft_has_no_ai_cliche_phrase",
+    );
+    assert.equal(failure?.section, section);
+  }
+  const nearMiss = VALID_BIOCRAFT_OUTPUT.replace(
+    "One delivery validated 167 acceptance criteria across five working screens.",
+    "This work maps intersections between AI and product development.",
+  );
+  assert.equal(
+    validateRuntimeArtifactOutput("A7", nearMiss).some(
+      (failure) => failure.checkId === "draft_has_no_ai_cliche_phrase",
+    ),
+    false,
+  );
+});
+
+test("v6 retains exact-word matching for registered single AI cliche terms", () => {
+  const output = VALID_BIOCRAFT_OUTPUT.replace(
+    "I help venture teams turn complex ideas into practical tools.",
+    "I leverage practical systems for venture teams.",
+  );
+  assert.deepEqual(
+    validateRuntimeArtifactOutput("A7", output).map((failure) => failure.checkId),
+    ["draft_has_no_ai_cliche_phrase"],
+  );
+  const nonMatch = VALID_BIOCRAFT_OUTPUT.replace(
+    "I help venture teams turn complex ideas into practical tools.",
+    "I study leveraged buyouts and practical systems.",
+  );
+  assert.equal(
+    validateRuntimeArtifactOutput("A7", nonMatch).some(
+      (failure) => failure.checkId === "draft_has_no_ai_cliche_phrase",
+    ),
+    false,
+    "exact-word matching must not reject a longer unrelated word",
+  );
 });
 
 test("the CTA window is the closing, so a mid-text CTA does not pass", () => {
@@ -680,7 +749,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     ["LinkedIn URL", "Google Drive folder or pitch deck", "Local file path"],
   );
   assert.equal(installArtifact.available, true);
-  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v5");
+  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v6");
   assert.match(installArtifact.artifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(installArtifact.artifactDigestAlgorithm, "sha256");
 
@@ -719,7 +788,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(run.via, "runtime");
   assert.equal(run.mode, "single-shot");
   assert.equal(run.agentVersion, "1.0");
-  assert.equal(run.artifactVersion, "biocraft-singleshot-v5");
+  assert.equal(run.artifactVersion, "biocraft-singleshot-v6");
   assert.equal(
     run.artifactDigest,
     createHash("sha256").update(request.body.system).digest("hex"),
@@ -750,7 +819,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(trace.metadata.via, "runtime");
   assert.equal(trace.metadata.mode, "single-shot");
   assert.equal(trace.agentVersion, "1.0");
-  assert.equal(trace.artifactVersion, "biocraft-singleshot-v5");
+  assert.equal(trace.artifactVersion, "biocraft-singleshot-v6");
   assert.equal(trace.artifactDigest, run.artifactDigest);
   assert.equal(trace.artifactDigestAlgorithm, "sha256");
   assert.equal("agentVersionId" in trace, false);

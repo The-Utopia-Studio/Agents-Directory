@@ -9,6 +9,12 @@ const registerAgentMutation = makeFunctionReference("agents:registerAgent");
 const updateAgentMutation = makeFunctionReference("agents:updateAgent");
 const createRequestMutation = makeFunctionReference("requests:createRequest");
 const updateRequestMutation = makeFunctionReference("requests:updateRequest");
+const approvedA7V6ReleaseMutation = makeFunctionReference(
+  "reimports:executeApprovedA7V6Release",
+);
+const approveReleaseMutation = makeFunctionReference("reviews:approve");
+const APPROVED_A7_V6_RELEASE_MANIFEST_DIGEST =
+  "4bcac2ca329e4b91bc54308dffce9db3d5c283a1b4b202407325638499592841";
 
 function labels(items) {
   return Array.isArray(items)
@@ -169,6 +175,16 @@ export function createConvexDirectoryClient({ url, clientFactory } = {}) {
     },
     async updateRequest(args) {
       return await client.mutation(updateRequestMutation, args);
+    },
+    async releaseApprovedA7V6() {
+      const prepared = await client.mutation(approvedA7V6ReleaseMutation, {
+        releaseManifestDigest: APPROVED_A7_V6_RELEASE_MANIFEST_DIGEST,
+      });
+      const approval = await client.mutation(approveReleaseMutation, {
+        proposalId: prepared.proposalId,
+        editCategory: "no-edit",
+      });
+      return { prepared, approval };
     },
     async listRequests() {
       const rows = await client.query(authenticatedRequestsQuery, {});

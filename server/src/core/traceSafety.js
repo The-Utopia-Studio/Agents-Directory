@@ -22,8 +22,10 @@
 export const KNOWN_CHECK_IDS = Object.freeze([
   "about_section_present",
   "about_hook_max_200_characters",
-  "generated_sections_have_no_delimiter_separated_keyword_run",
+  "about_has_no_delimiter_separated_keyword_run",
   "about_closing_has_cta",
+  "draft_has_no_em_dash",
+  "draft_has_no_ai_cliche_phrase",
 ]);
 
 /** Non-check failures. Codes only — never a provider or model message. */

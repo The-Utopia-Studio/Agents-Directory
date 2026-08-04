@@ -1,7 +1,12 @@
 import { ConvexError, v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query, type MutationCtx, type QueryCtx } from "./_generated/server";
-import { MERGED_REIMPORT_MANIFEST_DIGEST, MERGED_REIMPORT_SPEC } from "./reimportSpec";
+import {
+  A7_V6_RELEASE_MANIFEST_DIGEST,
+  A7_V6_RELEASE_SPEC,
+  MERGED_REIMPORT_MANIFEST_DIGEST,
+  MERGED_REIMPORT_SPEC,
+} from "./reimportSpec";
 import { requireApprover, type AuthorityActor } from "./lib/auth";
 import { stableStringify } from "./importSpec";
 
@@ -207,6 +212,88 @@ export const executeApprovedMergedReimport = mutation({
       A8: { agentId: a8._id, updated: true },
       ratings: "Ratings against v4 are not comparable to v5.",
       nextRequiredAction: "Approve the returned A7 proposal through reviews.approve to release v5.",
+    };
+  },
+});
+
+export const executeApprovedA7V6Release = mutation({
+  args: { releaseManifestDigest: v.string() },
+  handler: async (ctx, args) => {
+    const actor = await requireApprover(ctx);
+    if (args.releaseManifestDigest !== A7_V6_RELEASE_MANIFEST_DIGEST) {
+      throw new ConvexError({
+        code: "RELEASE_MANIFEST_NOT_APPROVED",
+        status: 403,
+        message: "A7 v6 release manifest is altered or not approved",
+      });
+    }
+    const now = Date.now();
+    const agent = await oneAgent(ctx, "A7");
+    const prior = await oneVersion(ctx, agent._id, A7_V6_RELEASE_SPEC.priorVersion);
+    if (!prior || prior.artifact?.declaredDigest !== A7_V6_RELEASE_SPEC.priorArtifactSha256) {
+      throw new Error("A7 v6 release requires the exact governed v5 artifact as its base");
+    }
+    const current = approvedVersionOf(agent as unknown as Record<string, unknown>);
+    let candidate = await oneVersion(ctx, agent._id, A7_V6_RELEASE_SPEC.version.version);
+    if (current !== prior._id && current !== candidate?._id) {
+      throw new Error("A7 v6 release requires v5 or its exact v6 successor to be current");
+    }
+    if (candidate) {
+      assertExact(
+        "A7 v6",
+        { state: candidate.state, artifact: candidate.artifact, basedOnVersionId: candidate.basedOnVersionId },
+        { state: A7_V6_RELEASE_SPEC.version.state, artifact: A7_V6_RELEASE_SPEC.version.artifact, basedOnVersionId: prior._id },
+      );
+    } else {
+      const candidateId = await ctx.db.insert("agentVersions", {
+        agentId: agent._id,
+        version: A7_V6_RELEASE_SPEC.version.version,
+        state: A7_V6_RELEASE_SPEC.version.state,
+        basedOnVersionId: prior._id,
+        artifact: A7_V6_RELEASE_SPEC.version.artifact,
+        createdBy: actor,
+        createdAt: now,
+      } as any);
+      candidate = (await ctx.db.get(candidateId))!;
+    }
+    const existingProposal = await ctx.db
+      .query("proposals")
+      .withIndex("by_candidateVersionId", (q) => q.eq("candidateVersionId", candidate._id))
+      .unique();
+    let proposal = existingProposal;
+    if (proposal) {
+      assertExact(
+        "A7 v6 proposal",
+        { agentId: proposal.agentId, priorApprovedVersionId: proposal.priorApprovedVersionId, summary: proposal.summary },
+        { agentId: agent._id, priorApprovedVersionId: prior._id, summary: A7_V6_RELEASE_SPEC.proposalSummary },
+      );
+    } else {
+      const proposalId = await ctx.db.insert("proposals", {
+        agentId: agent._id,
+        priorApprovedVersionId: prior._id,
+        candidateVersionId: candidate._id,
+        status: "open",
+        summary: A7_V6_RELEASE_SPEC.proposalSummary,
+        createdBy: actor,
+        createdAt: now,
+      });
+      proposal = (await ctx.db.get(proposalId))!;
+    }
+    const runnerConfig = agent.executionContract.runnerConfig
+      .filter((entry) => entry.key !== "artifactVersion")
+      .concat({ key: "artifactVersion", value: A7_V6_RELEASE_SPEC.version.version });
+    await ctx.db.patch(agent._id, {
+      invocation: { type: "runtime", configRef: "server-owned:biocraft-singleshot-v6" },
+      executionContract: { ...agent.executionContract, runnerConfig },
+    });
+    return {
+      agentId: agent._id,
+      versionId: candidate._id,
+      proposalId: proposal._id,
+      proposalStatus: proposal.status,
+      releaseManifestDigest: A7_V6_RELEASE_MANIFEST_DIGEST,
+      artifactDigest: A7_V6_RELEASE_SPEC.version.artifact.declaredDigest,
+      nextRequiredAction: "Approve the returned proposal through reviews.approve to release v6.",
     };
   },
 });

@@ -9,7 +9,7 @@ import {
   APPROVED_IMPORT_SPEC,
   stableStringify,
 } from "./importSpec";
-import { MERGED_REIMPORT_SPEC } from "./reimportSpec";
+import { A7_V6_RELEASE_SPEC, MERGED_REIMPORT_SPEC } from "./reimportSpec";
 import schema from "./schema";
 import { modules } from "./test.setup";
 
@@ -68,7 +68,7 @@ describe("Phase 2.5B narrow canonical import", () => {
     );
   });
 
-  test("the historical v4 identity stays explicit while merged v5 matches the live artifact", () => {
+  test("the historical v4/v5 identities stay explicit while v6 matches the live artifact", () => {
     const live = getRuntimeArtifactDescriptor("A7");
     const approvedV4 = APPROVED_IMPORT_SPEC.imports.A7.version;
     const approvedV5 = MERGED_REIMPORT_SPEC.imports.A7.version;
@@ -77,12 +77,18 @@ describe("Phase 2.5B narrow canonical import", () => {
     expect(approvedV4.artifact.declaredDigest).toBe(
       "991cadea10401307215254098644342ccb551f7f498eb64994e328eafdf0b6f9",
     );
-    expect(approvedV5.version).toBe(live!.artifactVersion);
-    expect(approvedV5.artifact.declaredDigest).toBe(live!.artifactDigest);
-    expect(approvedV5.artifact.declaredDigestAlgorithm).toBe(
+    expect(approvedV5.version).toBe("biocraft-singleshot-v5");
+    expect(approvedV5.artifact.declaredDigest).toBe(
+      "c5cc1a587a10deb6fb1b2ee73fed0c31fcad96fa12ed58bc5907544e408df92b",
+    );
+    expect(A7_V6_RELEASE_SPEC.version.version).toBe(live!.artifactVersion);
+    expect(A7_V6_RELEASE_SPEC.version.artifact.declaredDigest).toBe(
+      live!.artifactDigest,
+    );
+    expect(A7_V6_RELEASE_SPEC.version.artifact.declaredDigestAlgorithm).toBe(
       live!.artifactDigestAlgorithm,
     );
-    expect(approvedV5.artifact.locator).toBe(
+    expect(A7_V6_RELEASE_SPEC.version.artifact.locator).toBe(
       "server/src/artifacts/biocraft/SKILL.md",
     );
   });

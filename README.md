@@ -124,11 +124,11 @@ At boot the server computes `artifactDigest` as SHA-256 over the exact
 the UI, and used in the ZIP filename.
 
 The artifact declares its own stable, paste-surviving frontmatter label:
-`artifact_version: biocraft-singleshot-v5`. Runtime parses that label from the
+`artifact_version: biocraft-singleshot-v6`. Runtime parses that label from the
 same bytes; it is not duplicated in configuration. Copy does not prepend or
 alter anything, so re-hashing a pasted copy produces the recorded digest. ZIP
 filenames use the label directly, for example
-`A7-biocraft-singleshot-v5-<digest-prefix>.zip`.
+`A7-biocraft-singleshot-v6-<digest-prefix>.zip`.
 
 The same frontmatter also declares `guardrails`, `success_criteria`, and
 `checks`. The manifest reports the first two, never the mutable directory
@@ -186,6 +186,17 @@ introduction, and suggested headline. Its check id is therefore
 `generated_sections_have_no_delimiter_separated_keyword_run`, not an
 About-scoped name. The artifact bytes and SHA-256 moved with this behaviour
 change. Ratings against v4 are **not comparable** to ratings against v5.
+
+### v5 → v6 check correction
+
+`biocraft-singleshot-v6` restores the delimiter-separated keyword-run check to
+the LinkedIn About only; pipe-separated LinkedIn headlines are valid and are
+not inspected by that rule. CTA detection now recognises conditional and
+first-person invitation wording such as “connect with me” and “I would like to
+connect”. The artifact also registers mechanical checks for em dashes/double
+hyphens and the observed multi-word phrase “sits at the intersection of” across
+all three generated sections. Ratings against v5 are **not comparable** to
+ratings against v6 because the check set and scope changed.
 
 ### A failed check is a scored failure, not a refusal
 

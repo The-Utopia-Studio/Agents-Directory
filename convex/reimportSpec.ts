@@ -255,3 +255,28 @@ export const MERGED_REIMPORT_SPEC = {
 // the exact approved spec so an edited merge cannot execute silently.
 export const MERGED_REIMPORT_MANIFEST_DIGEST =
   "23b04a0348e35976bdae5d7354c2524932aa8ede04edcf34aa249b57dbcae48d";
+
+export const A7_V6_RELEASE_SPEC = {
+  agentDisplayId: "A7",
+  priorVersion: "biocraft-singleshot-v5",
+  priorArtifactSha256:
+    "c5cc1a587a10deb6fb1b2ee73fed0c31fcad96fa12ed58bc5907544e408df92b",
+  version: {
+    version: "biocraft-singleshot-v6",
+    state: "candidate",
+    artifact: {
+      scheme: "git",
+      locator: "server/src/artifacts/biocraft/SKILL.md",
+      declaredDigest:
+        "a8c08f4e98cd88f018764754eda760a20113e6fcf8a3362a192254b6bca81a10",
+      declaredDigestAlgorithm: "sha256",
+    },
+  },
+  proposalSummary:
+    "Biocraft v6 corrects mechanical-check scope and CTA detection, and registers em-dash and multi-word AI-cliche checks. Ratings against v5 are not comparable to v6.",
+} as const;
+
+// SHA-256(stableStringify(A7_V6_RELEASE_SPEC)). A test binds this literal to
+// the exact release contract before the approver mutation may create v6.
+export const A7_V6_RELEASE_MANIFEST_DIGEST =
+  "4bcac2ca329e4b91bc54308dffce9db3d5c283a1b4b202407325638499592841";
