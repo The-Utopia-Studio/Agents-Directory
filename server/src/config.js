@@ -44,6 +44,10 @@ export const config = {
   // Optional shared secret. When set, the router requires Authorization: Bearer.
   // When unset/empty, all routes stay open (local + zero-secrets deploy).
   apiToken: env.API_TOKEN || "",
+  clerk: {
+    issuer: env.CLERK_JWT_ISSUER_DOMAIN || "",
+    audience: env.CLERK_JWT_AUDIENCE || "convex",
+  },
   // The migration export returns the whole metadata catalogue in one response,
   // so it is not one of the routes a public origin may leave open. On Railway
   // it refuses to answer until API_TOKEN is configured; locally it stays

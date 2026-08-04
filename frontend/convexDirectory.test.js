@@ -189,13 +189,14 @@ describe("Phase 5 Convex-only directory", () => {
     }
   });
 
-  test("eval and approval remain locked, request conversion is visibly deferred", () => {
+  test("eval stays locked, signed approval uses Railway, and request conversion is deferred", () => {
     expect(sliceSource("function saveEval(id){", "async function saveTriage")).toContain(
       "toast(EVAL_LOCK_REASON)",
     );
-    expect(sliceSource("async function approveImprovement", "async function rejectImprovement")).toContain(
-      "toast(APPROVAL_LOCK_REASON)",
-    );
+    const approval = sliceSource("async function approveImprovement", "async function rejectImprovement");
+    expect(approval).toContain("authCanWrite()");
+    expect(approval).toContain("DirectoryAPI.approve");
+    expect(approval).toContain("Behaviour is unchanged until a human commits the patch");
     expect(appSource).toContain(
       "Request-to-agent conversion is deferred. Register the agent separately; linking a request to a released agent needs its own governed workflow.",
     );

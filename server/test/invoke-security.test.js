@@ -1115,9 +1115,10 @@ test("usability modes remain separate from the scalar invocation adapter", async
   assert.match(appSource, /function renderProposalChanges/);
   assert.match(appSource, /loop-change-evidence/);
   assert.match(appSource, /Approval records a review decision only/);
-  assert.match(appSource, /changes no prompt, check, runtime, or agent behavior/);
-  assert.match(appSource, /A human must make, verify, and commit the artifact edit separately/);
-  assert.match(appSource, /Record approval → catalog v\$\{bumpVersion\(a\.version\)\}/);
+  assert.match(appSource, /does not change the Railway catalog version, prompt, check, runtime, or governed Convex version/);
+  assert.match(appSource, /A human must make, verify and commit the artifact edit separately/);
+  assert.match(appSource, /Record review approval/);
+  assert.match(appSource, /Copy approved patch/);
   assert.doesNotMatch(appSource, /Approved → shipped/);
   // One proposal is one defect, so every decision names the proposal it
   // resolves rather than clearing whatever happens to be pending.

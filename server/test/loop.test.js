@@ -12,7 +12,13 @@ import { getOptimizer } from "../src/improve/index.js";
 import { getMemory } from "../src/memory/index.js";
 import { seed, SEED_TRACES } from "../src/scripts/seed.js";
 import { config } from "../src/config.js";
-import { bumpVersion } from "../src/core/version.js";
+
+const TEST_APPROVER = Object.freeze({
+  subject: "user_test_approver",
+  issuer: "https://valid-collie-71.clerk.accounts.dev",
+  role: "approver",
+  name: "Test Approver",
+});
 
 async function freshService() {
   return (await freshServiceWithStore()).svc;
@@ -239,7 +245,7 @@ test("approval is refused when the targeted artifact has moved", async () => {
   await svc.putAgent(agent);
 
   await assert.rejects(
-    () => svc.approveImprovement("A7", proposal.id),
+    () => svc.approveImprovement("A7", proposal.id, TEST_APPROVER),
     (e) => {
       assert.equal(e.status, 409);
       assert.match(e.message, /but the live artifact is biocraft-singleshot-v6/);
@@ -253,21 +259,41 @@ test("approval is refused when the targeted artifact has moved", async () => {
   );
 });
 
-test("approve resolves one proposal and leaves the others pending", async () => {
+test("approval retains the decided proposal without moving the Railway catalog version", async () => {
   const svc = await freshService();
   const before = await svc.getAgent("A2");
   const proposals = await svc.runImprovement("A2");
   assert.equal(proposals.length, 2);
 
-  const { version } = await svc.approveImprovement("A2", proposals[0].id);
-  assert.equal(version, bumpVersion(before.version));
+  const { version, proposal: approved } = await svc.approveImprovement(
+    "A2",
+    proposals[0].id,
+    TEST_APPROVER,
+  );
+  assert.equal(version, before.version);
+  assert.equal(approved.status, "approved");
+  assert.equal(approved.approvedBy.subject, TEST_APPROVER.subject);
+  assert.match(approved.patch, /--- current[\s\S]*\+\+\+ proposed/);
   const a2 = await svc.getAgent("A2");
   assert.deepEqual(
-    a2.proposedImprovements.map((p) => p.id),
-    [proposals[1].id],
-    "a decision on one defect must not silently discard the other",
+    a2.proposedImprovements.map((p) => [p.id, p.status]),
+    [[proposals[0].id, "approved"], [proposals[1].id, "proposed"]],
+    "a decision must retain both its audit record and the pending sibling",
   );
-  assert.ok(a2.changelog.some((c) => c.version === version));
+  assert.deepEqual(a2.changelog, before.changelog);
+});
+
+test("approval refuses missing or unverified human identity", async () => {
+  const svc = await freshService();
+  const [proposal] = await svc.runImprovement("A2");
+  await assert.rejects(
+    () => svc.approveImprovement("A2", proposal.id),
+    (error) => error.status === 403,
+  );
+  await assert.rejects(
+    () => svc.approveImprovement("A2", proposal.id, { ...TEST_APPROVER, role: "member" }),
+    (error) => error.status === 403,
+  );
 });
 
 test("an unnamed decision is refused while several proposals are pending", async () => {
@@ -275,7 +301,7 @@ test("an unnamed decision is refused while several proposals are pending", async
   const proposals = await svc.runImprovement("A2");
   assert.ok(proposals.length > 1);
   await assert.rejects(
-    () => svc.approveImprovement("A2"),
+    () => svc.approveImprovement("A2", null, TEST_APPROVER),
     (e) => e.status === 409,
   );
   assert.equal((await svc.getAgent("A2")).proposedImprovements.length, 2);
@@ -290,9 +316,9 @@ test("a record written before the split is still approvable", async () => {
   agent.proposedImprovement = proposal;
   await svc.putAgent(agent);
 
-  await svc.approveImprovement("A2", proposal.id);
+  await svc.approveImprovement("A2", proposal.id, TEST_APPROVER);
   const a2 = await svc.getAgent("A2");
-  assert.deepEqual(a2.proposedImprovements, []);
+  assert.deepEqual(a2.proposedImprovements.map((item) => item.status), ["approved"]);
   assert.equal(a2.proposedImprovement, null);
 });
 
@@ -304,7 +330,7 @@ test("approval refuses a legacy proposal with no structured changes", async () =
   await svc.putAgent(agent);
 
   await assert.rejects(
-    () => svc.approveImprovement("A2", proposal.id),
+    () => svc.approveImprovement("A2", proposal.id, TEST_APPROVER),
     (error) => {
       assert.equal(error.status, 422);
       assert.match(error.message, /changes\[\] must contain/);

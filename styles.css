@@ -389,6 +389,7 @@ input[type="date"] { color-scheme: dark; }
 .governed-identity .section-body { display: grid; gap: 7px; }
 .governed-caveat { color: var(--foreground-subtle); font-size: 12px; }
 .loop-card-auto-rejected { border-color: var(--warning-border); background: rgb(215 122 89 / 8%); }
+.loop-card-approved { border-color: rgb(86 156 111 / 55%); background: rgb(86 156 111 / 9%); }
 .proposal-attempt { margin: 14px 0; padding: 10px 12px; border: 1px solid var(--border-subtle); border-radius: var(--radius-surface); font-size: 13px; }
 .proposal-attempt-refused, .proposal-attempt-rejected { border-color: var(--warning-border); }
 .write-lock-banner {

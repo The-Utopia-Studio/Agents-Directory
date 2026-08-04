@@ -186,8 +186,8 @@ function displayedAgents(){
 // Catalog and hand-entered evaluation writes are refused while this view
 // renders Convex. Railway-only evidence and loop collections remain live.
 // A proposal is the one bounded agent-field exception: it may live temporarily
-// on Railway's agent row, is read back explicitly from Railway, and cannot be
-// approved here because approval bumps the divergent Railway catalog version.
+// on Railway's agent row and is read back explicitly from Railway. A signed
+// approver can record a review decision there; no Railway catalog version moves.
 //
 // There is deliberately no `local` state and no fallback catalogue.
 //   pending     → Convex read is in flight
@@ -198,7 +198,7 @@ let catalogFailureReason="The governed directory could not be loaded.";
 const WRITE_LOCK_REASON="Convex is the catalog source. Browser catalogue writes and fallbacks have been removed.";
 const WRITE_LOCK_PENDING_REASON="Waiting for the governed Convex directory.";
 const EVAL_LOCK_REASON="Manual eval logging stays locked during the pilot because an ungoverned score would affect fleet health and triage without a governed eval case or evidence link.";
-const APPROVAL_LOCK_REASON="Approval stays locked during the pilot because it bumps the Railway catalog version while Convex is the displayed authority. You may reject this reversible loop-service proposal.";
+const APPROVAL_LOCK_REASON="Sign in with the release approver role to record this review decision. Approval does not edit the artifact or release a version.";
 const AUTOMATION_LIVE_NOTE="Run automations stays available under the catalog lock: the cycle stamps reversible proposals and Railway queue/learnings/loop-run records only. Auto-apply is dead, so it never bumps a catalog version. A separately configured Railway scheduler sits outside this UI lock.";
 function writesLocked(){return true}
 function authState(){
@@ -225,7 +225,7 @@ function renderWriteLockBanner(){
     return `<div class="write-lock-banner"><strong>Waiting for the Convex catalog read.</strong> ${escHtml(WRITE_LOCK_PENDING_REASON)}</div>`;
   }
   if(catalogSource==="unavailable")return"";
-  return `<div class="write-lock-banner"><strong>Convex is the catalogue authority.</strong> Signed-in registration, edits and requests write there directly; browser-storage fallbacks are removed. Runs, trace feedback, loop proposals, queue and learnings remain live in the loop service; proposal approval and manual eval logging remain locked. ${escHtml(AUTOMATION_LIVE_NOTE)}</div>`;
+  return `<div class="write-lock-banner"><strong>Convex is the catalogue authority.</strong> Signed-in registration, edits and requests write there directly; browser-storage fallbacks are removed. Runs, trace feedback, loop proposals, review decisions, queue and learnings remain live in the loop service; manual eval logging remains locked. ${escHtml(AUTOMATION_LIVE_NOTE)}</div>`;
 }
 function lockedControl(label,reason,cls){
   const classes=cls||"btn";
@@ -282,6 +282,7 @@ function proposalsOf(a){
 }
 function pendingProposalsOf(a){return proposalsOf(a).filter(p=>p&&p.status==="proposed")}
 function autoRejectedProposalsOf(a){return proposalsOf(a).filter(p=>p&&p.status==="rejected"&&p.autoRejection&&p.autoRejection.by==="verifier")}
+function approvedProposalsOf(a){return proposalsOf(a).filter(p=>p&&p.status==="approved")}
 
 function applyRailwayProposalOverlay(serviceAgents){
   if(!convexReadActive()||!Array.isArray(serviceAgents))return false;
@@ -777,7 +778,19 @@ async function proposeImprovement(id){
 // remaining proposals stay pending rather than being cleared by a decision
 // nobody made about them.
 async function approveImprovement(id,proposalId){
-  toast(APPROVAL_LOCK_REASON);
+  if(!authCanWrite()){toast(authWriteReason());return}
+  if(!(window.DirectoryAPI&&DirectoryAPI.enabled)){toast("Approval unavailable — the Railway loop service cannot be reached.");return}
+  try{
+    const result=await DirectoryAPI.approve(id,proposalId);
+    const displayed=governedPilotById.get(id);
+    if(!displayed){toast("Approval was recorded, but the governed agent view is unavailable. Reload to reconcile it.");return}
+    const decided=result&&result.proposal;
+    const proposals=proposalsOf(displayed).map(proposal=>proposal&&proposal.id===proposalId?(decided||proposal):proposal);
+    if(setRailwayProposals(id,proposals)){
+      render();toast("Review approval recorded. Behaviour is unchanged until a human commits the patch.");return;
+    }
+    toast("Approval was recorded, but the proposal panel could not refresh. Reload to reconcile it.");
+  }catch(e){toast(`Approval failed — ${String(e&&e.message||"the review decision was not recorded")}`)}
 }
 async function rejectImprovement(id,proposalId){
   const displayed=governedPilotById.get(id);if(!displayed){toast("Cannot reject: the governed agent record is unavailable.");return}
@@ -1014,29 +1027,39 @@ function renderProposalAttempt(a){
   if(attempt.outcome==="maker-refused-no-evidence")return `<div class="proposal-attempt proposal-attempt-refused"><strong>Maker produced no proposal.</strong> It refused because no eligible defect evidence was available (${escHtml(String(attempt.failingTraces||0))} failing trace(s), ${escHtml(String(attempt.feedbackWithNotes||0))} feedback note(s)).</div>`;
   if(attempt.outcome==="verifier-rejected")return `<div class="proposal-attempt proposal-attempt-rejected"><strong>Verifier rejected a proposal.</strong> The retained proposal below includes its checker verdict and can be reopened for human review.</div>`;
   if(attempt.outcome==="reopened-for-human-review")return `<div class="proposal-attempt"><strong>Proposal reopened for human review.</strong> The verifier's earlier rejection remains on the proposal as context.</div>`;
+  if(attempt.outcome==="human-approved-change-ready-to-commit")return `<div class="proposal-attempt"><strong>Review approved; change ready for a human commit.</strong> No artifact or runtime behaviour changed automatically.</div>`;
   return"";
 }
+function copyProposalPatch(agentId,proposalId){
+  const agent=governedPilotById.get(agentId)||agents.find(candidate=>candidate.id===agentId);
+  const proposal=proposalsOf(agent).find(candidate=>candidate&&candidate.id===proposalId);
+  if(!proposal||!proposal.patch){toast("No approved patch is available to copy.");return}
+  copyText(proposal.patch,"Approved change patch copied — review it before committing")
+}
 function renderProposalCard(a,p,index,total){
-  const approveLabel=`Record approval → catalog v${bumpVersion(a.version)}`;
+  const approveLabel="Record review approval";
   const hasChange=Array.isArray(p.changes)&&p.changes.length===1;
   const autoRejected=p.status==="rejected"&&p.autoRejection&&p.autoRejection.by==="verifier";
-  return `<div class="loop-card${autoRejected?" loop-card-auto-rejected":""}">
-    <div class="loop-head"><span class="loop-badge">● ${autoRejected?"AUTO-REJECTED BY VERIFIER":"IMPROVEMENT PROPOSED"}${total>1?` · ${index+1} of ${total}`:""}</span><span class="loop-src">${escHtml(p.source)} · ${formatDate(p.date)}</span></div>
+  const approved=p.status==="approved";
+  const label=approved?"REVIEW APPROVED · READY FOR HUMAN COMMIT":autoRejected?"AUTO-REJECTED BY VERIFIER":"IMPROVEMENT PROPOSED";
+  const canApprove=authCanWrite()&&window.DirectoryAPI&&DirectoryAPI.enabled;
+  return `<div class="loop-card${autoRejected?" loop-card-auto-rejected":""}${approved?" loop-card-approved":""}">
+    <div class="loop-head"><span class="loop-badge">● ${label}${total>1?` · ${index+1} of ${total}`:""}</span><span class="loop-src">${escHtml(p.source)} · ${formatDate(approved?p.approvedAt:p.date)}</span></div>
     ${isGovernedPilot(a)?`<div class="railway-proposal-source"><strong>Loop-service proposal · Railway file store · pilot-only.</strong> This reversible proposal is read from Railway evidence and is not governed Convex catalog state.</div>`:""}
     <div class="loop-summary">${escHtml(p.summary)}</div>
     <div class="loop-detail">${escHtml(p.detail)}</div>
     ${renderProposalChanges(p.changes)}
     ${p.verdict?`<div class="loop-verdict"><span class="pill pill-xs ${p.verdict.verdict==="ship"?"pill-green":p.verdict.verdict==="reject"?"pill-amber":"pill-blue"}">checker: ${escHtml(p.verdict.verdict)} · ${p.verdict.confidence}</span>${(p.verdict.reasons||[]).length?`<span class="loop-verdict-why">${escHtml(p.verdict.reasons[0])}</span>`:""}</div>`:""}
     ${p.targetArtifactVersion?`<div class="loop-target">Derived against artifact <strong>${escHtml(p.targetArtifactVersion)}</strong>${p.targetArtifactDigest?` · <code>${escHtml(String(p.targetArtifactDigest).slice(0,7))}</code>`:""}.</div>`:""}
-    <div class="loop-approval-notice"><strong>Approval records a review decision only.</strong> It bumps the catalog label and clears this proposal, but changes no prompt, check, runtime, or agent behavior. A human must make, verify, and commit the artifact edit separately.</div>
-    <div class="loop-actions">${autoRejected?`<button class="btn btn-sm" onclick="reopenVerifierRejectedImprovement('${a.id}','${escHtml(p.id||"")}')">Re-open for human review</button>`:`${isReadOnlyRecord(a)?lockedControl(approveLabel,APPROVAL_LOCK_REASON,"btn btn-primary btn-sm"):`<button class="btn btn-primary btn-sm" onclick="approveImprovement('${a.id}','${escHtml(p.id||"")}')" ${hasChange?"":"disabled"}>${escHtml(approveLabel)}</button>`}<button class="btn btn-sm" onclick="rejectImprovement('${a.id}','${escHtml(p.id||"")}')">Reject proposal</button>`}</div>
+    ${approved?`<div class="loop-approval-notice"><strong>Approved is not applied.</strong> ${p.approvedBy?`Recorded by ${escHtml(p.approvedBy.name||p.approvedBy.subject)} on ${formatDate(p.approvedAt)}. `:""}A human must review, commit and release the artifact change.</div>`:`<div class="loop-approval-notice"><strong>Approval records a review decision only.</strong> It does not change the Railway catalog version, prompt, check, runtime, or governed Convex version. A human must make, verify and commit the artifact edit separately.</div>`}
+    <div class="loop-actions">${approved?`<button class="btn btn-sm btn-primary" onclick="copyProposalPatch('${a.id}','${escHtml(p.id||"")}')" ${p.patch?"":"disabled"}>Copy approved patch</button>`:autoRejected?`<button class="btn btn-sm" onclick="reopenVerifierRejectedImprovement('${a.id}','${escHtml(p.id||"")}')">Re-open for human review</button>`:`${canApprove?`<button class="btn btn-primary btn-sm" onclick="approveImprovement('${a.id}','${escHtml(p.id||"")}')" ${hasChange?"":"disabled"}>${escHtml(approveLabel)}</button>`:lockedControl(approveLabel,APPROVAL_LOCK_REASON,"btn btn-primary btn-sm")}<button class="btn btn-sm" onclick="rejectImprovement('${a.id}','${escHtml(p.id||"")}')">Reject proposal</button>`}</div>
   </div>`;
 }
 
 function renderDetail(a){
   const sopLines=(a.sop||"").split("\n").filter(Boolean);
   const e=latestEval(a);
-  const prop=pendingProposalsOf(a),autoRejected=autoRejectedProposalsOf(a);
+  const prop=pendingProposalsOf(a),autoRejected=autoRejectedProposalsOf(a),approved=approvedProposalsOf(a);
   return `<div class="detail">
     <button class="back-btn" onclick="goBack()"><span>&lsaquo;</span> Back to Directory</button>
     <div class="detail-header">
@@ -1069,6 +1092,7 @@ function renderDetail(a){
     ${renderProposalAttempt(a)}
     ${prop.length?`${prop.length>1?`<div class="loop-set-note">${prop.length} separate proposals, one per defect. Each is approved or rejected on its own; deciding one leaves the others pending.</div>`:""}${prop.map((p,i)=>renderProposalCard(a,p,i,prop.length)).join("")}`:""}
     ${autoRejected.length?`<div class="loop-set-note">Verifier-rejected proposals are retained below. They are checker opinions, not human decisions.</div>${autoRejected.map((p,i)=>renderProposalCard(a,p,i,autoRejected.length)).join("")}`:""}
+    ${approved.length?`<div class="loop-set-note">Approved review decisions are retained below. They are ready for a human commit and have not changed agent behaviour.</div>${approved.map((p,i)=>renderProposalCard(a,p,i,approved.length)).join("")}`:""}
 
     <div class="pillar-block pillar-goals">
       <div class="pillar-tag">① GOALS<span class="autonomy-pill" title="Action scope only — proposals always require human approval">${escHtml(a.autonomyLevel||"L1")} · ${autonomyLabel(a.autonomyLevel||"L1")}</span>${a.costPerOutcome&&a.costPerOutcome.target?`<span class="cost-pill">target ${"$"+a.costPerOutcome.target}/outcome</span>`:""}</div>

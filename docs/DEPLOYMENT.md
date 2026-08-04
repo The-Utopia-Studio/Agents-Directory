@@ -172,6 +172,14 @@ requires `Authorization: Bearer <API_TOKEN>`. Keep that token out of the repo
 and out of the browser: run the export from a trusted client (for example
 `curl -H "Authorization: Bearer $API_TOKEN"`), not from the deployed page.
 
+Human approval of a loop proposal has a second, independent identity check.
+Set `CLERK_JWT_ISSUER_DOMAIN=https://valid-collie-71.clerk.accounts.dev` on the
+Railway loop service and keep `CLERK_JWT_AUDIENCE=convex`. The browser sends the
+signed Clerk token only to the approval endpoint; Railway verifies its RS256
+signature, issuer, audience, expiry and `role: "approver"` claim before recording
+the actor. Missing configuration or a non-approver token fails visibly and no
+proposal is changed.
+
 ---
 
 ## 4. Turn it on, one provider at a time

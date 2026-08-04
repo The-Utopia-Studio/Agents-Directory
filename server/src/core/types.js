@@ -81,6 +81,9 @@
  * @property {string} [targetArtifactVersion]  artifact this was derived against
  * @property {string} [targetArtifactDigest]   approval is refused if this moved
  * @property {"sha256"} [targetArtifactDigestAlgorithm]
+ * @property {string} [approvedAt]      signed human review timestamp
+ * @property {{subject:string,issuer:string,role:"approver",name?:string}} [approvedBy]
+ * @property {string} [patch]           copyable human-commit handoff; never auto-applied
  */
 
 /**

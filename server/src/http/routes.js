@@ -1,6 +1,7 @@
 // REST surface. Thin — each route delegates to the loop service. This is the
 // contract the front-end's api.js talks to.
 import { binaryReply, reply } from "./router.js";
+import { requireClerkApprover } from "../auth/clerkJwt.js";
 
 /**
  * Bulk metadata export is the one read that hands over the whole catalogue at
@@ -104,9 +105,14 @@ export function registerRoutes(router, svc, engine, config = {}) {
   router.post("/api/agents/:id/improvements", async ({ params }) =>
     reply(201, await svc.runImprovement(params.id))
   );
-  router.post("/api/agents/:id/improvements/:pid/approve", async ({ params }) =>
-    svc.approveImprovement(params.id, params.pid === "current" ? null : params.pid)
-  );
+  router.post("/api/agents/:id/improvements/:pid/approve", async ({ params, req }) => {
+    const actor = await requireClerkApprover(req, config.clerk);
+    return svc.approveImprovement(
+      params.id,
+      params.pid === "current" ? null : params.pid,
+      actor,
+    );
+  });
   router.post("/api/agents/:id/improvements/:pid/reject", async ({ params }) =>
     svc.rejectImprovement(params.id, params.pid === "current" ? null : params.pid)
   );

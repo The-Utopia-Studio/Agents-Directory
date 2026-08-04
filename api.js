@@ -25,11 +25,17 @@ window.DirectoryAPI = (function () {
       : "";
   const token =
     tokenConfigured || localStorage.getItem("directory_api_token") || "";
+  // Signed Clerk identity is memory-only. It is separate from the shared
+  // Railway API token and is verified by the approval endpoint.
+  let identityToken = "";
 
-  async function j(method, path, body) {
+  async function j(method, path, body, { signedIdentity = false } = {}) {
     const headers = {};
     if (body) headers["content-type"] = "application/json";
     if (token) headers["authorization"] = "Bearer " + token;
+    if (signedIdentity && identityToken) {
+      headers["x-directory-identity-token"] = identityToken;
+    }
     const res = await fetch(base + path, {
       method,
       headers: Object.keys(headers).length ? headers : undefined,
@@ -67,6 +73,9 @@ window.DirectoryAPI = (function () {
     enabled: false,
     info: null,
     ready: null,
+    setIdentityToken(value) {
+      identityToken = typeof value === "string" ? value : "";
+    },
 
     async probe() {
       try {
@@ -87,7 +96,12 @@ window.DirectoryAPI = (function () {
     // A decision names its proposal. "current" is only valid when exactly one
     // is pending; with several, an unnamed decision would resolve an arbitrary
     // one of them.
-    approve: (id, pid) => j("POST", `/api/agents/${id}/improvements/${encodeURIComponent(pid || "current")}/approve`),
+    approve: (id, pid) => j(
+      "POST",
+      `/api/agents/${id}/improvements/${encodeURIComponent(pid || "current")}/approve`,
+      null,
+      { signedIdentity: true },
+    ),
     reject: (id, pid) => j("POST", `/api/agents/${id}/improvements/${encodeURIComponent(pid || "current")}/reject`),
     reopenRejected: (id, pid) => j("POST", `/api/agents/${id}/improvements/${encodeURIComponent(pid)}/reopen`),
     logEval: (id, record) => j("POST", `/api/agents/${id}/evals`, record),

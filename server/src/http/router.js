@@ -23,7 +23,7 @@ export function createRouter({ corsOrigin = "*", apiToken = "" } = {}) {
           "access-control-allow-origin": corsOrigin,
           "access-control-allow-methods": "GET,POST,PUT,DELETE,OPTIONS",
           // authorization must be listed so browser preflight allows Bearer tokens
-          "access-control-allow-headers": "content-type, authorization",
+          "access-control-allow-headers": "content-type, authorization, x-directory-identity-token",
           "access-control-expose-headers": "content-disposition, x-artifact-digest, x-artifact-digest-algorithm",
         };
         if (req.method === "OPTIONS") { res.writeHead(204, cors); return res.end(); }

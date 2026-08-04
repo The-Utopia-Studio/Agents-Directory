@@ -2,7 +2,6 @@
 // the store + the (swappable) observability and optimizer providers. All the
 // business rules of the eval -> improve -> approve cycle live here.
 import { createHash } from "node:crypto";
-import { bumpVersion } from "./version.js";
 import { getInvoker } from "../invoke/index.js";
 import { assertUsabilityModes } from "./usabilityModes.js";
 import {
@@ -25,6 +24,36 @@ import { buildServiceMigrationSnapshot } from "../migration/export.js";
 
 function outputDigest(output) {
   return createHash("sha256").update(String(output)).digest("hex");
+}
+
+function approvedChangePatch(proposal) {
+  const change = proposal?.changes?.[0];
+  if (!change) return "";
+  return [
+    `# Approved change ${proposal.id}`,
+    `# Target: ${change.target}`,
+    `# Surface: ${change.surface}`,
+    ...(proposal.targetArtifactVersion
+      ? [`# Derived against: ${proposal.targetArtifactVersion} (${proposal.targetArtifactDigest || "digest not recorded"})`]
+      : []),
+    "--- current",
+    change.current,
+    "+++ proposed",
+    change.proposed,
+    `# Rationale: ${change.rationale}`,
+    `# Evidence: ${(change.evidence || []).join(", ")}`,
+  ].join("\n");
+}
+
+function assertVerifiedApprover(actor) {
+  if (
+    !actor ||
+    typeof actor.subject !== "string" || !actor.subject ||
+    typeof actor.issuer !== "string" || !actor.issuer ||
+    actor.role !== "approver"
+  ) {
+    throw Object.assign(new Error("Verified release approver identity required"), { status: 403 });
+  }
 }
 
 
@@ -531,7 +560,8 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       return proposals;
     },
 
-    async approveImprovement(agentId, proposalId) {
+    async approveImprovement(agentId, proposalId, actor) {
+      assertVerifiedApprover(actor);
       const agent = await store.get("agents", agentId);
       const proposals = agent ? readProposals(agent) : [];
       const pending = proposals.filter((proposal) => proposal.status === "proposed");
@@ -561,17 +591,28 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
             `Re-run the proposal against the current build.`,
         );
       }
-      const nv = bumpVersion(agent.version);
-      agent.changelog = [...(agent.changelog || []), {
-        version: nv, date: new Date().toISOString().slice(0, 10),
-        note: `Approved improvement (${prop.source}): ${prop.summary}`,
-      }];
-      agent.version = nv;
-      // Approve one defect, leave the rest pending. Clearing the whole set here
-      // would silently discard proposals nobody decided on.
-      writeProposals(agent, proposals.filter((candidate) => candidate.id !== prop.id));
+      const approvedAt = new Date().toISOString();
+      prop.status = "approved";
+      prop.approvedAt = approvedAt;
+      prop.approvedBy = {
+        subject: actor.subject,
+        issuer: actor.issuer,
+        role: actor.role,
+        ...(actor.name ? { name: actor.name } : {}),
+      };
+      // This is a copyable handoff for a human commit, not an automatic
+      // artifact write. The proposal remains immutable evidence of the review.
+      prop.patch = prop.diff || approvedChangePatch(prop);
+      agent.latestProposalAttempt = {
+        outcome: "human-approved-change-ready-to-commit",
+        recordedAt: approvedAt,
+        proposalId: prop.id,
+      };
+      // Retain the approved proposal and every still-pending sibling. Approval
+      // is a review decision, not a deletion and not a Railway version release.
+      writeProposals(agent, proposals);
       await store.put("agents", agent);
-      return { version: nv, agent };
+      return { version: agent.version, proposal: prop, agent };
     },
 
     // A manual rejection is deliberately destructive: the operator saw this

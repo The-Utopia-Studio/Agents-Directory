@@ -140,6 +140,7 @@ if (typeof window !== "undefined" && typeof window.document !== "undefined") {
     publishableKey: window.DIRECTORY_CLERK_PUBLISHABLE_KEY,
     onToken(token) {
       window.ConvexDirectory?.setAuthToken?.(token);
+      window.DirectoryAPI?.setIdentityToken?.(token);
     },
     verifyConvexIdentity() {
       const directory = window.ConvexDirectory;

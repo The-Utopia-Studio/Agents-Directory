@@ -460,17 +460,23 @@ off, it is off.
   run/copy/download plus the mutable directory version label, but the artifact
   is still not a Convex-approved version. It cannot support authoritative
   promotion until Railway is wired to Convex under **TUS-2327**.
-- **Clerk sign-in is wired, but governed browser writes are not yet.**
+- **Clerk sign-in governs browser writes and human loop approvals.**
   `convex/auth.config.ts` trusts the configured
   `CLERK_JWT_ISSUER_DOMAIN` using the `convex` audience. Authority mutations
   fail closed with 401 when no signed identity is present. Release decisions
   additionally require the signed, user-level top-level claim
   `role: "approver"` and fail with 403 for every other role. The static
-  static front-end loads Clerk with the non-secret publishable key, requests
+  front-end loads Clerk with the non-secret publishable key, requests
   the `convex` JWT template, and attaches that token to the Convex HTTP client.
   Signed-out users retain read access and get a visible sign-in action; missing
   configuration or token failure is visibly unavailable, not a silent
-  permissions fallback. The catalogue mutations are wired in the next phase.
+  permissions fallback. The Railway approval endpoint independently verifies
+  the same signed token against Clerk's JWKS and requires `role: "approver"`;
+  it never accepts a browser-supplied actor. Approval retains the proposal and
+  a copyable change patch, but does not bump `agent.version`, edit an artifact,
+  or release a governed version. Railway must have
+  `CLERK_JWT_ISSUER_DOMAIN` set to the trusted issuer (and optionally
+  `CLERK_JWT_AUDIENCE`, default `convex`) or approval visibly fails closed.
 - **Digests are caller attestations, not verified byte hashes.** Fields like
   `declaredDigest` / `declaredArtifactDigest` are values the caller supplies;
   nothing hashes the artifact to check them.
