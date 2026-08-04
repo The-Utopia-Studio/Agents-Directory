@@ -77,6 +77,18 @@ export const SEED_AGENTS = [
     when: "When creating or updating a fellow's LinkedIn bio, spoken event introduction, or headline from complete supplied material. After drafting, check the LinkedIn About fold on a phone and refresh the bio every 2–3 months.",
     sop: "1. Gather the fellow's name, source material, achievements, mission, skills, contact preference, and exclusions before starting\n2. Paste everything into the single source-material field\n3. Run one text-only draft\n4. Review every claim before using the output\n5. Paste the About into LinkedIn and check the fold on a phone; the hook should fit before “See more”\n6. Set a reminder to refresh the bio in 2–3 months",
     skills: ["biocraft", "personal-branding", "copywriting"], tools: [], context: ["Complete fellow source material supplied up front"],
+    // Synthetic golden case — full fixtures + source-grounding rules live under
+    // server/src/eval/; directory entry is the compact contract only.
+    goldenCases: [
+      {
+        input:
+          "Mira Okonkwo — Intern Helix Labs; contracted for Dextrum (not founded); founded Northline Studio; numeric achievements; CTA open to advisory email",
+        expected:
+          "Preserve Intern+Helix; Dextrum ≠ founded; Northline = founded; About CTA; no em dash; no sits-at-the-intersection cliché",
+        rule: "mechanical + source-grounding checks; see eval/goldenCases.js a7-mira-okonkwo-v1",
+        source: "synthetic/golden-a7-v1",
+      },
+    ],
     evalHistory: [], changelog: [{ version: "1.0", date: "2026-08-01", note: "Stateless single-shot draft mode using a server-owned SKILL.md." }], proposedImprovements: [] },
   // A8 is prepared-handoff: the agent lives in Aiden's repo and runs in Codex,
   // so this record is a catalogue entry, not a copy of the instructions. The

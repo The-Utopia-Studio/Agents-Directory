@@ -12,6 +12,7 @@ export const IMMUTABLE_COLLECTIONS = Object.freeze([
   "feedback",
   "loopRuns",
   "learnings",
+  "mechanicalResults",
 ]);
 
 export function createStore(dataDir, { createIfMissing = true } = {}) {

@@ -418,12 +418,25 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
 
     // ── the loop: run the optimizer on failing signal ──
     async collectImprovementEvidence(agentId, agent) {
-      const [failingTraces, traces, feedback] = await Promise.all([
-        obs.getFailingTraces(agentId, { limit: 100 }),
-        obs.listTraces(agentId, { limit: 100 }),
-        store.query("feedback", (f) => f.agentId === agentId),
-      ]);
+      const [failingTraces, traces, feedback, mechanicalResults] =
+        await Promise.all([
+          obs.getFailingTraces(agentId, { limit: 100 }),
+          obs.listTraces(agentId, { limit: 100 }),
+          store.query("feedback", (f) => f.agentId === agentId),
+          store.query("mechanicalResults", (r) => r.agentId === agentId),
+        ]);
       const latestEval = (agent.evalHistory || []).at(-1);
+
+      // Golden-case mechanical failures reach the maker the same way run
+      // failureReasons do — closed vocabulary, no draft text. Prefixed so they
+      // are never mistaken for fleet-health eval scores.
+      const mechanicalDefects = mechanicalResults
+        .flatMap((row) =>
+          (row.failed || []).map(
+            (checkId) => `mechanical:${checkId}`,
+          ),
+        )
+        .filter(Boolean);
 
       // A defect signal is a human-or-checker statement of what went wrong.
       // Runs alone are not one: a metadata trace records that the agent ran,
@@ -431,6 +444,7 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       // failed traces; reviewer notes carry human judgement separately.
       const defectSignals = [
         ...failingTraces.map((t) => t.failureReason).filter(Boolean),
+        ...mechanicalDefects,
         ...feedback.map((f) => String(f.notes || "").trim()).filter(Boolean),
         String(latestEval?.knownIssues || "").trim(),
         String(latestEval?.notes || "").trim(),

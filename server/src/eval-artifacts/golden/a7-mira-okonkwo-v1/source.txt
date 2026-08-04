@@ -1,0 +1,18 @@
+Name: Mira Okonkwo
+Role material (must preserve qualifiers and relationships exactly):
+- Intern, Product Design, Helix Labs (2022)
+- Worked for Dextrum Health as a contractor building intake workflows
+  (she did not found Dextrum; she was paid by them)
+- Later: founding designer at her own studio, Northline Studio
+
+Achievements with numbers:
+- Cut prior-auth turnaround from 11 days to 4 across 38 clinics
+- Shipped a clinician inbox used in 12,000 encounters
+
+Quote she actually said (usable):
+- "Most tools assume the clinic already has a clean data room. Ours don't."
+
+Optional interview notes:
+- Audience: health-tech hiring managers and clinic operators
+- Tone: direct, no hype
+- CTA: open to advisory conversations by email

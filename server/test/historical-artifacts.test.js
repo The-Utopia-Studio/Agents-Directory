@@ -1,0 +1,113 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import {
+  HISTORICAL_ARTIFACT_REGISTRY,
+  assertDeclaredDigest,
+  gitShowBytes,
+  listHistoricalArtifactVersions,
+  loadHistoricalArtifact,
+  verifyHistoricalFixtureAgainstGit,
+} from "../src/eval/historicalArtifacts.js";
+
+const V5 = "biocraft-singleshot-v5";
+const V6 = "biocraft-singleshot-v6";
+const V5_DIGEST =
+  "c5cc1a587a10deb6fb1b2ee73fed0c31fcad96fa12ed58bc5907544e408df92b";
+const V6_DIGEST =
+  "a8c08f4e98cd88f018764754eda760a20113e6fcf8a3362a192254b6bca81a10";
+
+test("registry pins full SHAs and declared digests; fixtures are under src/", () => {
+  assert.equal(HISTORICAL_ARTIFACT_REGISTRY[V5].declaredDigest, V5_DIGEST);
+  assert.equal(HISTORICAL_ARTIFACT_REGISTRY[V6].declaredDigest, V6_DIGEST);
+  assert.match(HISTORICAL_ARTIFACT_REGISTRY[V5].gitRev, /^[a-f0-9]{40}$/);
+  assert.match(
+    HISTORICAL_ARTIFACT_REGISTRY[V5].fixtureRelativePath,
+    /^biocraft\//,
+  );
+});
+
+test("loadHistoricalArtifact reads committed fixtures and verifies digests", () => {
+  const v5 = loadHistoricalArtifact(V5);
+  assert.equal(v5.source, "committed-fixture");
+  assert.equal(v5.artifactVersion, V5);
+  assert.equal(v5.artifactDigest, V5_DIGEST);
+  assert.ok(
+    v5.checks.includes(
+      "generated_sections_have_no_delimiter_separated_keyword_run",
+    ),
+  );
+
+  const v6 = loadHistoricalArtifact(V6);
+  assert.equal(v6.artifactDigest, V6_DIGEST);
+  assert.ok(v6.checks.includes("draft_has_no_em_dash"));
+  assert.ok(v6.checks.includes("draft_has_no_ai_cliche_phrase"));
+  assert.notEqual(v5.artifactDigest, v6.artifactDigest);
+});
+
+test("fixture bytes on disk match declared digests", () => {
+  for (const version of [V5, V6]) {
+    const entry = HISTORICAL_ARTIFACT_REGISTRY[version];
+    const path = fileURLToPath(
+      new URL(
+        `../src/eval-artifacts/${entry.fixtureRelativePath}`,
+        import.meta.url,
+      ),
+    );
+    const digest = createHash("sha256")
+      .update(readFileSync(path))
+      .digest("hex");
+    assert.equal(digest, entry.declaredDigest);
+  }
+});
+
+test("digest mismatch refuses loudly", () => {
+  const v6 = loadHistoricalArtifact(V6);
+  assert.throws(
+    () =>
+      assertDeclaredDigest(
+        Buffer.from(v6.content),
+        V5_DIGEST,
+        "forged-v5-claim",
+      ),
+    (error) => {
+      assert.equal(error.status, 500);
+      assert.match(error.message, /digest mismatch/);
+      return true;
+    },
+  );
+});
+
+test("unknown version refuses", () => {
+  assert.throws(
+    () => loadHistoricalArtifact("biocraft-singleshot-v99"),
+    (error) => {
+      assert.match(error.message, /No historical artifact registered/);
+      return true;
+    },
+  );
+});
+
+test("dev-time git verification matches committed fixtures", () => {
+  const verified = verifyHistoricalFixtureAgainstGit(V5);
+  assert.equal(verified.artifactDigest, V5_DIGEST);
+  assert.equal(verified.source, "git-verified-fixture");
+  // gitShowBytes still available for verification tooling
+  const bytes = gitShowBytes(
+    HISTORICAL_ARTIFACT_REGISTRY[V5].gitRev,
+    HISTORICAL_ARTIFACT_REGISTRY[V5].path,
+  );
+  assert.equal(createHash("sha256").update(bytes).digest("hex"), V5_DIGEST);
+});
+
+test("listHistoricalArtifactVersions scopes to A7", () => {
+  assert.deepEqual(
+    listHistoricalArtifactVersions("A7")
+      .map((row) => row.artifactVersion)
+      .sort(),
+    [V5, V6].sort(),
+  );
+  assert.equal(listHistoricalArtifactVersions("A8").length, 0);
+});
