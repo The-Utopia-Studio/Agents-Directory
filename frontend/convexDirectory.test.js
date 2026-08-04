@@ -144,8 +144,17 @@ const escHtmlStub = (value) =>
   );
 
 /** Evaluates the write-lock block plus the governed render helpers together. */
-function loadWriteGuards({ convexReadActive = false, catalogSource } = {}) {
-  const context = createContext({ escHtml: escHtmlStub, toast: () => {} });
+function loadWriteGuards({ convexReadActive = false, catalogSource, authStatus = "signed-in" } = {}) {
+  const context = createContext({
+    escHtml: escHtmlStub,
+    toast: () => {},
+    window: {
+      ConvexDirectory: { enabled: true },
+      DirectoryAuth: {
+        getState: () => ({ status: authStatus, detail: "Auth fixture" }),
+      },
+    },
+  });
   runInContext(
     sliceSource("// ── WRITE LOCK", "// ── END WRITE LOCK"),
     context,
@@ -164,7 +173,7 @@ function loadGovernedWriteHelpers() {
 }
 
 describe("Phase 4 Convex directory pilot", () => {
-  test("a successful query overlays governed A7/A8 while A1-A6 stay local", async () => {
+  test("a successful query merges complete Convex rows and retains only unmatched local fixtures", async () => {
     const query = vi.fn().mockResolvedValue(governedRows);
     const client = createConvexDirectoryClient({
       url: "https://pilot.example.convex.cloud",
@@ -228,6 +237,19 @@ describe("Phase 4 Convex directory pilot", () => {
     expect(result.agents.some((agent) => agent.governedInConvex)).toBe(false);
   });
 
+  test("the Convex client receives and clears the Clerk token without changing public reads", () => {
+    const setAuth = vi.fn();
+    const clearAuth = vi.fn();
+    const client = createConvexDirectoryClient({
+      url: "https://pilot.example.convex.cloud",
+      clientFactory: () => ({ query: vi.fn(), setAuth, clearAuth }),
+    });
+    client.setAuthToken("signed-clerk-jwt");
+    client.setAuthToken(null);
+    expect(setAuth).toHaveBeenCalledWith("signed-clerk-jwt");
+    expect(clearAuth).toHaveBeenCalledOnce();
+  });
+
   test("A8's Git commit remains a source pin and is never mapped as an artifact digest", () => {
     const overlaid = overlayGovernedPilotAgents(localAgents, governedRows);
     const a8 = overlaid.find((agent) => agent.id === "A8");
@@ -255,17 +277,13 @@ describe("Phase 4 Convex directory pilot", () => {
     expect(clientSource).not.toMatch(/https:\/\/[^\s"']+\.convex\.cloud/);
   });
 
-  test("governed A7/A8 lock catalog edits and manual evals but keep proposals live", () => {
-    const helpers = loadGovernedWriteHelpers();
+  test("governed A7/A8 permit Convex edits while manual evals stay locked and proposals stay live", () => {
+    const helpers = loadWriteGuards({ catalogSource: "convex" });
     const overlaid = overlayGovernedPilotAgents(localAgents, governedRows);
     for (const id of ["A7", "A8"]) {
       const agent = overlaid.find((row) => row.id === id);
       expect(helpers.isGovernedPilot(agent)).toBe(true);
-      expect(helpers.renderDetailEditControl(agent)).toContain("disabled");
-      expect(helpers.renderDetailEditControl(agent)).not.toContain("onclick");
-      expect(helpers.renderDetailEditControl(agent)).toContain(
-        "Catalog editing moves to Convex",
-      );
+      expect(helpers.renderDetailEditControl(agent)).toContain("onclick");
       expect(helpers.renderEvalTitleActions(agent)).toContain(
         `onclick="proposeImprovement('${id}')"`,
       );
@@ -275,11 +293,21 @@ describe("Phase 4 Convex directory pilot", () => {
         "ungoverned score would affect fleet health",
       );
       expect(helpers.renderGovernedPilotNotice(agent)).toContain(
-        "Runs, feedback and reversible proposals continue in the loop service",
+        "runs, feedback and reversible proposals continue in the loop service",
       );
       expect(helpers.renderEmptyEval(agent)).not.toContain("Log the first evaluation");
       expect(helpers.renderEmptyEval(agent)).not.toContain("openModal('eval'");
     }
+  });
+
+  test("signed-out catalog controls visibly request sign-in instead of silently appearing read-only", () => {
+    const helpers = loadWriteGuards({ catalogSource: "local", authStatus: "signed-out" });
+    expect(helpers.writeActionButton("Add agent", "openModal('addAgent')", "btn-primary")).toContain(
+      "Sign in to register, edit, or request",
+    );
+    expect(helpers.renderDetailEditControl({ id: "A7" })).toContain(
+      "Sign in to register, edit, or request",
+    );
   });
 
   test("hydration/boot never writes localStorage before the Convex outcome", () => {
@@ -326,24 +354,23 @@ describe("Phase 4 Convex directory pilot", () => {
     expect(unlocked.renderWriteLockBanner()).toBe("");
   });
 
-  test("A1-A6 keep their normal local controls while no Convex read is active", () => {
+  test("local fixtures are visibly read-only rather than silently writing browser state", () => {
     const helpers = loadGovernedWriteHelpers();
     expect(helpers.writesLocked()).toBe(false);
     for (const agent of localAgents.slice(0, 6)) {
       expect(helpers.isGovernedPilot(agent)).toBe(false);
-      expect(helpers.renderDetailEditControl(agent)).toContain("onclick");
+      expect(helpers.renderDetailEditControl(agent)).toContain("disabled");
+      expect(helpers.renderDetailEditControl(agent)).toContain("local fixture is read-only");
       expect(helpers.renderEvalTitleActions(agent)).toContain("proposeImprovement(");
-      expect(helpers.renderEvalTitleActions(agent)).toContain("openModal('eval'");
+      expect(helpers.renderEvalTitleActions(agent)).not.toContain("openModal('eval'");
       expect(helpers.renderGovernedPilotNotice(agent)).toBe("");
-      expect(helpers.renderEmptyEval(agent)).toContain("Log the first evaluation");
-      expect(helpers.writeActionButton("+ Add agent", "openModal('addAgent')")).toContain(
-        "onclick",
-      );
+      expect(helpers.renderEmptyEval(agent)).not.toContain("Log the first evaluation");
+      expect(helpers.writeActionButton("+ Add agent", "openModal('addAgent')")).toContain("disabled");
     }
     expect(helpers.renderWriteLockBanner()).toBe("");
   });
 
-  test("an active Convex read disables every local write affordance, including A1-A6", () => {
+  test("an active Convex read exposes Convex-backed registration while local fixtures remain read-only", () => {
     const helpers = loadWriteGuards({ convexReadActive: true });
     expect(helpers.writesLocked()).toBe(true);
     expect(helpers.convexReadActive()).toBe(true);
@@ -353,10 +380,7 @@ describe("Phase 4 Convex directory pilot", () => {
 
     for (const label of ["+ Add agent", "Request an Agent", "+ New request"]) {
       const button = helpers.writeActionButton(label, "openModal('addAgent')");
-      expect(button).toContain("disabled");
-      expect(button).not.toContain("onclick");
-      expect(button).toContain("Catalog editing moves to Convex in the next phase");
-      expect(button).toContain("locked-control-reason");
+      expect(button).toContain("onclick");
     }
 
     // A1-A6 are ordinary local records, but the view is Convex-rendered, so a
@@ -368,9 +392,7 @@ describe("Phase 4 Convex directory pilot", () => {
       expect(helpers.renderEvalTitleActions(agent)).toContain("proposeImprovement(");
       expect(helpers.renderEvalTitleActions(agent)).not.toContain("openModal('eval'");
       expect(helpers.renderEmptyEval(agent)).not.toContain("openModal('eval'");
-      expect(helpers.renderGovernedPilotNotice(agent)).toContain(
-        "Catalog editing moves to Convex in the next phase",
-      );
+      expect(helpers.renderGovernedPilotNotice(agent)).toContain("Convex is the catalog source");
     }
   });
 
@@ -402,29 +424,34 @@ describe("Phase 4 Convex directory pilot", () => {
     );
   });
 
-  test("every localStorage write path is guarded by the write lock", () => {
+  test("new Convex form paths never call local persistence", () => {
     // persist() is the only writer of the catalogue blob, and resetData() is the
     // only remover. Both must refuse while the view renders Convex.
     const persistBody = sliceSource("function persist()", "function hydrate()");
     expect(persistBody).toMatch(/if\(writesLocked\(\)\)return false/);
 
-    const writeEntryPoints = [
-      "function openModal(type,data){",
-      "async function saveNewAgent(){",
-      "function saveEditAgent(id){",
-      "function saveNewRequest(){",
+    const localWriteEntryPoints = [
       "function saveEval(id){",
       "function saveTriage(id){",
       "function shipRequestAsAgent(id){",
       "async function approveImprovement(id,proposalId){",
     ];
-    for (const entry of writeEntryPoints) {
+    for (const entry of localWriteEntryPoints) {
       const index = appSource.indexOf(entry);
       expect(index, `${entry} not found`).toBeGreaterThan(-1);
       expect(
         appSource.slice(index, index + 420),
         `${entry} is missing a write-lock guard`,
       ).toMatch(/if\(writesLocked\(\)\)return refuseLockedWrite\(\)/);
+    }
+
+    for (const entry of ["async function saveNewAgent(){", "async function saveEditAgent(id){", "async function saveNewRequest(){"]) {
+      const start = appSource.indexOf(entry);
+      const next = appSource.slice(start, appSource.indexOf("\nfunction ", start + entry.length));
+      expect(next, `${entry} not found`).toContain("ConvexDirectory");
+      expect(next).not.toMatch(/\bpersist\s*\(/);
+      expect(next).not.toMatch(/\bagents\.push\s*\(/);
+      expect(next).not.toMatch(/\brequests\.push\s*\(/);
     }
 
     expect(appSource).toMatch(
@@ -497,12 +524,14 @@ describe("Phase 4 Convex directory pilot", () => {
     expect(appSource).toContain("Verifier-rejected proposals are retained below.");
   });
 
-  test("the browser pilot contains a query path and no mutation path", () => {
+  test("the browser directory uses only the three allowlisted Convex mutations", () => {
     expect(clientSource).toMatch(
       /makeFunctionReference\(\s*["']agents:listGovernedDirectoryPilot["']/,
     );
     expect(clientSource).toMatch(/client\.query\(\s*governedDirectoryQuery/);
-    expect(clientSource).not.toMatch(/client\s*\.\s*mutation\s*\(/);
+    expect(clientSource).toMatch(/agents:registerAgent/);
+    expect(clientSource).toMatch(/agents:updateAgent/);
+    expect(clientSource).toMatch(/requests:createRequest/);
     expect(clientSource).not.toMatch(/api\.imports/);
     expect(appSource).not.toMatch(/client\s*\.\s*mutation\s*\(/);
     expect(appSource).not.toMatch(/ConvexHttpClient/);

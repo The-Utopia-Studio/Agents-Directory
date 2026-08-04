@@ -75,19 +75,18 @@ test("minting stays in the A<n> namespace and skips gaps that are taken", () => 
   assert.deepEqual([first, second], ["A4", "A5"]);
 });
 
-test("the service's known ids are re-observed before minting, and minting refuses when unanswered", () => {
-  // Re-observing at mint time (not just at page load) narrows the window where a
-  // browser mints an id the service assigned in the meantime. It cannot close
-  // it: this is a mitigation, not an atomic reservation.
-  assert.match(
-    APP_SOURCE,
-    /DirectoryAPI\.enabled&&!await refreshReservedAgentIds\(\)/,
-    "saveNewAgent must re-observe the service's known ids immediately before minting",
+test("new catalog registration delegates display-id allocation to Convex", () => {
+  // The temporary browser mitigation remains only for legacy local data. New
+  // agents no longer mint or persist an id in the browser.
+  assert.match(APP_SOURCE, /await ConvexDirectory\.registerAgent\(convexRegistrationArgs\(f\)\)/);
+  assert.doesNotMatch(
+    APP_SOURCE.slice(APP_SOURCE.indexOf("async function saveNewAgent()"), APP_SOURCE.indexOf("async function saveEditAgent")),
+    /mintAgentId\(|refreshReservedAgentIds\(|\bpersist\s*\(/,
   );
-  assert.match(APP_SOURCE, /Cannot check agent ids against the directory service/);
   // The observed set must come from the service's own list.
   assert.match(APP_SOURCE, /DirectoryAPI\.listAgents\(\)/);
-  // No hardcoded ceiling: that is the same collision with a delay on it.
+  // No hardcoded ceiling: the legacy helper is still honest until its later
+  // removal, and Convex owns all new display ids.
   assert.doesNotMatch(APP_SOURCE, /nextAgentNum=Math\.max\(Number\(nextAgentNum\)\|\|1,8\)/);
   assert.doesNotMatch(APP_SOURCE, /id:"A"\+nextAgentNum\+\+/);
 });

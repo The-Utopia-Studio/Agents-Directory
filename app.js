@@ -176,7 +176,13 @@ let migrationReview=null;
 let governedPilotById=new Map();
 
 function displayedAgents(){
-  return agents.map(agent=>governedPilotById.get(agent.id)||agent);
+  // Convex-only registrations have no browser record. Keep unmatched local
+  // fixtures for the short hybrid window, but render every governed row as a
+  // complete record rather than attempting an overlay.
+  return [
+    ...agents.filter(agent=>!governedPilotById.has(agent.id)),
+    ...governedPilotById.values(),
+  ].sort((a,b)=>String(a.id).localeCompare(String(b.id),undefined,{numeric:true}));
 }
 
 // ── WRITE LOCK (Convex-read view) ──
@@ -193,12 +199,24 @@ function displayedAgents(){
 //   convex  → locked (Convex is the displayed catalog)
 //   local   → unlocked (Convex unavailable, unconfigured, or failed)
 let catalogSource="pending";
-const WRITE_LOCK_REASON="Catalog editing moves to Convex in the next phase. Local registration, edits and requests are disabled so they cannot diverge per browser.";
+const WRITE_LOCK_REASON="Convex is the catalog source. Local registration, edits and requests are disabled so they cannot diverge per browser.";
 const WRITE_LOCK_PENDING_REASON="Local writes are paused until the Convex catalog read resolves, so a browser-only edit cannot be overwritten on boot.";
 const EVAL_LOCK_REASON="Manual eval logging stays locked during the pilot because an ungoverned score would affect fleet health and triage without a governed eval case or evidence link.";
 const APPROVAL_LOCK_REASON="Approval stays locked during the pilot because it bumps the Railway catalog version while Convex is the displayed authority. You may reject this reversible loop-service proposal.";
 const AUTOMATION_LIVE_NOTE="Run automations stays available under the catalog lock: the cycle stamps reversible proposals and Railway queue/learnings/loop-run records only. Auto-apply is dead, so it never bumps a catalog version. A separately configured Railway scheduler sits outside this UI lock.";
 function writesLocked(){return catalogSource!=="local"}
+function authState(){
+  const auth=typeof window!=="undefined"?window.DirectoryAuth:null;
+  return auth&&typeof auth.getState==="function"?auth.getState():{status:"unavailable",detail:"Clerk sign-in is unavailable in this browser."};
+}
+function authCanWrite(){return authState().status==="signed-in"}
+function authWriteReason(){
+  const auth=authState();
+  if(auth.status==="signed-out")return"Sign in to register, edit, or request.";
+  if(auth.status==="initializing")return"Checking sign-in before enabling catalog changes…";
+  return auth.detail||"Sign-in is unavailable. Retry before attempting a catalog change.";
+}
+function catalogActionReason(){return authCanWrite()?writeLockReason():authWriteReason()}
 function convexReadActive(){return catalogSource==="convex"}
 function catalogPending(){return catalogSource==="pending"}
 function writeLockReason(){return catalogPending()?WRITE_LOCK_PENDING_REASON:WRITE_LOCK_REASON}
@@ -219,12 +237,45 @@ function lockedControl(label,reason,cls){
   const classes=cls||"btn";
   return `<span class="locked-control"><button class="${classes}" disabled aria-disabled="true">${escHtml(label)}</button><span class="locked-control-reason">${escHtml(reason)}</span></span>`;
 }
+function convexWritesAvailable(){return convexReadActive()&&window.ConvexDirectory&&window.ConvexDirectory.enabled}
 function writeActionButton(label,onclick,cls){
   const classes=`btn${cls?" "+cls:""}`;
-  if(writesLocked())return lockedControl(label,writeLockReason(),classes);
+  if(!authCanWrite()){
+    const auth=authState();
+    if(auth.status==="signed-out")return `<span class="auth-action"><button class="${classes}" onclick="beginDirectorySignIn()">Sign in to register, edit, or request</button><span class="locked-control-reason">${escHtml(authWriteReason())}</span></span>`;
+    return lockedControl(label,authWriteReason(),classes);
+  }
+  if(!convexWritesAvailable())return lockedControl(label,writeLockReason(),classes);
   return `<button class="${classes}" onclick="${onclick}">${escHtml(label)}</button>`;
 }
-function refuseLockedWrite(){toast(writeLockReason());return false}
+function refuseLockedWrite(){toast(catalogActionReason());return false}
+function beginDirectorySignIn(){
+  const auth=typeof window!=="undefined"?window.DirectoryAuth:null;
+  if(!auth||typeof auth.signIn!=="function"){toast("Sign-in is unavailable in this browser.");return}
+  void auth.signIn();
+}
+function retryDirectorySignIn(){
+  const auth=typeof window!=="undefined"?window.DirectoryAuth:null;
+  if(!auth||typeof auth.retry!=="function"){toast("Sign-in retry is unavailable in this browser.");return}
+  void auth.retry();
+}
+function renderAuthSurface(){
+  const root=document.getElementById("auth-root");if(!root)return;
+  const auth=authState();
+  if(auth.status==="signed-in"){
+    root.innerHTML=`<div class="auth-state auth-state-signed-in"><span>Signed in${auth.user&&auth.user.name?` as ${escHtml(auth.user.name)}`:""}.</span><button class="btn btn-sm" onclick="window.DirectoryAuth&&DirectoryAuth.signOut()">Sign out</button></div>`;
+    return;
+  }
+  if(auth.status==="signed-out"){
+    root.innerHTML=`<div class="auth-state auth-state-signed-out"><span>${escHtml(auth.detail)}</span><button class="btn btn-sm btn-primary" onclick="beginDirectorySignIn()">Sign in</button></div>`;
+    return;
+  }
+  if(auth.status==="initializing"){
+    root.innerHTML=`<div class="auth-state auth-state-checking"><span>${escHtml(auth.detail)}</span></div>`;
+    return;
+  }
+  root.innerHTML=`<div class="auth-state auth-state-unavailable"><span><strong>Sign-in unavailable.</strong> ${escHtml(auth.detail)}</span><button class="btn btn-sm" onclick="retryDirectorySignIn()">Retry sign-in</button></div>`;
+}
 // ── END WRITE LOCK ──
 
 // One proposal is one defect with one change, so the approve/reject decision a
@@ -395,7 +446,7 @@ function resetData(){
 }
 
 const CATEGORIES=["Personal Branding","Marketing & Content","Design & Product","Research & Analysis","Operations & Workflow","Investment & DD","Other"];
-const PLATFORMS=["Claude","Cursor","Manus","ChatGPT","n8n","Custom","Other"];
+const PLATFORMS=["Claude","Codex","Cursor","Manus","ChatGPT","n8n","Custom","Other"];
 const STATUS_OPTIONS=["Experimental","Active","Under Review","Deprecated"];
 const EVAL_OPTIONS=["Not evaluated","Performing well","Needs improvement","Under review"];
 const REQ_STATUSES=["Requested","Approved","In Progress","Shipped","Declined"];
@@ -449,7 +500,7 @@ function fleetHealth(){
 // ── MODAL FORMS ──
 function agentFormHtml(agent){
   const isEdit=!!agent;
-  const a=agent||{name:"",tagline:"",description:"",platform:"Claude",status:"Experimental",category:"",owner:"",model:"",version:"",objective:"",successCriteria:[],guardrails:[],when:"",sop:"",inputs:[],outputs:[],skills:[],tools:[],context:[],usabilityModes:["download-install"],accessUrl:"",repoUrl:""};
+  const a=agent||{name:"",tagline:"",description:"",platform:"Claude",status:"Experimental",category:"",owner:"",model:"",version:"0.1.0",objective:"",successCriteria:[],guardrails:[],when:"",sop:"",inputs:[],outputs:[],skills:[],tools:[],context:[],runner:"none",usabilityModes:["download-install"],accessUrl:"",repoUrl:""};
   const cur=latestEval(a)||{};
   return `
   <div class="modal-header">
@@ -482,6 +533,7 @@ function agentFormHtml(agent){
         <div class="form-group"><label>Inputs</label><input type="text" id="f-inputs" value="${escHtml((a.inputs||[]).join(", "))}" placeholder="e.g. LinkedIn URL, bio text"><div class="hint">Comma-separated</div></div>
         <div class="form-group"><label>Outputs</label><input type="text" id="f-outputs" value="${escHtml((a.outputs||[]).join(", "))}" placeholder="e.g. List of fixes, rewritten bio"><div class="hint">Comma-separated</div></div>
       </div>
+      <div class="form-group"><label>Runner<span class="req">*</span></label><select id="f-runner">${["native","api","foreign-runtime-handoff","scheduled-worker","none"].map(r=>`<option value="${r}" ${(a.runner||"none")===r?"selected":""}>${r}</option>`).join("")}</select><div class="hint">Where this agent runs. Invocation configuration is set separately by the runtime owner.</div></div>
       <div class="form-group"><label>Usability modes</label><div class="check-row">${["hosted-run","download-install","prepared-handoff","approval-queue"].map(mode=>`<label class="check-label"><input type="checkbox" name="f-usability" value="${mode}" ${(a.usabilityModes||[]).includes(mode)?"checked":""}> ${mode}</label>`).join("")}</div><div class="hint">What users can do; separate from the single execution adapter.</div></div>
     </div>
 
@@ -590,9 +642,14 @@ function triageFormHtml(req){
 
 // ── MODAL MANAGEMENT ──
 function openModal(type,data){
-  // Every modal in this app is a write form. Refuse to present one at all
-  // rather than render inputs whose save will be rejected.
-  if(writesLocked())return refuseLockedWrite();
+  // Only register, edit and request have a Convex mutation in this hybrid
+  // phase. No form is allowed to silently fall back to localStorage.
+  if(["addAgent","editAgent","request"].includes(type)){
+    if(!authCanWrite()||!convexWritesAvailable())return refuseLockedWrite();
+    if(type==="editAgent"&&!data?.governedInConvex){
+      toast("This local fixture is read-only until it is registered in Convex.");return;
+    }
+  }else if(writesLocked())return refuseLockedWrite();
   const root=document.getElementById("modal-root");
   let html="";
   if(type==="addAgent") html=agentFormHtml(data||null);
@@ -624,6 +681,7 @@ function readAgentForm(){
     sop:document.getElementById("f-sop").value.trim(),
     inputs:parseCSV(document.getElementById("f-inputs").value),
     outputs:parseCSV(document.getElementById("f-outputs").value),
+    runner:document.getElementById("f-runner").value,
     usabilityModes:[...document.querySelectorAll('input[name="f-usability"]:checked')].map(el=>el.value),
     skills:parseCSV(document.getElementById("f-skills").value),
     tools:parseCSV(document.getElementById("f-tools").value),
@@ -634,49 +692,113 @@ function readAgentForm(){
 }
 function validAgent(f){return f.name&&f.tagline&&f.objective&&f.when&&f.sop&&f.category&&f.owner&&Array.isArray(f.usabilityModes)&&f.usabilityModes.length>0}
 
-async function saveNewAgent(){
-  if(writesLocked())return refuseLockedWrite();
-  const f=readAgentForm();
-  if(!validAgent(f)){toast("Fill in all required fields and select a usability mode");return}
-  // Re-read the service's known ids immediately before minting. A set fetched
-  // at page load can miss an id the service assigned in the meantime; refreshing
-  // here narrows (but cannot close) that window, since this is a mitigation, not
-  // an atomic reservation. If the service is enabled but silent, refuse rather
-  // than mint blind against a stale set.
-  if(window.DirectoryAPI&&DirectoryAPI.enabled&&!await refreshReservedAgentIds()){
-    toast("Cannot check agent ids against the directory service — it did not answer. Retry when it is reachable.");
-    return;
+function stableItems(labels,existing=[]){
+  const seen=new Map();
+  const reusable=new Map();
+  for(const item of existing||[]){
+    if(item&&typeof item.label==="string"&&typeof item.id==="string"){
+      const items=reusable.get(item.label)||[];items.push(item.id);reusable.set(item.label,items);
+    }
   }
-  const id=mintAgentId();
-  agents.push(Object.assign({id,initials:getInitials(f.owner),version:f.version||"1.0",evalHistory:[],changelog:[{version:f.version||"1.0",date:new Date().toISOString().split("T")[0],note:"Registered in directory."}],proposedImprovements:[]},f));
-  if(state.pendingRequestId){const r=requests.find(x=>x.id===state.pendingRequestId);if(r){r.status="Shipped";r.shippedAgentId=id;}state.pendingRequestId=null}
-  persist();closeModal();toast("Agent added: "+f.name);
-  render();
+  return labels.map(label=>{
+    const prior=reusable.get(label);if(prior&&prior.length)return {id:prior.shift(),label};
+    const base=String(label).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")||"item";
+    const count=(seen.get(base)||0)+1;seen.set(base,count);
+    return {id:count===1?base:`${base}-${count}`,label};
+  });
+}
+function contractItems(values){return values.map(key=>({key,required:true}));}
+function contractTools(values){return values.map(label=>({label,type:"other"}));}
+function contractContext(values){return values.map(label=>({label,type:"memory"}));}
+function invocationForRunner(runner){
+  // This form deliberately does not accept endpoints, credentials or a path.
+  // A runtime owner configures an invocation separately; no browser value is
+  // invented here.
+  return undefined;
+}
+function convexRegistrationArgs(f,existing){
+  return {
+    name:f.name,tagline:f.tagline,description:f.description||undefined,
+    platform:f.platform,status:f.status,category:f.category,owner:f.owner,
+    model:f.model||undefined,objective:f.objective||undefined,whenToUse:f.when||undefined,
+    sop:f.sop||undefined,outputs:f.outputs,runner:f.runner,
+    usabilityModes:f.usabilityModes,invocation:existing?.invocation??invocationForRunner(f.runner),
+    autonomyLevel:f.autonomyLevel,
+    executionContract:{inputs:contractItems(f.inputs),runnerConfig:[]},
+    evidenceContract:{acceptedTypes:[],requiredReturnArtifact:false},
+    outcomeContract:{successCriteria:stableItems(f.successCriteria,existing?.outcomeContract?.successCriteria),evalSetId:null},
+    guardrails:stableItems(f.guardrails,existing?.guardrails),skills:f.skills,tools:contractTools(f.tools),
+    context:contractContext(f.context),accessUrl:f.accessUrl||undefined,repoUrl:f.repoUrl||undefined,
+    draftVersion:f.version||"0.1.0",
+  };
+}
+function editArgsForAgent(agent,f){
+  const record=agent.convexRecord||{};
+  const next=convexRegistrationArgs(f,record);
+  const current={
+    name:agent.name,tagline:agent.tagline,description:agent.description||undefined,
+    platform:agent.platform,status:agent.status,category:agent.category,owner:agent.owner,
+    model:agent.model||undefined,objective:agent.objective||undefined,whenToUse:agent.when||undefined,
+    sop:agent.sop||undefined,outputs:agent.outputs||[],runner:agent.runner,
+    usabilityModes:agent.usabilityModes||[],invocation:agent.invocation||undefined,
+    autonomyLevel:agent.autonomyLevel||undefined,
+    executionContract:record.executionContract||{inputs:contractItems(agent.inputs||[]),runnerConfig:[]},
+    evidenceContract:record.evidenceContract||{acceptedTypes:[],requiredReturnArtifact:false},
+    outcomeContract:record.outcomeContract||{successCriteria:stableItems(agent.successCriteria||[]),evalSetId:null},
+    guardrails:record.guardrails||stableItems(agent.guardrails||[]),skills:agent.skills||[],tools:record.tools||contractTools(agent.tools||[]),
+    context:record.context||contractContext(agent.context||[]),accessUrl:agent.accessUrl||undefined,repoUrl:agent.repoUrl||undefined,
+  };
+  const args={agentId:agent.convexId};
+  for(const [key,value] of Object.entries(next)){
+    if(["draftVersion","evidenceContract"].includes(key))continue;
+    const editKey=key==="outcomeContract"?"successCriteria":key;
+    const nextValue=key==="outcomeContract"?value.successCriteria:value;
+    const currentValue=key==="outcomeContract"?current.outcomeContract.successCriteria:current[key];
+    if(JSON.stringify(nextValue)!==JSON.stringify(currentValue))args[editKey]=nextValue;
+  }
+  return args;
 }
 
-function saveEditAgent(id){
-  if(writesLocked())return refuseLockedWrite();
-  const a=agents.find(x=>x.id===id);if(!a)return;
+async function saveNewAgent(){
+  if(!authCanWrite()||!convexWritesAvailable())return refuseLockedWrite();
   const f=readAgentForm();
   if(!validAgent(f)){toast("Fill in all required fields and select a usability mode");return}
-  const versionChanged=f.version&&f.version!==a.version;
-  Object.assign(a,f,{initials:getInitials(f.owner)});
-  if(versionChanged)a.changelog.push({version:f.version,date:new Date().toISOString().split("T")[0],note:"Edited via directory."});
-  persist();closeModal();toast("Agent updated: "+f.name);state.agent=a;render();
+  try{
+    const created=await ConvexDirectory.registerAgent(convexRegistrationArgs(f));
+    closeModal();await loadGovernedDirectoryPilot();
+    toast(`Agent registered in Convex: ${created.displayId}`);
+  }catch(error){toast(`Agent was not registered: ${error&&error.message?error.message:"Convex rejected the request"}`)}
 }
 
-function saveNewRequest(){
-  if(writesLocked())return refuseLockedWrite();
+async function saveEditAgent(id){
+  if(!authCanWrite()||!convexWritesAvailable())return refuseLockedWrite();
+  const a=governedPilotById.get(id);if(!a||!a.convexId){toast("This agent is not a Convex record.");return}
+  const f=readAgentForm();
+  if(!validAgent(f)){toast("Fill in all required fields and select a usability mode");return}
+  const args=editArgsForAgent(a,f);
+  if(Object.keys(args).length===1){toast("No Convex-backed fields changed.");return}
+  try{
+    await ConvexDirectory.updateAgent(args);
+    closeModal();await loadGovernedDirectoryPilot();
+    toast("Agent updated in Convex: "+f.name);
+  }catch(error){toast(`Agent was not updated: ${error&&error.message?error.message:"Convex rejected the request"}`)}
+}
+
+async function saveNewRequest(){
+  if(!authCanWrite()||!convexWritesAvailable())return refuseLockedWrite();
   const title=document.getElementById("r-title").value.trim();
   const desc=document.getElementById("r-desc").value.trim();
   const name=document.getElementById("r-name").value.trim();
   if(!title||!desc||!name){toast("Fill in all required fields");return}
-  requests.push({id:"R"+nextReqNum++,title,desc,requestedBy:name,date:new Date().toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"}),priority:document.getElementById("r-priority").value,status:"Requested",notes:"",assignee:"",shippedAgentId:null});
-  persist();closeModal();toast("Request submitted: "+title);render();
+  try{
+    const requestId=await ConvexDirectory.createRequest({title,desc,requestedBy:name,priority:document.getElementById("r-priority").value});
+    closeModal();toast(`Request recorded in Convex: ${requestId}`);render();
+  }catch(error){toast(`Request was not submitted: ${error&&error.message?error.message:"Convex rejected the request"}`)}
 }
 
 function saveEval(id){
   if(writesLocked())return refuseLockedWrite();
+  if(!authCanWrite())return refuseLockedWrite();
   const a=agents.find(x=>x.id===id);if(!a)return;
   const notes=document.getElementById("e-notes").value.trim();
   if(!notes){toast("Add eval notes");return}
@@ -690,6 +812,7 @@ function saveEval(id){
 
 function saveTriage(id){
   if(writesLocked())return refuseLockedWrite();
+  if(!authCanWrite())return refuseLockedWrite();
   const r=requests.find(x=>x.id===id);if(!r)return;
   r.status=document.getElementById("t-status").value;
   r.priority=document.getElementById("t-priority").value;
@@ -701,6 +824,7 @@ function saveTriage(id){
 // Requests → Agents: open a prefilled Add Agent form, mark request Shipped on save
 function shipRequestAsAgent(id){
   if(writesLocked())return refuseLockedWrite();
+  if(!authCanWrite())return refuseLockedWrite();
   const r=requests.find(x=>x.id===id);if(!r)return;
   state.pendingRequestId=id;
   openModal("addAgent",{name:r.title.replace(/ Agent$/,""),tagline:r.desc.slice(0,120),description:r.desc,platform:"Claude",status:"Experimental",category:"",owner:r.assignee||"",model:"",version:"1.0",objective:"",successCriteria:[],guardrails:[],when:"",sop:"",inputs:[],outputs:[],skills:[],tools:[],context:[],accessUrl:"",repoUrl:""});
@@ -918,13 +1042,15 @@ function renderAgentsList(){
 }
 
 function renderRequests(){
+  const requestWritesLocked=!authCanWrite()||writesLocked();
+  const requestReason=catalogActionReason();
   const groups={"In Progress":[],"Approved":[],"Requested":[],"Shipped":[],"Declined":[]};
   requests.forEach(r=>{if(groups[r.status])groups[r.status].push(r)});
   function grp(name,items){
     if(!items.length)return"";
     return `<div class="status-group"><div class="status-group-title">${name}<span class="group-count">${items.length}</span></div><div class="request-list">${items.map(r=>`
-      <div class="request-card${writesLocked()?" request-card-locked":""}" ${writesLocked()?"":`onclick="openModal('triage',requests.find(x=>x.id==='${r.id}'))"`}>
-${writesLocked()?`<div class="locked-inline-reason">${escHtml(writeLockReason())}</div>`:""}
+      <div class="request-card${requestWritesLocked?" request-card-locked":""}" ${requestWritesLocked?"":`onclick="openModal('triage',requests.find(x=>x.id==='${r.id}'))"`}>
+${requestWritesLocked?`<div class="locked-inline-reason">${escHtml(requestReason)}</div>`:""}
         <div class="request-left"><h3>${escHtml(r.title)}</h3><p>${escHtml(r.desc)}</p>${r.shippedAgentId?`<span class="shipped-tag">→ shipped as ${escHtml(r.shippedAgentId)}</span>`:""}</div>
         <div class="request-right">
           <span class="pill ${reqStatusClass(r.status)}"><span class="dot"></span>${escHtml(r.status)}</span>
@@ -940,7 +1066,7 @@ ${writesLocked()?`<div class="locked-inline-reason">${escHtml(writeLockReason())
     ${renderSubTabs()}
     ${renderWriteLockBanner()}
     ${renderMigrationReadiness()}
-    <p class="count-line">${writesLocked()?`Requests are visible but triage and shipping are locked. ${escHtml(writeLockReason())}`:"Agent requests from the team. Click a request to triage it — or ship an approved one straight into the catalog."}</p>
+    <p class="count-line">${requestWritesLocked?`Requests are visible but triage and shipping are locked. ${escHtml(requestReason)}`:"Agent requests from the team. Click a request to triage it — or ship an approved one straight into the catalog."}</p>
     ${active}
     ${done?`<div class="resolved-divider"><div class="resolved-title">RESOLVED</div>${done}</div>`:""}`;
 }
@@ -948,16 +1074,22 @@ ${writesLocked()?`<div class="locked-inline-reason">${escHtml(writeLockReason())
 function pillarList(items,empty){return items&&items.length?items.map(i=>`<div class="item">&bull; ${escHtml(i)}</div>`).join(""):`<div class="item empty">${empty}</div>`}
 function chips(items){return items&&items.length?items.map(i=>`<span class="chip">${escHtml(i)}</span>`).join(""):'<span class="chip empty">None specified</span>'}
 function isGovernedPilot(a){return a&&a.governedInConvex===true}
-function isReadOnlyRecord(a){return writesLocked()||isGovernedPilot(a)}
+function isReadOnlyRecord(a){return !authCanWrite()||writesLocked()||!isGovernedPilot(a)}
 function governedBadge(a){return isGovernedPilot(a)?'<span class="pill pill-blue pill-xs governed-badge">Governed in Convex</span>':""}
 function renderGovernedPilotNotice(a){
-  if(isGovernedPilot(a))return `<div class="governed-pilot-notice"><strong>Convex governs this catalog record.</strong> Editing, approval and manual eval logging are locked during the pilot. Runs, feedback and reversible proposals continue in the loop service and are labelled separately.</div>`;
+  if(isGovernedPilot(a))return `<div class="governed-pilot-notice"><strong>Convex governs this catalog record.</strong> Signed-in owners and approvers can edit directory fields here. Approval and manual eval logging remain locked; runs, feedback and reversible proposals continue in the loop service and are labelled separately.</div>`;
   if(writesLocked())return `<div class="governed-pilot-notice">${escHtml(writeLockReason())}</div>`;
   return "";
 }
 function renderDetailEditControl(a){
-  if(isReadOnlyRecord(a))return lockedControl("Edit",WRITE_LOCK_REASON,"btn btn-sm");
-  return `<button class="btn btn-sm" onclick="openModal('editAgent',agents.find(x=>x.id==='${a.id}'))">Edit</button>`;
+  if(!authCanWrite()){
+    const auth=authState();
+    if(auth.status==="signed-out")return `<span class="auth-action"><button class="btn btn-sm" onclick="beginDirectorySignIn()">Sign in to register, edit, or request</button><span class="locked-control-reason">${escHtml(authWriteReason())}</span></span>`;
+    return lockedControl("Edit",authWriteReason(),"btn btn-sm");
+  }
+  if(!isGovernedPilot(a))return lockedControl("Edit","This local fixture is read-only until it is registered in Convex.","btn btn-sm");
+  if(!convexWritesAvailable())return lockedControl("Edit",writeLockReason(),"btn btn-sm");
+  return `<button class="btn btn-sm" onclick="openModal('editAgent',governedPilotById.get('${a.id}'))">Edit</button>`;
 }
 function renderEvalTitleActions(a){
   if(isReadOnlyRecord(a))return `<span class="eval-title-actions"><button class="btn-ghost btn-sm" onclick="proposeImprovement('${a.id}')">Propose improvement</button>${lockedControl("Log eval",EVAL_LOCK_REASON,"btn-ghost btn-sm")}</span>`;
@@ -1103,6 +1235,7 @@ function renderDetail(a){
 }
 
 function render(){
+  renderAuthSurface();
   const app=document.getElementById("app");
   if(state.view==="detail"&&state.agent){const fresh=displayedAgents().find(x=>x.id===state.agent.id);if(fresh)state.agent=fresh;app.innerHTML=renderDetail(state.agent);loadRunCapability(state.agent.id);return}
   app.innerHTML=state.subTab==="agents"?renderAgentsList():renderRequests();
@@ -1343,6 +1476,9 @@ function switchSubTab(tab){state.subTab=tab;state.view="list";render()}
 // ── BOOT ──
 hydrate();
 render();
+if(window.DirectoryAuth&&typeof DirectoryAuth.subscribe==="function"){
+  DirectoryAuth.subscribe(()=>render());
+}
 // Non-blocking read pilot: first paint is always the complete local directory.
 // Only a successful query overlays A7/A8 and earns the governance indicator.
 loadGovernedDirectoryPilot();

@@ -10,6 +10,7 @@ node_modules/
 .cursor/skills/
 convex/_generated/
 convex-directory.bundle.js
+clerk-auth.bundle.js
 # Generated at build time from the non-secret CONVEX_URL. Never commit the
 # live deployment URL, even though it is not a secret.
 deployment-config.js

@@ -348,12 +348,15 @@ npm start  --prefix server # node src/http/server.js
 and is git-ignored. `.env.example` ships a placeholder (`CONVEX_URL=`) only —
 never put a real deployment URL in a committed file. The Vercel build runs
 `npm run build:frontend`, which writes that non-secret URL into
-`deployment-config.js` and bundles the query-only browser client.
+`deployment-config.js` and bundles the browser clients. Vercel also needs
+`CLERK_PUBLISHABLE_KEY` (a non-secret `pk_…` key) for the sign-in surface;
+never put a Clerk secret key, JWT, or token in the generated file.
 `deployment-config.js` is gitignored — never commit the generated file or a
 real Convex URL. A blank, missing, or unavailable deployment preserves the
 complete local directory and shows no Convex governance label. `.gitignore`
 ignores all `.env.*` except `.env.example`, `convex/_generated/`,
-`convex-directory.bundle.js`, and `deployment-config.js`.
+`convex-directory.bundle.js`, `clerk-auth.bundle.js`, and
+`deployment-config.js`.
 Biocraft single-shot hosted runs additionally require `ANTHROPIC_API_KEY` in
 `server/.env`; `server/.env.example` contains the empty placeholder.
 
@@ -446,14 +449,17 @@ off, it is off.
   run/copy/download plus the mutable directory version label, but the artifact
   is still not a Convex-approved version. It cannot support authoritative
   promotion until Railway is wired to Convex under **TUS-2327**.
-- **Clerk is configured, but the front-end is not authenticated yet.**
+- **Clerk sign-in is wired, but governed browser writes are not yet.**
   `convex/auth.config.ts` trusts the configured
   `CLERK_JWT_ISSUER_DOMAIN` using the `convex` audience. Authority mutations
   fail closed with 401 when no signed identity is present. Release decisions
   additionally require the signed, user-level top-level claim
   `role: "approver"` and fail with 403 for every other role. The static
-  front-end is not wired to Clerk or Convex yet, so this protects the authority
-  function boundary but does not make the current browser UI a Convex client.
+  static front-end loads Clerk with the non-secret publishable key, requests
+  the `convex` JWT template, and attaches that token to the Convex HTTP client.
+  Signed-out users retain read access and get a visible sign-in action; missing
+  configuration or token failure is visibly unavailable, not a silent
+  permissions fallback. The catalogue mutations are wired in the next phase.
 - **Digests are caller attestations, not verified byte hashes.** Fields like
   `declaredDigest` / `declaredArtifactDigest` are values the caller supplies;
   nothing hashes the artifact to check them.

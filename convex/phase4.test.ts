@@ -14,8 +14,8 @@ const approverIdentity = {
   role: "approver",
 };
 
-describe("Phase 4 read-only directory query", () => {
-  test("returns only imported A7/A8 with governed artifact identities", async () => {
+describe("directory query", () => {
+  test("returns every Convex agent with its current or latest version", async () => {
     const t = convexTest(schema, modules).withIdentity(approverIdentity);
     const imported = await t.mutation(
       authorityApi.imports.executeApprovedCanonicalImport,
@@ -30,8 +30,25 @@ describe("Phase 4 read-only directory query", () => {
       authorityApi.agents.listGovernedDirectoryPilot,
       {},
     );
+    const created = await t.mutation(authorityApi.agents.registerAgent, {
+      name: "Directory-only agent",
+      tagline: "Created in Convex",
+      platform: "Claude",
+      status: "Experimental",
+      category: "Other",
+      owner: "Test owner",
+      runner: "none",
+      usabilityModes: ["download-install"],
+      executionContract: { inputs: [], runnerConfig: [] },
+      evidenceContract: { acceptedTypes: [], requiredReturnArtifact: false },
+      outcomeContract: { successCriteria: [], evalSetId: null },
+      guardrails: [],
+      draftVersion: "0.1.0",
+    });
     expect(rows.map((row: any) => row.agent.displayId)).toEqual(["A7", "A8"]);
-    expect(rows[0].version).toMatchObject({
+    const refreshed = await t.query(authorityApi.agents.listGovernedDirectoryPilot, {});
+    expect(refreshed.map((row: any) => row.agent.displayId)).toEqual(["A7", "A8", created.displayId]);
+    expect(refreshed[0].version).toMatchObject({
       version: "biocraft-singleshot-v4",
       artifact: {
         declaredDigest:
@@ -39,7 +56,7 @@ describe("Phase 4 read-only directory query", () => {
         declaredDigestAlgorithm: "sha256",
       },
     });
-    expect(rows[1].version).toMatchObject({
+    expect(refreshed[1].version).toMatchObject({
       version: "0.1.0",
       sourcePin: {
         kind: "git-commit",
@@ -47,10 +64,11 @@ describe("Phase 4 read-only directory query", () => {
         isContentDigest: false,
       },
     });
-    expect(rows[1].version).not.toHaveProperty("artifact");
+    expect(refreshed[1].version).not.toHaveProperty("artifact");
+    expect(refreshed[2].version).toMatchObject({ version: "0.1.0", state: "draft" });
   });
 
-  test("does not seed missing pilot agents", async () => {
+  test("does not seed missing directory agents", async () => {
     const t = convexTest(schema, modules);
     expect(
       await t.query(authorityApi.agents.listGovernedDirectoryPilot, {}),

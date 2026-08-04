@@ -11,6 +11,7 @@
     "test:frontend": "vitest run frontend"
   },
   "dependencies": {
+    "@clerk/clerk-js": "^6.25.13",
     "convex": "^1.21.0"
   },
   "devDependencies": {

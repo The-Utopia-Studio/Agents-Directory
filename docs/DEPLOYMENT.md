@@ -11,13 +11,20 @@ The front-end works standalone. The loop service is **optional** — it adds liv
 observability, memory, and the automation heartbeat. The front-end auto-detects
 it and degrades gracefully when it's absent.
 
-### Vercel: read-only Convex directory pilot
+### Vercel: Convex directory and Clerk sign-in
 
-Set the non-secret `CONVEX_URL` environment variable on the Vercel project.
-`vercel.json` runs `npm run build:frontend`, which generates
-`deployment-config.js` from that value and bundles the browser query client.
-That generated file is gitignored; never commit it. No URL is committed. The
-client invokes only
+Set the non-secret `CONVEX_URL` and `CLERK_PUBLISHABLE_KEY` environment
+variables on the Vercel project. The Clerk value must be the **publishable**
+key (`pk_…`), never a Clerk secret key. `vercel.json` runs `npm run build:frontend`, which generates
+`deployment-config.js` from those values and bundles the browser clients.
+The generated file is gitignored; never commit it. A missing Clerk key is a
+visible **“Sign-in unavailable”** state with a retry control, not a read-only
+permission-looking fallback. A signed-out visitor keeps catalogue read access
+but sees **“Sign in to register, edit, or request”** on those controls.
+
+The Convex pilot remains read-only for catalogue writes in this phase. The
+Clerk token is attached to the browser Convex client ready for the governed
+write path; it does not re-enable the legacy localStorage editors. The client invokes only
 `agents:listGovernedDirectoryPilot`; it never invokes a mutation or an import
 endpoint. If the variable is blank or the query fails, A1–A8 continue rendering
 from the existing browser data and no agent is labelled “Governed in Convex.”

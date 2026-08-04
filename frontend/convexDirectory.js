@@ -1,10 +1,13 @@
 import { ConvexHttpClient } from "convex/browser";
 import { makeFunctionReference } from "convex/server";
 
-const PILOT_IDS = new Set(["A7", "A8"]);
 const governedDirectoryQuery = makeFunctionReference(
   "agents:listGovernedDirectoryPilot",
 );
+const authenticatedRequestsQuery = makeFunctionReference("requests:listRequests");
+const registerAgentMutation = makeFunctionReference("agents:registerAgent");
+const updateAgentMutation = makeFunctionReference("agents:updateAgent");
+const createRequestMutation = makeFunctionReference("requests:createRequest");
 
 function labels(items) {
   return Array.isArray(items)
@@ -20,29 +23,30 @@ function inputKeys(contract) {
     : [];
 }
 
-export function mapGovernedPilotAgent(localAgent, row) {
+export function mapGovernedPilotAgent(row) {
   const governed = row?.agent;
-  if (
-    !localAgent ||
-    !governed ||
-    !PILOT_IDS.has(governed.displayId) ||
-    localAgent.id !== governed.displayId
-  ) {
-    return localAgent;
-  }
+  if (!governed) return null;
 
   const version = row.version ?? null;
   const mapped = {
-    ...localAgent,
     id: governed.displayId,
+    convexId: governed._id,
     name: governed.name,
     tagline: governed.tagline,
+    description: governed.description ?? "",
     platform: governed.platform,
     status: governed.status,
     category: governed.category,
     owner: governed.owner,
     initials: governed.initials,
+    model: governed.model ?? "",
+    objective: governed.objective ?? "",
+    when: governed.whenToUse ?? "",
+    sop: governed.sop ?? "",
+    outputs: Array.isArray(governed.outputs) ? [...governed.outputs] : [],
     runner: governed.runner,
+    invocation: governed.invocation ?? null,
+    autonomyLevel: governed.autonomyLevel ?? "L1",
     usabilityModes: [...governed.usabilityModes],
     successCriteria: labels(governed.outcomeContract?.successCriteria),
     guardrails: labels(governed.guardrails),
@@ -50,7 +54,13 @@ export function mapGovernedPilotAgent(localAgent, row) {
     tools: labels(governed.tools),
     context: labels(governed.context),
     inputs: inputKeys(governed.executionContract),
-    version: version?.version ?? localAgent.version,
+    accessUrl: governed.accessUrl ?? "",
+    repoUrl: governed.repoUrl ?? "",
+    version: version?.version ?? "unversioned",
+    evalHistory: [],
+    changelog: [],
+    proposedImprovements: [],
+    convexRecord: governed,
     governedInConvex: true,
     convexGovernance: {
       versionState: version?.state ?? null,
@@ -78,38 +88,20 @@ export function mapGovernedPilotAgent(localAgent, row) {
     },
   };
 
-  for (const optional of [
-    "description",
-    "model",
-    "objective",
-    "whenToUse",
-    "sop",
-    "outputs",
-    "invocation",
-    "autonomyLevel",
-    "accessUrl",
-    "repoUrl",
-  ]) {
-    if (governed[optional] !== undefined) mapped[optional] = governed[optional];
-  }
-  // The legacy browser record calls this field `when`; Convex deliberately
-  // uses the clearer `whenToUse`. Map it at this read boundary so the pilot
-  // page renders its governed value rather than a localStorage fallback.
-  if (governed.whenToUse !== undefined) mapped.when = governed.whenToUse;
   return mapped;
 }
 
 export function overlayGovernedPilotAgents(localAgents, rows) {
   if (!Array.isArray(localAgents) || !Array.isArray(rows)) return localAgents;
-  const byDisplayId = new Map(
-    rows
-      .filter((row) => PILOT_IDS.has(row?.agent?.displayId))
-      .map((row) => [row.agent.displayId, row]),
-  );
-  return localAgents.map((localAgent) => {
-    const row = byDisplayId.get(localAgent.id);
-    return row ? mapGovernedPilotAgent(localAgent, row) : localAgent;
-  });
+  const governed = rows.map(mapGovernedPilotAgent).filter(Boolean);
+  const governedIds = new Set(governed.map((agent) => agent.id));
+  // This is a merge, never an object overlay: Convex rows are complete view
+  // models and win as a whole. Local data contributes only records that have
+  // no Convex counterpart during the temporary hybrid rollout.
+  return [
+    ...localAgents.filter((agent) => !governedIds.has(agent.id)),
+    ...governed,
+  ].sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
 }
 
 export function createConvexDirectoryClient({ url, clientFactory } = {}) {
@@ -147,6 +139,24 @@ export function createConvexDirectoryClient({ url, clientFactory } = {}) {
   const client = factory(normalizedUrl);
   return {
     enabled: true,
+    setAuthToken(token) {
+      if (typeof token === "string" && token) client.setAuth(token);
+      else client.clearAuth();
+    },
+    async verifySignedIdentity() {
+      // This is an authenticated, read-only query. It proves a Clerk token is
+      // accepted by this Convex deployment without creating a smoke-test row.
+      await client.query(authenticatedRequestsQuery, {});
+    },
+    async registerAgent(args) {
+      return await client.mutation(registerAgentMutation, args);
+    },
+    async updateAgent(args) {
+      return await client.mutation(updateAgentMutation, args);
+    },
+    async createRequest(args) {
+      return await client.mutation(createRequestMutation, args);
+    },
     async read(localAgents) {
       try {
         const rows = await client.query(
