@@ -1477,7 +1477,22 @@ function switchSubTab(tab){state.subTab=tab;state.view="list";render()}
 hydrate();
 render();
 if(window.DirectoryAuth&&typeof DirectoryAuth.subscribe==="function"){
-  DirectoryAuth.subscribe(()=>render());
+  // Clerk republishes on every session/token refresh. Redrawing the whole page
+  // on those wipes the in-DOM run panel. Only re-render when identity materially
+  // changes (sign-in, sign-out, or a different signed-in user). Subject is not
+  // published on the auth state; display name is the identity proxy we have.
+  function authIdentityKey(auth){
+    if(!auth)return"unknown";
+    if(auth.status==="signed-in")return`signed-in:${(auth.user&&auth.user.name)||""}`;
+    return String(auth.status||"unknown");
+  }
+  let lastAuthIdentity=authIdentityKey(authState());
+  DirectoryAuth.subscribe((next)=>{
+    const key=authIdentityKey(next);
+    if(key===lastAuthIdentity)return;
+    lastAuthIdentity=key;
+    render();
+  });
 }
 // Non-blocking read pilot: first paint is always the complete local directory.
 // Only a successful query overlays A7/A8 and earns the governance indicator.

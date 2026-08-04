@@ -222,12 +222,16 @@ export function buildHandoffBriefing(agent, entry) {
   const pinnedFile = (path) =>
     `${entry.repoUrl}/blob/${entry.commitSha}/${path}`;
   const fileInventory = entry.artifactFiles
-    .map(
-      (file) =>
-        `- [\`${file.path}\`](${pinnedFile(file.path)})${
-          file.description ? ` — ${file.description}` : ""
-        }`,
-    )
+    .map((file) => {
+      // Plain text on purpose. Markdown links look fine in the app but lose
+      // their link text when the brief is copied — leaving bare "—" lines and
+      // empty bullets for files with no description. The inventory is the
+      // pointer to his files; the filename and URL must survive as prose.
+      const url = pinnedFile(file.path);
+      return file.description
+        ? `- ${file.path} — ${url} — ${file.description}`
+        : `- ${file.path} — ${url}`;
+    })
     .join("\n");
 
   return `# ${entry.displayName} — engagement brief

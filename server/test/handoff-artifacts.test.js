@@ -170,7 +170,20 @@ test("a registered entry produces a pinned brief, not a skill file", () => {
   );
   assert.match(
     brief,
-    /\[`AGENT\.md`\]\(https:\/\/github\.com\/aiden150\/ux-qa-agent\/blob\/2a8f2b9562c4d4569c156e2ae7559ab04a54b883\/AGENT\.md\)/,
+    /- AGENT\.md — https:\/\/github\.com\/aiden150\/ux-qa-agent\/blob\/2a8f2b9562c4d4569c156e2ae7559ab04a54b883\/AGENT\.md — core instructions/,
+  );
+  assert.match(
+    brief,
+    /- README\.md — https:\/\/github\.com\/aiden150\/ux-qa-agent\/blob\/2a8f2b9562c4d4569c156e2ae7559ab04a54b883\/README\.md$/m,
+  );
+  assert.match(
+    brief,
+    /- templates\/remediation-handoff\.md — https:\/\/github\.com\/aiden150\/ux-qa-agent\/blob\/2a8f2b9562c4d4569c156e2ae7559ab04a54b883\/templates\/remediation-handoff\.md$/m,
+  );
+  // Inventory must not depend on markdown link syntax — that loses filenames on copy.
+  assert.doesNotMatch(
+    brief.split("## Where the agent actually lives")[1].split("## Setup checklist")[0],
+    /\[`[^`]+`\]\(/,
   );
   assert.doesNotMatch(brief, /Do not run against production data/);
   assert.match(
