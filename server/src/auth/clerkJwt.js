@@ -22,16 +22,16 @@ export async function verifyClerkJwt(
   { issuer, audience = "convex", fetchImpl = fetch, nowMs = Date.now() } = {},
 ) {
   const trustedIssuer = String(issuer || "").replace(/\/+$/, "");
-  if (!trustedIssuer) throw httpError(503, "Human approval is unavailable: Clerk issuer is not configured");
+  if (!trustedIssuer) throw httpError(503, "Signed identity is unavailable: Clerk issuer is not configured");
   let issuerUrl;
   try { issuerUrl = new URL(trustedIssuer); } catch { issuerUrl = null; }
   if (!issuerUrl || issuerUrl.protocol !== "https:" || issuerUrl.username || issuerUrl.password) {
-    throw httpError(503, "Human approval is unavailable: Clerk issuer configuration is invalid");
+    throw httpError(503, "Signed identity is unavailable: Clerk issuer configuration is invalid");
   }
 
   const compact = String(token || "").trim();
   const parts = compact.split(".");
-  if (parts.length !== 3) throw httpError(401, "A signed Clerk approver token is required");
+  if (parts.length !== 3) throw httpError(401, "A signed Clerk identity token is required");
   const header = decodeJson(parts[0], "header");
   const claims = decodeJson(parts[1], "payload");
   if (header.alg !== "RS256" || typeof header.kid !== "string" || !header.kid) {
@@ -41,7 +41,7 @@ export async function verifyClerkJwt(
   const response = await fetchImpl(`${trustedIssuer}/.well-known/jwks.json`, {
     headers: { accept: "application/json" },
   });
-  if (!response.ok) throw httpError(503, "Human approval is unavailable: Clerk signing keys could not be loaded");
+  if (!response.ok) throw httpError(503, "Signed identity is unavailable: Clerk signing keys could not be loaded");
   const jwks = await response.json();
   const jwk = Array.isArray(jwks?.keys)
     ? jwks.keys.find((candidate) => candidate?.kid === header.kid && candidate?.kty === "RSA")
@@ -49,7 +49,7 @@ export async function verifyClerkJwt(
   if (!jwk) throw httpError(401, "Clerk JWT signing key is not trusted");
   let key;
   try { key = createPublicKey({ key: jwk, format: "jwk" }); } catch {
-    throw httpError(503, "Human approval is unavailable: Clerk signing key is invalid");
+    throw httpError(503, "Signed identity is unavailable: Clerk signing key is invalid");
   }
   const valid = verifySignature(
     "RSA-SHA256",
@@ -75,8 +75,19 @@ export async function verifyClerkJwt(
   };
 }
 
+export async function requireClerkIdentity(req, options) {
+  const header = req?.headers?.["x-directory-identity-token"];
+  if (header == null || !String(header).trim()) {
+    throw httpError(
+      401,
+      "Signed-in Clerk identity is required. Sign in and retry — anonymous callers cannot spend or mutate.",
+    );
+  }
+  return verifyClerkJwt(header, options);
+}
+
 export async function requireClerkApprover(req, options) {
-  const actor = await verifyClerkJwt(req?.headers?.["x-directory-identity-token"], options);
+  const actor = await requireClerkIdentity(req, options);
   if (actor.role !== "approver") throw httpError(403, "Release approver role required");
   return actor;
 }

@@ -33,6 +33,13 @@ window.DirectoryAPI = (function () {
     const headers = {};
     if (body) headers["content-type"] = "application/json";
     if (token) headers["authorization"] = "Bearer " + token;
+    if (signedIdentity && !identityToken) {
+      const error = new Error(
+        "Signed-in Clerk identity is required. Sign in and retry — anonymous callers cannot spend or mutate.",
+      );
+      error.status = 401;
+      throw error;
+    }
     if (signedIdentity && identityToken) {
       headers["x-directory-identity-token"] = identityToken;
     }
@@ -92,7 +99,7 @@ window.DirectoryAPI = (function () {
     // the browser can avoid colliding with them. This is not a catalog sync and
     // not an id reservation: the directory record stays local.
     listAgents: () => j("GET", "/api/agents"),
-    runImprovement: (id) => j("POST", `/api/agents/${id}/improvements`),
+    runImprovement: (id) => j("POST", `/api/agents/${id}/improvements`, null, { signedIdentity: true }),
     // A decision names its proposal. "current" is only valid when exactly one
     // is pending; with several, an unnamed decision would resolve an arbitrary
     // one of them.
@@ -102,16 +109,30 @@ window.DirectoryAPI = (function () {
       null,
       { signedIdentity: true },
     ),
-    reject: (id, pid) => j("POST", `/api/agents/${id}/improvements/${encodeURIComponent(pid || "current")}/reject`),
-    reopenRejected: (id, pid) => j("POST", `/api/agents/${id}/improvements/${encodeURIComponent(pid)}/reopen`),
-    logEval: (id, record) => j("POST", `/api/agents/${id}/evals`, record),
-    recordTrace: (id, trace) => j("POST", `/api/agents/${id}/traces`, trace),
+    reject: (id, pid) => j(
+      "POST",
+      `/api/agents/${id}/improvements/${encodeURIComponent(pid || "current")}/reject`,
+      null,
+      { signedIdentity: true },
+    ),
+    reopenRejected: (id, pid) =>
+      j("POST", `/api/agents/${id}/improvements/${encodeURIComponent(pid)}/reopen`, null, {
+        signedIdentity: true,
+      }),
+    logEval: (id, record) =>
+      j("POST", `/api/agents/${id}/evals`, record, { signedIdentity: true }),
+    recordTrace: (id, trace) =>
+      j("POST", `/api/agents/${id}/traces`, trace, { signedIdentity: true }),
     fleetHealth: () => j("GET", "/api/fleet/health"),
     // Context pillar (memory)
-    addContext: (id, item) => j("POST", `/api/agents/${id}/context`, item),
+    addContext: (id, item) =>
+      j("POST", `/api/agents/${id}/context`, item, { signedIdentity: true }),
     recallContext: (id, q) => j("GET", `/api/agents/${id}/context/search?q=${encodeURIComponent(q)}`),
-    // Run an agent where it lives (records a trace)
-    runAgent: (id, inputs) => j("POST", `/api/agents/${id}/run`, { inputs }),
+    // Run an agent where it lives (records a trace) — spends Anthropic; requires Clerk
+    runAgent: (id, inputs) =>
+      j("POST", `/api/agents/${id}/run`, { inputs }, { signedIdentity: true }),
+    putAgent: (id, body) =>
+      j("PUT", `/api/agents/${id}`, body, { signedIdentity: true }),
     invocationCapability: (id) =>
       j("GET", `/api/agents/${id}/invocation-capability`),
     installSkill: (id) =>
@@ -120,24 +141,30 @@ window.DirectoryAPI = (function () {
       download(`/api/agents/${id}/install-artifact/download`),
     handoffBriefing: (id) => j("GET", `/api/agents/${id}/handoff-briefing`),
     submitFeedback: (id, traceId, feedback) =>
-      j("POST", `/api/agents/${id}/traces/${encodeURIComponent(traceId)}/feedback`, feedback),
+      j(
+        "POST",
+        `/api/agents/${id}/traces/${encodeURIComponent(traceId)}/feedback`,
+        feedback,
+        { signedIdentity: true },
+      ),
     // Loop / automations (the heartbeat)
-    runLoop: () => j("POST", "/api/loop/run"),
+    runLoop: () => j("POST", "/api/loop/run", null, { signedIdentity: true }),
     loopInbox: () => j("GET", "/api/loop/inbox"),
     loopRuns: (n = 5) => j("GET", `/api/loop/runs?limit=${n}`),
     loopLearnings: (n = 5) => j("GET", `/api/loop/learnings?limit=${n}`),
     loopQueue: (status) => j("GET", `/api/loop/queue${status ? "?status=" + status : ""}`),
-    runGoal: (id, opts) => j("POST", `/api/agents/${id}/goal`, opts || {}),
+    runGoal: (id, opts) =>
+      j("POST", `/api/agents/${id}/goal`, opts || {}, { signedIdentity: true }),
     mechanicalInventory: (id) => j("GET", `/api/agents/${id}/mechanical-inventory`),
     mechanicalScore: (id, body) =>
-      j("POST", `/api/agents/${id}/mechanical-score`, body),
+      j("POST", `/api/agents/${id}/mechanical-score`, body, { signedIdentity: true }),
     mechanicalComparePreview: (id, leftVersion, rightVersion) =>
       j(
         "GET",
         `/api/agents/${id}/mechanical-compare/preview?leftVersion=${encodeURIComponent(leftVersion)}&rightVersion=${encodeURIComponent(rightVersion)}`,
       ),
     mechanicalCompare: (id, body) =>
-      j("POST", `/api/agents/${id}/mechanical-compare`, body),
+      j("POST", `/api/agents/${id}/mechanical-compare`, body, { signedIdentity: true }),
     mechanicalResults: (id, n = 10) =>
       j("GET", `/api/agents/${id}/mechanical-results?limit=${n}`),
   };

@@ -25,6 +25,10 @@ import { SEED_AGENTS } from "../src/scripts/seed.js";
 import { createStore } from "../src/core/store.js";
 import { buildApp } from "../src/http/server.js";
 import { config } from "../src/config.js";
+import {
+  identityHeaders,
+  testClerkOptions,
+} from "./clerkTestIdentity.js";
 
 const VALID_BIOCRAFT_OUTPUT = `### LinkedIn About
 
@@ -163,7 +167,10 @@ test("custom transport is rejected outside the Node test runner", () => {
 test("failed HTTP run returns non-2xx while file trace writes are disabled", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "adir-invoke-"));
   const store = createStore(dir);
-  const app = await buildApp({ store });
+  const app = await buildApp({
+    store,
+    config: { ...config, apiToken: "", clerk: testClerkOptions() },
+  });
   const agent = await app.svc.getAgent("A2");
   await app.svc.putAgent({
     ...agent,
@@ -178,7 +185,7 @@ test("failed HTTP run returns non-2xx while file trace writes are disabled", asy
     `http://127.0.0.1:${address.port}/api/agents/A2/run`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: identityHeaders(),
       body: JSON.stringify({ inputs: { fixture: "approved" } }),
     },
   );
@@ -191,13 +198,16 @@ test("failed HTTP run returns non-2xx while file trace writes are disabled", asy
 });
 
 function runtimeConfig(overrides = {}) {
+  const { clerk: clerkOverride, ...anthropicOverrides } = overrides;
   return {
     ...config,
+    apiToken: "",
+    clerk: clerkOverride || testClerkOptions(),
     runtime: {
       anthropic: {
         ...config.runtime.anthropic,
         apiKey: "test-runtime-key",
-        ...overrides,
+        ...anthropicOverrides,
       },
     },
   };
@@ -641,7 +651,7 @@ test("missing Anthropic key is a visible non-2xx failure without a key leak", as
   assert.equal(installArtifact.kind, "single-shot");
   const response = await fetch(`${base}/api/agents/A7/run`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: identityHeaders(),
     body: JSON.stringify({ inputs: { name: "Test Fellow" } }),
   });
   assert.equal(response.status, 503);
@@ -670,7 +680,7 @@ test("Anthropic API failures stay non-2xx and do not expose the key", async (t) 
 
   const response = await fetch(`${base}/api/agents/A7/run`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: identityHeaders(),
     body: JSON.stringify({
       inputs: {
         fellowName: "Test Fellow",
@@ -753,9 +763,8 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.match(installArtifact.artifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(installArtifact.artifactDigestAlgorithm, "sha256");
 
-  // This unauthenticated write can alter the store record, but neither field
-  // can change the server-owned prompt selected by the A7 artifact registry.
-  const put = await fetch(`${base}/api/agents/A7`, {
+  // Prompt must not be writable via PUT. Anonymous writes are refused entirely.
+  const anonPut = await fetch(`${base}/api/agents/A7`, {
     method: "PUT",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -764,12 +773,24 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
       invocation: { type: "runtime", artifact: "../../client-controlled.md" },
     }),
   });
-  assert.equal(put.status, 200);
+  assert.equal(anonPut.status, 401);
+
+  const promptPut = await fetch(`${base}/api/agents/A7`, {
+    method: "PUT",
+    headers: identityHeaders(),
+    body: JSON.stringify({
+      name: original.name,
+      prompt: "MALICIOUS CLIENT PROMPT",
+      invocation: { type: "runtime", artifact: "../../client-controlled.md" },
+    }),
+  });
+  assert.equal(promptPut.status, 400);
+  assert.match((await promptPut.json()).error, /prompt/);
 
   const beforeHealth = await app.svc.fleetHealth();
   const response = await fetch(`${base}/api/agents/A7/run`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: identityHeaders(),
     body: JSON.stringify({
       inputs: {
         fellowName: "Test Fellow",
@@ -836,7 +857,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     `${base}/api/agents/A7/traces/${run.traceId}/feedback`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: identityHeaders(),
       body: JSON.stringify({
         rating: 3,
         notes: 'em dash in the hook; "my founder company" when the source says built for',
@@ -864,7 +885,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     `${base}/api/agents/A7/traces/${run.traceId}/feedback`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: identityHeaders(),
       body: JSON.stringify({ rating: 6 }),
     },
   );
@@ -873,7 +894,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     `${base}/api/agents/A1/traces/${run.traceId}/feedback`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: identityHeaders(),
       body: JSON.stringify({ rating: 5 }),
     },
   );
@@ -883,7 +904,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     `${base}/api/agents/A7/traces/${run.traceId}/feedback`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: identityHeaders(),
       body: JSON.stringify({ rating: 4, notes: "x".repeat(2001) }),
     },
   );
@@ -924,7 +945,7 @@ test("feedback notes gate off rejects notes but still accepts the rating", async
   const run = await (
     await fetch(`${base}/api/agents/A7/run`, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: identityHeaders(),
       body: JSON.stringify({
         inputs: { fellowName: "Test Fellow", sourceMaterial: "Profile text." },
       }),
@@ -936,7 +957,7 @@ test("feedback notes gate off rejects notes but still accepts the rating", async
     `${base}/api/agents/A7/traces/${run.traceId}/feedback`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: identityHeaders(),
       body: JSON.stringify({ rating: 3, notes: "Dropped the job title." }),
     },
   );
@@ -947,7 +968,7 @@ test("feedback notes gate off rejects notes but still accepts the rating", async
     `${base}/api/agents/A7/traces/${run.traceId}/feedback`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: identityHeaders(),
       body: JSON.stringify({ rating: 3 }),
     },
   );
@@ -982,7 +1003,7 @@ test("a failed-check run reaches the caller and the store as fail, not error", a
 
   const res = await fetch(`${base}/api/agents/A7/run`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: identityHeaders(),
     body: JSON.stringify({
       inputs: { fellowName: "Test Fellow", sourceMaterial: "Profile text." },
     }),
@@ -1013,7 +1034,7 @@ test("a failed-check run reaches the caller and the store as fail, not error", a
     `${base}/api/agents/A7/traces/${run.traceId}/feedback`,
     {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: identityHeaders(),
       body: JSON.stringify({ rating: 2, notes: "Check is right, CTA missing." }),
     },
   );
@@ -1023,7 +1044,10 @@ test("a failed-check run reaches the caller and the store as fail, not error", a
 test("serverRun false stays hidden by capability and rejects run with 400", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "adir-runtime-manual-"));
   const store = createStore(dir);
-  const app = await buildApp({ store });
+  const app = await buildApp({
+    store,
+    config: { ...config, apiToken: "", clerk: testClerkOptions() },
+  });
   const base = await listen(app, t);
 
   const capability = await fetch(
@@ -1046,7 +1070,7 @@ test("serverRun false stays hidden by capability and rejects run with 400", asyn
   });
   const run = await fetch(`${base}/api/agents/A1/run`, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: identityHeaders(),
     body: JSON.stringify({ inputs: {} }),
   });
   assert.equal(run.status, 400);

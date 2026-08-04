@@ -123,6 +123,17 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       assertUsabilityModes(agent);
       return store.put("agents", agent);
     },
+    /**
+     * Catalogue PATCH via allowlist. Never body-spreads — prompt and loop
+     * custody fields cannot be written through this path.
+     */
+    async putAgentAllowlisted(agentId, body) {
+      const existing = await store.get("agents", agentId);
+      const { applyAgentPutAllowlist } = await import("./agentPutAllowlist.js");
+      const { next } = applyAgentPutAllowlist(existing, body, agentId);
+      assertUsabilityModes(next);
+      return store.put("agents", next);
+    },
     async getInvocationCapability(agentId) {
       const agent = await store.get("agents", agentId);
       if (!agent) throw httpError(404, `No agent ${agentId}`);

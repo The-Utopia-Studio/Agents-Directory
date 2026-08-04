@@ -65,7 +65,28 @@ export function createLocalObservability({ store, lowScoreThreshold = 70 }) {
 
     async listTraces(agentId, { limit = 50 } = {}) {
       const rows = await store.query("traces", (t) => t.agentId === agentId);
-      return rows.sort(byRecent).slice(0, limit);
+      // Defense in depth on the open read: never return payloads even if an
+      // older row was written before write-time stripping.
+      return rows
+        .sort(byRecent)
+        .slice(0, limit)
+        .map((trace) => {
+          const {
+            input: _input,
+            output: _output,
+            notes: _notes,
+            failureReason,
+            checkResults,
+            ...metadataOnly
+          } = trace;
+          const safeReason = sanitizeFailureReason(failureReason);
+          const safeChecks = sanitizeCheckResults(checkResults);
+          return {
+            ...metadataOnly,
+            ...(safeReason ? { failureReason: safeReason } : {}),
+            ...(safeChecks.length ? { checkResults: safeChecks } : {}),
+          };
+        });
     },
 
     async getFailingTraces(agentId, { limit = 50 } = {}) {

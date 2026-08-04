@@ -44,7 +44,11 @@ test("a real signed JWT shape produces the recorded approver identity", async ()
 
 test("approval rejects missing, wrong-role, wrong-audience and tampered tokens", async () => {
   const options = { issuer: ISSUER, audience: "convex", fetchImpl: fetchJwks, nowMs: NOW };
-  await assert.rejects(() => requireClerkApprover({ headers: {} }, options), (error) => error.status === 401);
+  await assert.rejects(() => requireClerkApprover({ headers: {} }, options), (error) => {
+    assert.equal(error.status, 401);
+    assert.match(error.message, /Signed-in Clerk identity is required/);
+    return true;
+  });
   await assert.rejects(
     () => requireClerkApprover(
       { headers: { "x-directory-identity-token": token({ role: "member" }) } },
@@ -61,6 +65,10 @@ test("approval rejects missing, wrong-role, wrong-audience and tampered tokens",
 test("approval fails closed when the trusted issuer is not configured", async () => {
   await assert.rejects(
     () => verifyClerkJwt(token(), { issuer: "", fetchImpl: fetchJwks, nowMs: NOW }),
-    (error) => error.status === 503,
+    (error) => {
+      assert.equal(error.status, 503);
+      assert.match(error.message, /Signed identity is unavailable/);
+      return true;
+    },
   );
 });
