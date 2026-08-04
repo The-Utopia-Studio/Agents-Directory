@@ -109,6 +109,8 @@
  * @property {boolean} [sectionFound]
  * @property {number} [paragraphCount]
  * @property {number} [hookChars]
+ * @property {number} [aboutChars]
+ * @property {number} [headlineChars]
  * @property {number} [limit]
  * @property {number} [windowParagraphs]  paragraphs the CTA check inspected
  * @property {number} [windowChars]

@@ -165,6 +165,19 @@ export const actorIdentity = v.object({
   email: v.optional(v.string()),
 });
 
+/**
+ * Who wrote the row — not who the run was about.
+ *
+ * Absent actorKind means UNKNOWN (legacy rows written before this field),
+ * never "human". Treating `actorKind !== "service"` as human would silently
+ * relabel every legacy row as human-verified; evidence/evalResults are
+ * insert-only, so that mislabel would be uncorrectable.
+ *
+ * Explicit values only: "human" from a verified Clerk identity path;
+ * "service" from the declared loop service principal.
+ */
+export const actorKind = v.union(v.literal("human"), v.literal("service"));
+
 export const ownershipClaimStatus = v.union(
   v.literal("pending"),
   v.literal("accepted"),

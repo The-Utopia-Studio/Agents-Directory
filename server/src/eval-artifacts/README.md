@@ -10,6 +10,7 @@ mismatch.
 |---------|------|-----------------|
 | biocraft-singleshot-v5 | `biocraft/biocraft-singleshot-v5/SKILL.md` | `c5cc1a587a10deb6fb1b2ee73fed0c31fcad96fa12ed58bc5907544e408df92b` |
 | biocraft-singleshot-v6 | `biocraft/biocraft-singleshot-v6/SKILL.md` | `a8c08f4e98cd88f018764754eda760a20113e6fcf8a3362a192254b6bca81a10` |
+| biocraft-singleshot-v7 | `biocraft/biocraft-singleshot-v7/SKILL.md` | `751912f479d4ca65144e927bb18fe6e6c66c34ab63be557cab24ad28bc77fa26` |
 
 Runtime load path: read these files → SHA-256 → refuse if ≠ declared digest.
 

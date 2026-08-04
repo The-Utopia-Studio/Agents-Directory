@@ -48,6 +48,12 @@ export const config = {
     issuer: env.CLERK_JWT_ISSUER_DOMAIN || "",
     audience: env.CLERK_JWT_AUDIENCE || "convex",
   },
+  // Convex authority (state B): deploy-key call auth; recorded actor is the
+  // declared service principal. Missing creds → hosted-run evidence writes skip.
+  convex: {
+    url: env.CONVEX_URL || "",
+    deployKey: env.CONVEX_DEPLOY_KEY || "",
+  },
   // The migration export returns the whole metadata catalogue in one response,
   // so it is not one of the routes a public origin may leave open. On Railway
   // it refuses to answer until API_TOKEN is configured; locally it stays

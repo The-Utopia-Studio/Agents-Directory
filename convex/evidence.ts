@@ -1,18 +1,33 @@
 import { v } from "convex/values";
-import type { Doc } from "./_generated/dataModel";
+import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
   mutation,
   query,
   type MutationCtx,
 } from "./_generated/server";
-import { requireIdentity } from "./lib/auth";
+import { requireIdentity, type AuthorityActor } from "./lib/auth";
+import { declaredLoopServiceActor } from "./lib/serviceActor";
 import { evidenceType, providerCost } from "./lib/validators";
 
 type EvidenceSource = "real" | "mock" | "demo" | "imported";
 type SyntheticEvidenceSource = Extract<EvidenceSource, "mock" | "demo">;
 
+/**
+ * Identity for an evidence insert.
+ *
+ * - verified-human: requireIdentity ran; actorKind "human".
+ * - declared-service: requireIdentity did NOT run; actor is the declared loop
+ *   principal after the Clerk-shaped issuer hard guard; actorKind "service".
+ *
+ * Do not claim verification on the service path.
+ */
+type EvidenceWriter =
+  | { kind: "verified-human"; actor: AuthorityActor }
+  | { kind: "declared-service"; actor: AuthorityActor };
+
 const A7_DEMO_DISPLAY_ID = "A7";
+const A7_HOSTED_DISPLAY_ID = "A7";
 
 function syntheticEligibility(_source: SyntheticEvidenceSource) {
   // Synthetic writers own these values. They are deliberately absent from
@@ -21,6 +36,31 @@ function syntheticEligibility(_source: SyntheticEvidenceSource) {
   return {
     eligibleForEvaluation: false as const,
     eligibleForPromotion: false as const,
+  };
+}
+
+/**
+ * Eligibility is derived here from source + writer kind — never from mutation
+ * args — so a future caller cannot pass promotion-eligible service evidence.
+ *
+ * Service rows are a machine reporting on a machine's output: real enough to
+ * score (eligibleForEvaluation), but a release case needs a human somewhere
+ * or the loop builds its own promotion dossier — auto-apply one layer down.
+ */
+function eligibilityFor(source: EvidenceSource, writer: EvidenceWriter) {
+  if (source === "mock" || source === "demo") {
+    return syntheticEligibility(source);
+  }
+  if (writer.kind === "declared-service") {
+    return {
+      eligibleForEvaluation: true as const,
+      eligibleForPromotion: false as const,
+    };
+  }
+  // verified-human: real may support promotion; imported may be scored only.
+  return {
+    eligibleForEvaluation: true as const,
+    eligibleForPromotion: source === "real",
   };
 }
 
@@ -47,8 +87,11 @@ async function insertEvidence(
     };
   },
   source: EvidenceSource,
+  writer: EvidenceWriter,
 ) {
-  const runBy = await requireIdentity(ctx);
+  const runBy = writer.actor;
+  const actorKind = writer.kind === "verified-human" ? "human" : "service";
+  const eligibility = eligibilityFor(source, writer);
   const version = await ctx.db.get(args.agentVersionId);
   if (!version) throw new Error(`Version ${args.agentVersionId} not found`);
   if (!version.artifact?.declaredDigest) {
@@ -100,13 +143,6 @@ async function insertEvidence(
     }
   }
 
-  const isSynthetic = source === "mock" || source === "demo";
-  const eligibility = isSynthetic
-    ? syntheticEligibility(source)
-    : {
-        eligibleForEvaluation: true,
-        eligibleForPromotion: source === "real",
-      };
   return await ctx.db.insert("evidence", {
     agentId: version.agentId,
     agentVersionId: version._id,
@@ -115,10 +151,54 @@ async function insertEvidence(
     source,
     ...eligibility,
     runBy,
+    actorKind,
     occurredAt: Date.now(),
     cost: args.cost,
     feedbackForEvidenceId: args.feedbackForEvidenceId,
   });
+}
+
+async function verifiedHumanWriter(ctx: MutationCtx): Promise<EvidenceWriter> {
+  return { kind: "verified-human", actor: await requireIdentity(ctx) };
+}
+
+function declaredServiceWriter(): EvidenceWriter {
+  // requireIdentity is not called here — the actor is declared, not verified.
+  return { kind: "declared-service", actor: declaredLoopServiceActor() };
+}
+
+/**
+ * Look up the governed version whose declared digest matches the live artifact.
+ * Never creates a version — a version is a release decision and stays human-only.
+ */
+async function lookupGovernedVersionByDigest(
+  ctx: MutationCtx,
+  agentId: Id<"agents">,
+  artifactDigest: string,
+): Promise<Doc<"agentVersions">> {
+  const digest = String(artifactDigest || "").trim().toLowerCase();
+  if (!/^[a-f0-9]{64}$/.test(digest)) {
+    throw new Error("artifactDigest must be a sha256 hex digest");
+  }
+  const versions = await ctx.db
+    .query("agentVersions")
+    .withIndex("by_agentId", (q) => q.eq("agentId", agentId))
+    .collect();
+  const matches = versions.filter(
+    (row) =>
+      String(row.artifact?.declaredDigest || "").toLowerCase() === digest,
+  );
+  if (matches.length === 0) {
+    throw new Error(
+      "No governed version matches the live artifact digest; evidence path looks up versions and never creates them",
+    );
+  }
+  if (matches.length > 1) {
+    throw new Error(
+      "Multiple governed versions share this artifact digest; refuse rather than guess",
+    );
+  }
+  return matches[0];
 }
 
 const executionEvidenceArgs = {
@@ -130,7 +210,8 @@ const executionEvidenceArgs = {
 
 export const recordRealExecutionEvidence = internalMutation({
   args: executionEvidenceArgs,
-  handler: async (ctx, args) => await insertEvidence(ctx, args, "real"),
+  handler: async (ctx, args) =>
+    await insertEvidence(ctx, args, "real", declaredServiceWriter()),
 });
 
 export const recordMockEvidence = internalMutation({
@@ -139,7 +220,8 @@ export const recordMockEvidence = internalMutation({
     type: evidenceType,
     feedbackForEvidenceId: v.optional(v.id("evidence")),
   },
-  handler: async (ctx, args) => await insertEvidence(ctx, args, "mock"),
+  handler: async (ctx, args) =>
+    await insertEvidence(ctx, args, "mock", declaredServiceWriter()),
 });
 
 export const recordDemoEvidence = internalMutation({
@@ -148,7 +230,48 @@ export const recordDemoEvidence = internalMutation({
     type: evidenceType,
     feedbackForEvidenceId: v.optional(v.id("evidence")),
   },
-  handler: async (ctx, args) => await insertEvidence(ctx, args, "demo"),
+  handler: async (ctx, args) =>
+    await insertEvidence(ctx, args, "demo", declaredServiceWriter()),
+});
+
+/**
+ * One metadata-only evidence row for a scored A7 hosted run.
+ * Resolves the agent version by live artifact digest — never inserts a version.
+ */
+export const recordHostedRunEvidence = internalMutation({
+  args: {
+    displayId: v.string(),
+    artifactDigest: v.string(),
+    cost: v.optional(providerCost),
+  },
+  handler: async (ctx, args) => {
+    const displayId = args.displayId.trim();
+    if (displayId !== A7_HOSTED_DISPLAY_ID) {
+      throw new Error(
+        `Hosted-run evidence is limited to ${A7_HOSTED_DISPLAY_ID} in this step`,
+      );
+    }
+    const agent = await ctx.db
+      .query("agents")
+      .withIndex("by_displayId", (q) => q.eq("displayId", displayId))
+      .unique();
+    if (!agent) throw new Error(`No agent ${displayId}`);
+    const version = await lookupGovernedVersionByDigest(
+      ctx,
+      agent._id,
+      args.artifactDigest,
+    );
+    return await insertEvidence(
+      ctx,
+      {
+        agentVersionId: version._id,
+        type: "run",
+        cost: args.cost,
+      },
+      "real",
+      declaredServiceWriter(),
+    );
+  },
 });
 
 export const recordImportedEvidence = mutation({
@@ -157,7 +280,13 @@ export const recordImportedEvidence = mutation({
     type: evidenceType,
     feedbackForEvidenceId: v.optional(v.id("evidence")),
   },
-  handler: async (ctx, args) => await insertEvidence(ctx, args, "imported"),
+  handler: async (ctx, args) =>
+    await insertEvidence(
+      ctx,
+      args,
+      "imported",
+      await verifiedHumanWriter(ctx),
+    ),
 });
 
 export const listForVersion = query({
@@ -198,5 +327,35 @@ export const listEligibleForPromotion = query({
       )
       .collect();
     return rows.filter((row) => row.source === "real");
+  },
+});
+
+/** Latest evidence rows for a display id — used to inspect service writes. */
+export const listRecentForDisplayId = query({
+  args: { displayId: v.string(), limit: v.optional(v.number()) },
+  handler: async (ctx, args) => {
+    const agent = await ctx.db
+      .query("agents")
+      .withIndex("by_displayId", (q) => q.eq("displayId", args.displayId.trim()))
+      .unique();
+    if (!agent) return [];
+    const versions = await ctx.db
+      .query("agentVersions")
+      .withIndex("by_agentId", (q) => q.eq("agentId", agent._id))
+      .collect();
+    const versionIds = new Set(versions.map((row) => row._id));
+    const all = [];
+    for (const versionId of versionIds) {
+      const rows = await ctx.db
+        .query("evidence")
+        .withIndex("by_agentVersionId", (q) =>
+          q.eq("agentVersionId", versionId),
+        )
+        .collect();
+      all.push(...rows);
+    }
+    all.sort((a, b) => b.occurredAt - a.occurredAt);
+    const limit = Math.min(Math.max(Number(args.limit) || 10, 1), 50);
+    return all.slice(0, limit);
   },
 });

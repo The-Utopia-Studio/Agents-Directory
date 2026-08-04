@@ -128,59 +128,63 @@ test("no proposal ever renders an unresolved placeholder", async () => {
 });
 
 test("reviewer feedback notes count as evidence without any failing trace", async () => {
-  // Four stars, so no low rating and no failing trace — only the notes.
-  const svc = await serviceWithA7Feedback({
+  // Relationship-and-title is now in the live artifact final cut, so founder/
+  // intern feedback alone is suppressed. Voice mismatch is still open and is
+  // delivered here as a failing-trace signal that does not need a low rating.
+  const { svc, store } = await freshServiceWithStore();
+  await store.append("traces", {
+    agentId: "A7",
+    status: "fail",
+    source: "real",
+    failureReason: "voice mismatch",
+    ts: new Date().toISOString(),
+    metadata: { via: "runtime" },
+  });
+  // Four-star feedback alone would not be a low rating; the failing trace is
+  // the defect signal. Attach feedback so averageRating is still populated.
+  const okTrace = await store.append("traces", {
+    agentId: "A7",
+    status: "ok",
+    source: "real",
+    ts: new Date().toISOString(),
+    metadata: { via: "runtime" },
+  });
+  await svc.recordFeedback("A7", okTrace.id, {
     rating: 4,
-    notes: "the draft says founder for a company she only interned at",
+    notes: "tone felt slightly off but no specific grounding miss",
   });
 
   const [proposal] = await svc.runImprovement("A7");
   assert.equal(proposal.status, "proposed");
   assert.equal(proposal.changes.length, 1);
-  assert.equal(proposal.changes[0].evidence.length, 1);
-  assert.equal(proposal.evidence.failing, 0, "no failing trace was needed");
+  assert.equal(proposal.changes[0].surface, "prompt");
+  assert.match(proposal.changes[0].target, /#method$/);
+  assert.ok(proposal.evidence.failing >= 1);
   assert.equal(proposal.evidence.feedbackReviewed, 1);
   assert.equal(proposal.evidence.averageRating, 4);
-  assert.doesNotMatch(
-    JSON.stringify(proposal),
-    /the draft says founder for a company she only interned at/,
-    "feedback is cited by id, not copied into proposal text",
-  );
 });
 
-// The reviewer's note names two defects whose checks are now present in v6 and
-// one source-relationship defect that the artifact still does not address.
+// The reviewer's note names defects whose checks/rules are now present in v7.
 const REVIEWER_NOTE =
   "The hook still uses an em dash. Good that it no longer invents character " +
   "counts. It also calls her founder of a company where she was an intern.";
 
 test("the maker verifies current state against the artifact before claiming it", async () => {
   const svc = await serviceWithA7Feedback({ rating: 3, notes: REVIEWER_NOTE });
-  const proposals = await svc.runImprovement("A7");
-  const targets = proposals.flatMap((p) => p.changes.map((c) => c.target));
-
-  // Verification: the v6 em-dash check already exists, so the maker must not
-  // claim it is missing. The still-unaddressed relationship defect remains.
-  assert.ok(
-    targets.includes("server/src/artifacts/biocraft/SKILL.md#method"),
-    `expected a source-relationship prompt change, got ${JSON.stringify(targets)}`,
-  );
-  assert.equal(targets.includes("draft_has_no_em_dash"), false);
-
-  // Verification: SKILL.md already carries "Do not report or annotate
-  // character counts", so asserting it is missing would be a false claim.
-  assert.equal(
-    proposals.some((p) => /character count/i.test(JSON.stringify(p.changes))),
-    false,
-    "an artifact rule that already exists must not be proposed as missing",
+  // Every named defect in REVIEWER_NOTE is already covered by v7 bytes, so the
+  // maker must refuse rather than re-propose closed gaps.
+  await assert.rejects(
+    () => svc.runImprovement("A7"),
+    (e) => e.status === 422 && /already addressed/i.test(e.message),
   );
 
-  // Every claim about current state is checked against the live bytes.
   const artifact = await readFile(
     new URL("../src/artifacts/biocraft/SKILL.md", import.meta.url),
     "utf8",
   );
   assert.match(artifact, /Do not report or annotate character counts/);
+  assert.match(artifact, /Compare every\s+company relationship and role title/);
+  assert.match(artifact, /draft_has_no_em_dash/);
 });
 
 // Polarity is still not solved generally, but a rule already present in the
@@ -197,40 +201,67 @@ test("praise about a registered check does not create a duplicate proposal", asy
 });
 
 test("a registered checker defect is suppressed while an unresolved prompt defect remains", async () => {
-  const note =
-    "Defect one: the AI cliche checker treats its phrase list as a word list. " +
-    "Fix the detector at phrase level. Defect two: the draft claims a job title " +
-    "the fellow never held; it says founder for a company she interned at.";
-  const svc = await serviceWithA7Feedback({ rating: 3, notes: note });
+  // Phrase-list feedback would have proposed a cliche check; that check is
+  // registered in v7. Pair it with a still-open voice-mismatch failing trace.
+  const { svc, store } = await freshServiceWithStore();
+  const okTrace = await store.append("traces", {
+    agentId: "A7",
+    status: "ok",
+    source: "real",
+    ts: new Date().toISOString(),
+    metadata: { via: "runtime" },
+  });
+  await store.append("traces", {
+    agentId: "A7",
+    status: "fail",
+    source: "real",
+    failureReason: "voice mismatch",
+    ts: new Date().toISOString(),
+    metadata: { via: "runtime" },
+  });
+  await svc.recordFeedback("A7", okTrace.id, {
+    rating: 3,
+    notes:
+      "Defect one: the AI cliche checker treats its phrase list as a word list. " +
+      "Fix the detector at phrase level.",
+  });
 
   const proposals = await svc.runImprovement("A7");
   assert.equal(proposals.length, 1);
   assert.ok(proposals.every((p) => p.changes.length === 1));
   const changes = proposals.map((p) => p.changes[0]);
-  const prompt = changes.find((change) => change.surface === "prompt");
-  // Derived from the edit: a final-cut instruction targets Method, not the
-  // Guardrails section a single hardcoded constant used to name.
-  assert.equal(prompt.target, "server/src/artifacts/biocraft/SKILL.md#method");
   assert.equal(changes.some((change) => change.surface === "check"), false);
-  assert.equal(JSON.stringify(proposals).includes(note), false);
+  const prompt = changes.find((change) => change.surface === "prompt");
+  assert.equal(prompt.target, "server/src/artifacts/biocraft/SKILL.md#method");
+  assert.equal(JSON.stringify(proposals).includes("phrase list"), false);
 });
 
 test("a proposal records the artifact it was derived against", async () => {
-  const svc = await serviceWithA7Feedback({
-    rating: 2,
-    notes: "the draft says founder for a company she only interned at",
+  const { svc, store } = await freshServiceWithStore();
+  await store.append("traces", {
+    agentId: "A7",
+    status: "fail",
+    source: "real",
+    failureReason: "voice mismatch",
+    ts: new Date().toISOString(),
+    metadata: { via: "runtime" },
   });
   const [proposal] = await svc.runImprovement("A7");
-  assert.equal(proposal.targetArtifactVersion, "biocraft-singleshot-v6");
+  assert.equal(proposal.targetArtifactVersion, "biocraft-singleshot-v7");
   assert.match(proposal.targetArtifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(proposal.targetArtifactDigestAlgorithm, "sha256");
   assert.equal(proposal.targetAgentVersion, (await svc.getAgent("A7")).version);
 });
 
 test("approval is refused when the targeted artifact has moved", async () => {
-  const svc = await serviceWithA7Feedback({
-    rating: 2,
-    notes: "the draft says founder for a company she only interned at",
+  const { svc, store } = await freshServiceWithStore();
+  await store.append("traces", {
+    agentId: "A7",
+    status: "fail",
+    source: "real",
+    failureReason: "voice mismatch",
+    ts: new Date().toISOString(),
+    metadata: { via: "runtime" },
   });
   const [proposal] = await svc.runImprovement("A7");
 
@@ -248,7 +279,7 @@ test("approval is refused when the targeted artifact has moved", async () => {
     () => svc.approveImprovement("A7", proposal.id, TEST_APPROVER),
     (e) => {
       assert.equal(e.status, 409);
-      assert.match(e.message, /but the live artifact is biocraft-singleshot-v6/);
+      assert.match(e.message, /but the live artifact is biocraft-singleshot-v7/);
       return true;
     },
   );

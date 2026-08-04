@@ -20,6 +20,8 @@ const V5_DIGEST =
   "c5cc1a587a10deb6fb1b2ee73fed0c31fcad96fa12ed58bc5907544e408df92b";
 const V6_DIGEST =
   "a8c08f4e98cd88f018764754eda760a20113e6fcf8a3362a192254b6bca81a10";
+const V7_DIGEST =
+  "751912f479d4ca65144e927bb18fe6e6c66c34ab63be557cab24ad28bc77fa26";
 
 const FIXTURES_ROOT = new URL("../eval-artifacts/", import.meta.url);
 
@@ -45,6 +47,16 @@ export const HISTORICAL_ARTIFACT_REGISTRY = Object.freeze({
     fixtureRelativePath: "biocraft/biocraft-singleshot-v6/SKILL.md",
     gitRev: "403f90f0c045b9dcd548121df8ae5da4b0743873",
     declaredDigest: V6_DIGEST,
+    declaredDigestAlgorithm: "sha256",
+  }),
+  "biocraft-singleshot-v7": Object.freeze({
+    agentId: "A7",
+    artifactVersion: "biocraft-singleshot-v7",
+    path: "server/src/artifacts/biocraft/SKILL.md",
+    fixtureRelativePath: "biocraft/biocraft-singleshot-v7/SKILL.md",
+    // Fill after the v7 release commit lands (dev-time git verify only).
+    gitRev: "0000000000000000000000000000000000000000",
+    declaredDigest: V7_DIGEST,
     declaredDigestAlgorithm: "sha256",
   }),
 });

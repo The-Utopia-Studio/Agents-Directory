@@ -2,6 +2,7 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 import {
   actorIdentity,
+  actorKind,
   agentStatus,
   artifactReference,
   autonomyLevel,
@@ -128,6 +129,8 @@ export default defineSchema({
     eligibleForEvaluation: v.boolean(),
     eligibleForPromotion: v.boolean(),
     runBy: actorIdentity,
+    // Optional: absent = UNKNOWN (legacy), never implied human. See actorKind.
+    actorKind: v.optional(actorKind),
     occurredAt: v.number(),
     cost: v.optional(providerCost),
     feedbackForEvidenceId: v.optional(v.id("evidence")),
@@ -204,6 +207,8 @@ export default defineSchema({
     guardrailResults: v.array(guardrailResult),
     eligibleForPromotion: v.boolean(),
     evaluatedBy: actorIdentity,
+    // Optional: absent = UNKNOWN (legacy), never implied human. See actorKind.
+    actorKind: v.optional(actorKind),
     evaluatedAt: v.number(),
   })
     .index("by_agentVersionId", ["agentVersionId"])

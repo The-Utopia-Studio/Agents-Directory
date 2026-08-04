@@ -339,6 +339,29 @@ test("Biocraft mechanical checks reject hook, keyword-run, and CTA regressions",
   assert.equal(hookFailure.limit, 200);
   assert.ok(hookFailure.paragraphCount > 0);
 
+  const longAboutBody = "Grounded delivery sentence. ".repeat(120);
+  const longAbout = VALID_BIOCRAFT_OUTPUT.replace(
+    /### LinkedIn About\n[\s\S]*?\n### Spoken event introduction/,
+    `### LinkedIn About\nI help venture teams turn complex ideas into practical tools.\n\n${longAboutBody}\n\nIf your venture team needs a clearer path from idea to build, reach out.\n\n### Spoken event introduction`,
+  );
+  const aboutFailure = validateRuntimeArtifactOutput("A7", longAbout).find(
+    (row) => row.checkId === "about_max_2600_characters",
+  );
+  assert.ok(aboutFailure);
+  assert.ok(aboutFailure.aboutChars > 2600);
+  assert.equal(aboutFailure.limit, 2600);
+
+  const longHeadline = VALID_BIOCRAFT_OUTPUT.replace(
+    "Agentic workflow builder for venture teams",
+    `Agentic ${"workflow builder for venture teams and operators ".repeat(8)}`,
+  );
+  const headlineFailure = validateRuntimeArtifactOutput("A7", longHeadline).find(
+    (row) => row.checkId === "headline_max_220_characters",
+  );
+  assert.ok(headlineFailure);
+  assert.ok(headlineFailure.headlineChars > 220);
+  assert.equal(headlineFailure.limit, 220);
+
   const keywordRun = VALID_BIOCRAFT_OUTPUT.replace(
     "One delivery validated 167 acceptance criteria across five working screens.",
     "n8n · AI automation · Agentic systems · LLMs",
@@ -759,7 +782,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     ["LinkedIn URL", "Google Drive folder or pitch deck", "Local file path"],
   );
   assert.equal(installArtifact.available, true);
-  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v6");
+  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v7");
   assert.match(installArtifact.artifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(installArtifact.artifactDigestAlgorithm, "sha256");
 
@@ -809,7 +832,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(run.via, "runtime");
   assert.equal(run.mode, "single-shot");
   assert.equal(run.agentVersion, "1.0");
-  assert.equal(run.artifactVersion, "biocraft-singleshot-v6");
+  assert.equal(run.artifactVersion, "biocraft-singleshot-v7");
   assert.equal(
     run.artifactDigest,
     createHash("sha256").update(request.body.system).digest("hex"),
@@ -840,7 +863,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(trace.metadata.via, "runtime");
   assert.equal(trace.metadata.mode, "single-shot");
   assert.equal(trace.agentVersion, "1.0");
-  assert.equal(trace.artifactVersion, "biocraft-singleshot-v6");
+  assert.equal(trace.artifactVersion, "biocraft-singleshot-v7");
   assert.equal(trace.artifactDigest, run.artifactDigest);
   assert.equal(trace.artifactDigestAlgorithm, "sha256");
   assert.equal("agentVersionId" in trace, false);

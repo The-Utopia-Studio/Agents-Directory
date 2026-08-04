@@ -19,9 +19,11 @@ import {
 export const STYLE_FAMILY = "style";
 export const HISTORICAL_STYLE_FAMILY = "style-historical";
 
-// Keep in step with HOOK_CHARACTER_LIMIT in runtimeArtifacts.js — duplicated
-// so historical scoring does not import the live artifact boot path.
+// Keep in step with limits in runtimeArtifacts.js — duplicated so historical
+// scoring does not import the live artifact boot path.
 const HOOK_CHARACTER_LIMIT = 200;
+const ABOUT_CHARACTER_LIMIT = 2600;
+const HEADLINE_CHARACTER_LIMIT = 220;
 
 const KEYWORD_RUN = /(?:([·|•])[^·|•\n]*){2,}/;
 const GENERATED_SECTIONS = Object.freeze([
@@ -48,10 +50,20 @@ const INVITATION_FRAME =
 /** Checks the live A7 runtime still executes. */
 const LIVE_STYLE_CHECKS = new Set([
   "about_hook_max_200_characters",
+  "about_max_2600_characters",
+  "headline_max_220_characters",
   "about_has_no_delimiter_separated_keyword_run",
   "about_closing_has_cta",
   "draft_has_no_em_dash",
   "draft_has_no_ai_cliche_phrase",
+]);
+
+/** About-scoped live checks — not scoreable when the About section is missing. */
+const ABOUT_SCOPED_LIVE_CHECKS = new Set([
+  "about_hook_max_200_characters",
+  "about_max_2600_characters",
+  "about_has_no_delimiter_separated_keyword_run",
+  "about_closing_has_cta",
 ]);
 
 /**
@@ -112,14 +124,45 @@ function failResult(checkId, family, facts = {}) {
   return { checkId, family, status: "fail", ...facts };
 }
 
+function scoreHeadlineLengthCheck(output, declaredChecks, results, scored) {
+  if (!declaredChecks.includes("headline_max_220_characters")) return;
+  if (scored.includes("headline_max_220_characters")) return;
+  scored.push("headline_max_220_characters");
+  const headline = markdownSection(output, "Suggested headline");
+  if (!headline) {
+    results.push(
+      failResult("headline_max_220_characters", STYLE_FAMILY, {
+        section: "Suggested headline",
+        sectionFound: false,
+        headlineChars: 0,
+        limit: HEADLINE_CHARACTER_LIMIT,
+      }),
+    );
+    return;
+  }
+  const headlineVisible = visibleText(headline);
+  const facts = {
+    section: "Suggested headline",
+    sectionFound: true,
+    headlineChars: headlineVisible.length,
+    limit: HEADLINE_CHARACTER_LIMIT,
+  };
+  results.push(
+    headlineVisible.length > HEADLINE_CHARACTER_LIMIT
+      ? failResult("headline_max_220_characters", STYLE_FAMILY, facts)
+      : passResult("headline_max_220_characters", STYLE_FAMILY, facts),
+  );
+}
+
 function scoreStyleChecks(output, declaredChecks) {
   const about = markdownSection(output, "LinkedIn About");
   const results = [];
   const scored = [];
 
   if (!about) {
-    // Without About, every About-scoped check is unscoreable as a section miss —
+    // Without About, About-scoped checks are unscoreable as a section miss —
     // still record about_section_present as fail so the score is not empty.
+    // Headline length does not need About; score it below.
     results.push(
       failResult("about_section_present", STYLE_FAMILY, {
         sectionFound: false,
@@ -127,7 +170,9 @@ function scoreStyleChecks(output, declaredChecks) {
       }),
     );
     for (const checkId of declaredChecks) {
+      if (checkId === "headline_max_220_characters") continue;
       if (
+        ABOUT_SCOPED_LIVE_CHECKS.has(checkId) ||
         LIVE_STYLE_CHECKS.has(checkId) ||
         HISTORICAL_STYLE_CHECKS.has(checkId)
       ) {
@@ -143,6 +188,7 @@ function scoreStyleChecks(output, declaredChecks) {
         scored.push(checkId);
       }
     }
+    scoreHeadlineLengthCheck(output, declaredChecks, results, scored);
     return { results, scored };
   }
 
@@ -151,6 +197,7 @@ function scoreStyleChecks(output, declaredChecks) {
     .map((part) => part.trim())
     .filter(Boolean);
   const hook = visibleText(paragraphs[0] || "");
+  const aboutVisible = visibleText(about);
 
   for (const checkId of declaredChecks) {
     if (checkId === "about_hook_max_200_characters") {
@@ -166,6 +213,27 @@ function scoreStyleChecks(output, declaredChecks) {
           ? failResult(checkId, STYLE_FAMILY, facts)
           : passResult(checkId, STYLE_FAMILY, facts),
       );
+      continue;
+    }
+
+    if (checkId === "about_max_2600_characters") {
+      scored.push(checkId);
+      const facts = {
+        sectionFound: true,
+        paragraphCount: paragraphs.length,
+        aboutChars: aboutVisible.length,
+        limit: ABOUT_CHARACTER_LIMIT,
+      };
+      results.push(
+        aboutVisible.length > ABOUT_CHARACTER_LIMIT
+          ? failResult(checkId, STYLE_FAMILY, facts)
+          : passResult(checkId, STYLE_FAMILY, facts),
+      );
+      continue;
+    }
+
+    if (checkId === "headline_max_220_characters") {
+      scoreHeadlineLengthCheck(output, declaredChecks, results, scored);
       continue;
     }
 

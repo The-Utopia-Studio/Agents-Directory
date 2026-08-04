@@ -114,14 +114,14 @@ test("A7 copy export is byte-for-byte the system artifact runtime executes", asy
   assert.equal(exported.kind, "single-shot");
   assert.equal(exported.artifactDigest, expectedDigest);
   assert.equal(exported.artifactDigestAlgorithm, "sha256");
-  assert.equal(exported.artifactVersion, "biocraft-singleshot-v6");
+  assert.equal(exported.artifactVersion, "biocraft-singleshot-v7");
   assert.equal(
     exported.filename,
-    `A7-biocraft-singleshot-v6-${expectedDigest.slice(0, 7)}-SKILL.md`,
+    `A7-biocraft-singleshot-v7-${expectedDigest.slice(0, 7)}-SKILL.md`,
   );
   assert.match(
     exported.content,
-    /^artifact_version: biocraft-singleshot-v6$/m,
+    /^artifact_version: biocraft-singleshot-v7$/m,
   );
   assert.doesNotMatch(exported.content, /artifact-(?:commit|digest):/);
   assert.match(exported.content, /## Mode boundary/);
@@ -191,7 +191,7 @@ test("A7 ZIP contains the runtime folder and follows the evaluated version", asy
   assert.equal(response.headers.get("x-artifact-digest"), expectedDigest);
   assert.equal(
     response.headers.get("content-disposition"),
-    `attachment; filename="A7-biocraft-singleshot-v6-${expectedDigest.slice(0, 7)}.zip"`,
+    `attachment; filename="A7-biocraft-singleshot-v7-${expectedDigest.slice(0, 7)}.zip"`,
   );
   const manifest = files.get("MANIFEST.md").toString();
   assert.match(manifest, /Agent name: Biocraft single-shot draft/);
@@ -202,7 +202,7 @@ test("A7 ZIP contains the runtime folder and follows the evaluated version", asy
   // appears only as a cross-reference, in prose that says so.
   assert.match(
     manifest,
-    /\*\*Artifact version — quote this when returning a result:\*\*\n`biocraft-singleshot-v6`/,
+    /\*\*Artifact version — quote this when returning a result:\*\*\n`biocraft-singleshot-v7`/,
   );
   assert.match(
     manifest,
@@ -240,6 +240,8 @@ test("A7 ZIP contains the runtime folder and follows the evaluated version", asy
   assert.equal(skillGuardrails.match(/^\d+\. /gm).length, guardrailBullets.length);
   assert.match(skill, /^checks:\n(?:  - .+\n){3}/m);
   assert.match(skill, /about_hook_max_200_characters/);
+  assert.match(skill, /about_max_2600_characters/);
+  assert.match(skill, /headline_max_220_characters/);
   assert.match(skill, /about_has_no_delimiter_separated_keyword_run/);
   assert.match(skill, /draft_has_no_em_dash/);
   assert.match(skill, /draft_has_no_ai_cliche_phrase/);

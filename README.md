@@ -124,11 +124,11 @@ At boot the server computes `artifactDigest` as SHA-256 over the exact
 the UI, and used in the ZIP filename.
 
 The artifact declares its own stable, paste-surviving frontmatter label:
-`artifact_version: biocraft-singleshot-v6`. Runtime parses that label from the
+`artifact_version: biocraft-singleshot-v7`. Runtime parses that label from the
 same bytes; it is not duplicated in configuration. Copy does not prepend or
 alter anything, so re-hashing a pasted copy produces the recorded digest. ZIP
 filenames use the label directly, for example
-`A7-biocraft-singleshot-v6-<digest-prefix>.zip`.
+`A7-biocraft-singleshot-v7-<digest-prefix>.zip`.
 
 The same frontmatter also declares `guardrails`, `success_criteria`, and
 `checks`. The manifest reports the first two, never the mutable directory
@@ -197,6 +197,15 @@ connect”. The artifact also registers mechanical checks for em dashes/double
 hyphens and the observed multi-word phrase “sits at the intersection of” across
 all three generated sections. Ratings against v5 are **not comparable** to
 ratings against v6 because the check set and scope changed.
+
+### v6 → v7 length checks + relationship pass
+
+`biocraft-singleshot-v7` registers host length checks that already existed as
+success criteria (`about_max_2600_characters`, `headline_max_220_characters`)
+and adds an explicit relationship-and-title verification pass to Method step 6
+(final cut). That method sentence is the first prompt-body change since v5; v5→v6
+was frontmatter/check-set only. Ratings against v6 are **not comparable** to
+ratings against v7.
 
 ### A failed check is a scored failure, not a refusal
 
@@ -531,10 +540,101 @@ off, it is off.
   `changelog`, and `costPerOutcome` are no longer rendered from browser data;
   they return only when governed, version-linked Convex query models exist for
   them.
-- **Railway has no service principal for Convex.** The loop service holds no
-  Convex client or credentials, so it cannot write to the authority layer at
-  all. The front-end reads and edits the catalogue through Convex, while live
-  run/export/proposal affordances still use the optional loop-service REST API.
+- **Railway has a declared Convex service principal (state B), not verified JWTs.**
+  Hosted A7 runs may write one metadata-only `evidence` row via
+  `internalMutation` `evidence.recordHostedRunEvidence`, using deploy-key call
+  auth. The recorded actor is always
+  `issuer: "service:agents-directory"` / `subject: "agents-directory-loop"` with
+  `actorKind: "service"`. The evidence path **looks up** the governed
+  `agentVersions` row whose `declaredDigest` matches the live artifact and
+  **never creates** a version. Absent `actorKind` on older rows means UNKNOWN,
+  not human.
+  **Eligibility (structural):** computed in `insertEvidence` from `source` +
+  writer kind — never mutation args. Service-written rows are
+  `eligibleForEvaluation: true` and `eligibleForPromotion: false`. A service row
+  is a machine reporting on a machine's output: real, so scorable; but a release
+  case needs a human in it somewhere, or the loop accumulates its own promotion
+  dossier — structurally the same problem as auto-apply, one layer down.
+  Insert-only means these pile up before anyone reads them. Verified-human
+  `source: "real"` may still be promotion-eligible; synthetic mock/demo remain
+  ineligible for both.
+  **Sample row kept under the prior rule:** DEV evidence id
+  `jx70w03y1zzj71yagtga2wqzf98bvckz` was written when service `real` rows still
+  received `eligibleForPromotion: true`. It is an honest sample — not deleted.
+  Distinguish it by that id and by disagreeing with the current rule; new writes
+  follow the structural rule above.
+  **Intended end state (D):** short-lived JWTs from that same issuer, verified
+  by Convex, with `actorKind` derived from claims — same durable shape, real
+  verification, no rewritten history.
+  **`CONVEX_DEPLOY_KEY` exposure (state B):** the deploy key is god-mode on the
+  deployment it targets. Convex does not scope it to one function. Anyone holding
+  it can call every public and internal query/mutation/action on that deployment
+  (approve, import, register agents, etc.), not only `recordHostedRunEvidence`.
+  The loop client *chooses* to call only that one path, but that is discipline in
+  our code, not a platform limit. Consequence we chose knowingly: the loop service
+  now holds a credential broader than its job — if Railway is compromised, Convex
+  is too. Blast-radius mitigations short of D: (1) put the key only on Railway,
+  never in the browser or git; (2) keep the client as a single-method wrapper
+  (already true — no generic `mutation(path)` export for callers); (3) prefer a
+  separate Convex project/deployment for the loop if you want key compromise not
+  to equal catalogue compromise; (4) move to D so the key is replaced by a
+  narrowly verified service JWT. **Rotation:** issue a new deploy key in the
+  Convex dashboard, set it on Railway, revoke the old one. In-flight loop
+  requests using the old key fail until Railway picks up the new value; no Convex
+  rows are rewritten. A mid-run evidence write may be skipped (best-effort) if
+  the key is invalid — the hosted run itself still returns to the caller.
+- **Governed eval vs mechanical checks (locked).** Do not conflate evidence
+  eligibility with who may write an eval:
+  1. The eligibility rule licenses a **human** evaluating a service-written
+     run. It does **not** license a service writing an `evalResult`.
+  2. Mapping detector counts into a normalised eval score would encode the
+     same perverse incentive refused in mechanical compare (more detection
+     looks like regression) — one layer down. That alone kills “mechanical
+     results become governed evals.”
+  Locked product rules:
+  - `evalResult` stays **human-only**. No service writer, no evidence-style
+    seam split on `recordEvalResult`.
+  - Mechanical checks stay a separate, honestly labelled lane and **never
+    become evals**.
+  - A mechanical result may be **cited** as supporting evidence by an eval;
+    it may not **be** a criterion result.
+  - Release completeness (measurement gates green **and** judgement criteria
+    scored) is a property of the **release case**, not a partial `evalResult`.
+  - No attestation type for evals. Approval stays on releases and
+    improvements.
+  TUS-2534 (A7 eval set) is **lane-sorting authoring**, not plumbing: fully
+  mechanical claims belong on checks/guardrails; graded judgement belongs on
+  rubric criteria. Do not build the eval write path or the Overview read model
+  until that authoring exists.
+- **Demo/mock evidence is synthetic and ineligible by construction.** Its
+  Convex writers own `source`, force `eligibleForEvaluation: false` and
+  `eligibleForPromotion: false`, and accept no caller-supplied eligibility
+  flags. Demo fixtures are restricted to version-linked A7 metadata in tests;
+  nothing seeds demo evidence on deployment. Synthetic rows are excluded from
+  evaluation and promotion queries and cannot be passed to `recordEvalResult`.
+- **A8 cannot record evidence yet.** A8 is a foreign-runtime handoff whose Git
+  commit is a source pin, explicitly not an artifact-content digest. Until a
+  valid foreign-runtime evidence-identity model is approved, Convex refuses
+  evidence creation for A8 rather than inventing a digest or treating the
+  commit SHA as one.
+- **`agentVersions` immutability is enforced by a static test, not the
+  database.** `convex/order1.test.ts` scans every non-generated module with a
+  text heuristic for mutations that look like they target an `agentVersions`
+  row. Convex has no row-level immutability; the guard is a heuristic and says
+  so in its own failure messages.
+- **Concurrent approvals are unverified under real OCC.** `convex-test`
+  serializes top-level mutations, so the true optimistic-concurrency race can't
+  be reproduced locally. The relevant test is `test.skip`-ed pending a deployed
+  staging environment with two authenticated identities.
+- **Concurrent display-ID allocation is not proven in production.** Eight
+  simultaneous `registerAgent` callers receive distinct `A<n>` values under
+  `convex-test`, but that harness serializes top-level mutations. The current
+  scan-and-insert allocator has no database uniqueness constraint; a genuine
+  deployed overlap still needs a two-session smoke test before multi-user use.
+- **Phase 5 removes legacy display-only measurements.** `evalHistory`,
+  `changelog`, and `costPerOutcome` are no longer rendered from browser data;
+  they return only when governed, version-linked Convex query models exist for
+  them.
 
 ## Specs and what's next
 
@@ -549,6 +649,7 @@ authority snapshot and the explicit Order 2 / Order 3 deferrals),
 
 - **Order 1** (done) — Convex schema and insert-only version history.
 - **Order 2** (done) — approval as the sole release transaction.
-- **Order 3** (next) — give Railway a Convex service principal so runs can write
-  durable evidence, and remove the loop service's own approve/reject path so
-  approval authority lives only in Convex.
+- **Order 3** (in progress) — Railway writes durable evidence as the declared
+  service principal (B now). Remaining: verify service JWTs (D), and remove the
+  loop service's own approve/reject path so approval authority lives only in
+  Convex.

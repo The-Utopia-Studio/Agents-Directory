@@ -123,6 +123,7 @@ export const recordEvalResult = mutation({
         evidence.source === "real" &&
         allGuardrailsPassed,
       evaluatedBy,
+      actorKind: "human",
       evaluatedAt: Date.now(),
     });
   },

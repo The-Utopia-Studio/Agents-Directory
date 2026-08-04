@@ -14,13 +14,17 @@ const ARTIFACTS_ROOT = new URL("../artifacts/", import.meta.url);
 // them being declared (about_section_present). A test asserts no drift.
 const RUNTIME_CHECKS = new Set([
   "about_hook_max_200_characters",
+  "about_max_2600_characters",
+  "headline_max_220_characters",
   "about_has_no_delimiter_separated_keyword_run",
   "about_closing_has_cta",
   "draft_has_no_em_dash",
   "draft_has_no_ai_cliche_phrase",
 ]);
-// v6 restores the keyword-run detector to its intended About-only scope and
-// adds the two guardrail checks repeatedly observed in reviewer feedback.
+// Length gates match success_criteria already declared on the artifact.
+// about_max_2600 / headline_max_220 mirror about_hook_max_200 (visible-text
+// character count). Historical v5/v6 eval snapshots keep their pinned check
+// sets — live registration only, so those digests stay stable.
 
 /** Exported so the boot-failure test can assert the same throw the module uses at import. */
 export function snapshotArtifact(directoryUrl, primaryName) {
@@ -282,6 +286,8 @@ function visibleText(markdown) {
 }
 
 export const HOOK_CHARACTER_LIMIT = 200;
+export const ABOUT_CHARACTER_LIMIT = 2600;
+export const HEADLINE_CHARACTER_LIMIT = 220;
 
 // Sarah's rule is "one or two final lines": one paragraph is too narrow, and
 // anything wider is too generous. There is deliberately no expand-to-N-chars
@@ -341,6 +347,33 @@ function ctaSignals(windowText) {
   };
 }
 
+function pushHeadlineLengthFailure(failures, checks, output) {
+  if (!checks.includes("headline_max_220_characters")) return;
+  const headline = markdownSection(output, "Suggested headline");
+  if (!headline) {
+    failures.push({
+      checkId: "headline_max_220_characters",
+      message: "Suggested headline section is missing or not labelled exactly",
+      section: "Suggested headline",
+      sectionFound: false,
+      headlineChars: 0,
+      limit: HEADLINE_CHARACTER_LIMIT,
+    });
+    return;
+  }
+  const headlineVisible = visibleText(headline);
+  if (headlineVisible.length > HEADLINE_CHARACTER_LIMIT) {
+    failures.push({
+      checkId: "headline_max_220_characters",
+      message: `Suggested headline is ${headlineVisible.length} characters; maximum is ${HEADLINE_CHARACTER_LIMIT}`,
+      section: "Suggested headline",
+      sectionFound: true,
+      headlineChars: headlineVisible.length,
+      limit: HEADLINE_CHARACTER_LIMIT,
+    });
+  }
+}
+
 /**
  * Execute the checks declared in the same server-owned bytes used as the
  * system prompt. This prevents a `checks:` block from being documentation
@@ -358,7 +391,7 @@ export function validateRuntimeArtifactOutput(agentId, output) {
 
   const about = markdownSection(output, "LinkedIn About");
   if (!about) {
-    return [
+    const failures = [
       {
         checkId: "about_section_present",
         message: "LinkedIn About section is missing or not labelled exactly",
@@ -366,10 +399,13 @@ export function validateRuntimeArtifactOutput(agentId, output) {
         paragraphCount: 0,
       },
     ];
+    pushHeadlineLengthFailure(failures, checks, output);
+    return failures;
   }
 
   const paragraphs = about.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
   const hook = visibleText(paragraphs[0] || "");
+  const aboutVisible = visibleText(about);
   const failures = [];
 
   if (checks.includes("about_hook_max_200_characters") && hook.length > HOOK_CHARACTER_LIMIT) {
@@ -382,6 +418,22 @@ export function validateRuntimeArtifactOutput(agentId, output) {
       limit: HOOK_CHARACTER_LIMIT,
     });
   }
+
+  if (
+    checks.includes("about_max_2600_characters") &&
+    aboutVisible.length > ABOUT_CHARACTER_LIMIT
+  ) {
+    failures.push({
+      checkId: "about_max_2600_characters",
+      message: `LinkedIn About is ${aboutVisible.length} characters; maximum is ${ABOUT_CHARACTER_LIMIT}`,
+      sectionFound: true,
+      paragraphCount: paragraphs.length,
+      aboutChars: aboutVisible.length,
+      limit: ABOUT_CHARACTER_LIMIT,
+    });
+  }
+
+  pushHeadlineLengthFailure(failures, checks, output);
 
   if (checks.includes("about_has_no_delimiter_separated_keyword_run")) {
     const match = about.match(KEYWORD_RUN);

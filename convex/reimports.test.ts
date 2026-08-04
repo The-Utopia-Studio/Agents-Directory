@@ -10,6 +10,8 @@ import {
 import {
   A7_V6_RELEASE_MANIFEST_DIGEST,
   A7_V6_RELEASE_SPEC,
+  A7_V7_RELEASE_MANIFEST_DIGEST,
+  A7_V7_RELEASE_SPEC,
   MERGED_REIMPORT_MANIFEST_DIGEST,
   MERGED_REIMPORT_SPEC,
 } from "./reimportSpec";
@@ -62,6 +64,18 @@ describe("approved A7/A8 merged re-import", () => {
     expect(A7_V6_RELEASE_SPEC.version.artifact.declaredDigest).toMatch(/^[a-f0-9]{64}$/);
     expect(A7_V6_RELEASE_SPEC.proposalSummary).toMatch(
       /Ratings against v5 are not comparable to v6/,
+    );
+  });
+
+  test("the sealed v7 release spec binds the live artifact and rating boundary", () => {
+    expect(
+      createHash("sha256")
+        .update(stableStringify(A7_V7_RELEASE_SPEC))
+        .digest("hex"),
+    ).toBe(A7_V7_RELEASE_MANIFEST_DIGEST);
+    expect(A7_V7_RELEASE_SPEC.version.artifact.declaredDigest).toMatch(/^[a-f0-9]{64}$/);
+    expect(A7_V7_RELEASE_SPEC.proposalSummary).toMatch(
+      /Ratings against v6 are not comparable to v7/,
     );
   });
 
@@ -173,6 +187,56 @@ describe("approved A7/A8 merged re-import", () => {
     const rerun = await t.mutation(
       authorityApi.reimports.executeApprovedA7V6Release,
       { releaseManifestDigest: A7_V6_RELEASE_MANIFEST_DIGEST },
+    );
+    expect(rerun.versionId).toBe(release.versionId);
+    expect(rerun.proposalId).toBe(release.proposalId);
+  });
+
+  test("creates exact v7 from current v6 and releases only through reviews", async () => {
+    const { t } = await importedV4();
+    const merged = await t.mutation(
+      authorityApi.reimports.executeApprovedMergedReimport,
+      { manifestDigest: MERGED_REIMPORT_MANIFEST_DIGEST },
+    );
+    await t.mutation(authorityApi.reviews.approve, {
+      proposalId: merged.A7.proposalId,
+      editCategory: "no-edit",
+    });
+    const v6 = await t.mutation(
+      authorityApi.reimports.executeApprovedA7V6Release,
+      { releaseManifestDigest: A7_V6_RELEASE_MANIFEST_DIGEST },
+    );
+    await t.mutation(authorityApi.reviews.approve, {
+      proposalId: v6.proposalId,
+      editCategory: "no-edit",
+    });
+    const release = await t.mutation(
+      authorityApi.reimports.executeApprovedA7V7Release,
+      { releaseManifestDigest: A7_V7_RELEASE_MANIFEST_DIGEST },
+    );
+    const beforeApproval = await t.run(async (ctx) => ({
+      agent: await ctx.db.get(release.agentId),
+      version: await ctx.db.get(release.versionId),
+      proposal: await ctx.db.get(release.proposalId),
+    }));
+    expect((beforeApproval.agent as any)?.currentApprovedVersionId).not.toBe(release.versionId);
+    expect(beforeApproval.version).toMatchObject({
+      version: "biocraft-singleshot-v7",
+      state: "candidate",
+      basedOnVersionId: v6.versionId,
+      artifact: A7_V7_RELEASE_SPEC.version.artifact,
+    });
+    expect(beforeApproval.proposal).toMatchObject({ status: "open" });
+    const approved = await t.mutation(authorityApi.reviews.approve, {
+      proposalId: release.proposalId,
+      editCategory: "no-edit",
+    });
+    expect(approved.resultingVersionId).toBe(release.versionId);
+    const afterApproval = await t.run(async (ctx) => await ctx.db.get(release.agentId));
+    expect((afterApproval as any)?.currentApprovedVersionId).toBe(release.versionId);
+    const rerun = await t.mutation(
+      authorityApi.reimports.executeApprovedA7V7Release,
+      { releaseManifestDigest: A7_V7_RELEASE_MANIFEST_DIGEST },
     );
     expect(rerun.versionId).toBe(release.versionId);
     expect(rerun.proposalId).toBe(release.proposalId);

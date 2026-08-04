@@ -22,6 +22,8 @@
 export const KNOWN_CHECK_IDS = Object.freeze([
   "about_section_present",
   "about_hook_max_200_characters",
+  "about_max_2600_characters",
+  "headline_max_220_characters",
   "about_has_no_delimiter_separated_keyword_run",
   "about_closing_has_cta",
   "draft_has_no_em_dash",
@@ -40,6 +42,8 @@ const NUMERIC_FACTS = new Set([
   "windowParagraphs",
   "windowChars",
   "hookChars",
+  "aboutChars",
+  "headlineChars",
   "finalParagraphChars",
   "segmentCount",
   "limit",

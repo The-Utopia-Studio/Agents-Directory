@@ -435,6 +435,11 @@ describe("Order 1 authority model", () => {
       source: "mock",
       eligibleForEvaluation: false,
       eligibleForPromotion: false,
+      actorKind: "service",
+      runBy: {
+        subject: "agents-directory-loop",
+        issuer: "service:agents-directory",
+      },
     });
     expect(recorded[0]).not.toHaveProperty("input");
     expect(recorded[0]).not.toHaveProperty("output");
@@ -567,7 +572,15 @@ describe("Order 1 authority model", () => {
       earnedMaximum: 3,
       applicableMaximum: 4,
       normalizedScore: 75,
-      eligibleForPromotion: true,
+      // Service-written real evidence is evaluation-eligible but not
+      // promotion-eligible; the eval result inherits that.
+      eligibleForPromotion: false,
+    });
+    const realEvidence = await t.run(async (ctx) => await ctx.db.get(realEvidenceId));
+    expect(realEvidence).toMatchObject({
+      actorKind: "service",
+      eligibleForEvaluation: true,
+      eligibleForPromotion: false,
     });
   });
 

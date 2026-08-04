@@ -14,14 +14,18 @@ import {
 
 const V5 = "biocraft-singleshot-v5";
 const V6 = "biocraft-singleshot-v6";
+const V7 = "biocraft-singleshot-v7";
 const V5_DIGEST =
   "c5cc1a587a10deb6fb1b2ee73fed0c31fcad96fa12ed58bc5907544e408df92b";
 const V6_DIGEST =
   "a8c08f4e98cd88f018764754eda760a20113e6fcf8a3362a192254b6bca81a10";
+const V7_DIGEST =
+  "751912f479d4ca65144e927bb18fe6e6c66c34ab63be557cab24ad28bc77fa26";
 
 test("registry pins full SHAs and declared digests; fixtures are under src/", () => {
   assert.equal(HISTORICAL_ARTIFACT_REGISTRY[V5].declaredDigest, V5_DIGEST);
   assert.equal(HISTORICAL_ARTIFACT_REGISTRY[V6].declaredDigest, V6_DIGEST);
+  assert.equal(HISTORICAL_ARTIFACT_REGISTRY[V7].declaredDigest, V7_DIGEST);
   assert.match(HISTORICAL_ARTIFACT_REGISTRY[V5].gitRev, /^[a-f0-9]{40}$/);
   assert.match(
     HISTORICAL_ARTIFACT_REGISTRY[V5].fixtureRelativePath,
@@ -45,10 +49,17 @@ test("loadHistoricalArtifact reads committed fixtures and verifies digests", () 
   assert.ok(v6.checks.includes("draft_has_no_em_dash"));
   assert.ok(v6.checks.includes("draft_has_no_ai_cliche_phrase"));
   assert.notEqual(v5.artifactDigest, v6.artifactDigest);
+
+  const v7 = loadHistoricalArtifact(V7);
+  assert.equal(v7.artifactDigest, V7_DIGEST);
+  assert.ok(v7.checks.includes("about_max_2600_characters"));
+  assert.ok(v7.checks.includes("headline_max_220_characters"));
+  assert.match(v7.content, /Compare every\s+company relationship and role title/);
+  assert.notEqual(v6.artifactDigest, v7.artifactDigest);
 });
 
 test("fixture bytes on disk match declared digests", () => {
-  for (const version of [V5, V6]) {
+  for (const version of [V5, V6, V7]) {
     const entry = HISTORICAL_ARTIFACT_REGISTRY[version];
     const path = fileURLToPath(
       new URL(
@@ -107,7 +118,7 @@ test("listHistoricalArtifactVersions scopes to A7", () => {
     listHistoricalArtifactVersions("A7")
       .map((row) => row.artifactVersion)
       .sort(),
-    [V5, V6].sort(),
+    [V5, V6, V7].sort(),
   );
   assert.equal(listHistoricalArtifactVersions("A8").length, 0);
 });

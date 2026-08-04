@@ -21,6 +21,7 @@ import { sanitizeCheckResults, sanitizeFailureReason } from "./traceSafety.js";
 import { validateProposal } from "../improve/proposalContract.js";
 import { readProposals, writeProposals, selectProposal } from "./proposals.js";
 import { buildServiceMigrationSnapshot } from "../migration/export.js";
+import { createConvexAuthorityClient } from "../convex/authorityClient.js";
 
 function outputDigest(output) {
   return createHash("sha256").update(String(output)).digest("hex");
@@ -109,6 +110,47 @@ function metadataOnlyTrace(agentId, trace) {
 
 export function createLoopService({ store, obs, optimizer, memory, verifier, config }) {
   const ns = (agentId) => `agent:${agentId}`;
+  const convexAuthority = createConvexAuthorityClient({
+    url: config?.convex?.url || "",
+    deployKey: config?.convex?.deployKey || "",
+  });
+
+  async function recordHostedRunEvidenceBestEffort(agentId, result, digest) {
+    if (agentId !== "A7" || !digest) return null;
+    if (!convexAuthority.enabled()) return null;
+    try {
+      const cost =
+        result.provider && result.modelId
+          ? {
+              amountUsd:
+                typeof result.costUsd === "number" && Number.isFinite(result.costUsd)
+                  ? result.costUsd
+                  : 0,
+              provider: String(result.provider),
+              modelId: String(result.modelId),
+              ...(typeof result.inputTokens === "number"
+                ? { inputTokens: result.inputTokens }
+                : {}),
+              ...(typeof result.outputTokens === "number"
+                ? { outputTokens: result.outputTokens }
+                : {}),
+              ...(typeof result.totalTokens === "number"
+                ? { totalTokens: result.totalTokens }
+                : {}),
+            }
+          : undefined;
+      return await convexAuthority.recordHostedRunEvidence({
+        displayId: "A7",
+        artifactDigest: digest,
+        cost,
+      });
+    } catch (error) {
+      console.error(
+        `[convex] hosted-run evidence for ${agentId} not recorded: ${String(error?.message || error)}`,
+      );
+      return null;
+    }
+  }
 
   const svc = {
     // ── Phase 2 migration discovery (read-only) ──
@@ -390,6 +432,16 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
           `[loop] successful run for ${agentId} could not be traced; persistence error: ${String(persistError?.message || persistError)}`,
         );
       }
+
+      const liveDigest = result.artifactDigest || artifactDigest || null;
+      // Scored hosted run: invocation returned and mechanical checks ran.
+      // Convex looks up the governed version by digest; never creates one.
+      const convexEvidenceId = await recordHostedRunEvidenceBestEffort(
+        agentId,
+        result,
+        liveDigest,
+      );
+
       return {
         output: result.output,
         status: failedChecks.length ? "checks_failed" : "ok",
@@ -408,12 +460,13 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         mode: invoker.mode || null,
         agentVersion: agent.version,
         artifactVersion: result.artifactVersion || artifactVersion || null,
-        artifactDigest: result.artifactDigest || artifactDigest || null,
+        artifactDigest: liveDigest,
         artifactDigestAlgorithm:
           result.artifactDigestAlgorithm || artifactDigestAlgorithm || null,
         traceId: trace?.id || null,
         tracePersisted:
           Boolean(trace) && trace.persisted !== false && Boolean(trace.id),
+        ...(convexEvidenceId ? { convexEvidenceId } : {}),
       };
     },
 
@@ -808,7 +861,7 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       }
       const {
         caseId = "a7-mira-okonkwo-v1",
-        artifactVersion = "biocraft-singleshot-v6",
+        artifactVersion = "biocraft-singleshot-v7",
         outputSource = "canned",
       } = body;
       try {
@@ -839,8 +892,8 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       const {
         experiment,
         caseId = "a7-mira-okonkwo-v1",
-        leftVersion = "biocraft-singleshot-v5",
-        rightVersion = "biocraft-singleshot-v6",
+        leftVersion = "biocraft-singleshot-v6",
+        rightVersion = "biocraft-singleshot-v7",
         rulerVersion,
         outputSource = "canned",
       } = body;
@@ -872,8 +925,8 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       if (agentId !== "A7") {
         throw httpError(400, "Mechanical compare is only wired for A7");
       }
-      const leftVersion = query.leftVersion || "biocraft-singleshot-v5";
-      const rightVersion = query.rightVersion || "biocraft-singleshot-v6";
+      const leftVersion = query.leftVersion || "biocraft-singleshot-v6";
+      const rightVersion = query.rightVersion || "biocraft-singleshot-v7";
       const { previewVersionComparability } = await import(
         "../eval/runCompare.js"
       );

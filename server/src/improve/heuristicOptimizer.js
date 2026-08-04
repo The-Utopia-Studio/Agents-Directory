@@ -111,7 +111,7 @@ const FEEDBACK_DEFECTS = [
         note,
       ),
     alreadyInArtifact: (artifact) =>
-      artifact.hasRule(/compare every company relationship and role title/),
+      artifact.hasRule(/compare every\s+company relationship and role title/),
     change: (agent) => ({
       surface: "prompt",
       target: promptTarget(agent, "method"),

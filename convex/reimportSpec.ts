@@ -280,3 +280,28 @@ export const A7_V6_RELEASE_SPEC = {
 // the exact release contract before the approver mutation may create v6.
 export const A7_V6_RELEASE_MANIFEST_DIGEST =
   "4bcac2ca329e4b91bc54308dffce9db3d5c283a1b4b202407325638499592841";
+
+export const A7_V7_RELEASE_SPEC = {
+  agentDisplayId: "A7",
+  priorVersion: "biocraft-singleshot-v6",
+  priorArtifactSha256:
+    "a8c08f4e98cd88f018764754eda760a20113e6fcf8a3362a192254b6bca81a10",
+  version: {
+    version: "biocraft-singleshot-v7",
+    state: "candidate",
+    artifact: {
+      scheme: "git",
+      locator: "server/src/artifacts/biocraft/SKILL.md",
+      declaredDigest:
+        "751912f479d4ca65144e927bb18fe6e6c66c34ab63be557cab24ad28bc77fa26",
+      declaredDigestAlgorithm: "sha256",
+    },
+  },
+  proposalSummary:
+    "Biocraft v7 registers About/headline length checks and adds an explicit relationship-and-title verification pass to the final cut. Ratings against v6 are not comparable to v7.",
+} as const;
+
+// SHA-256(stableStringify(A7_V7_RELEASE_SPEC)). A test binds this literal to
+// the exact release contract before the approver mutation may create v7.
+export const A7_V7_RELEASE_MANIFEST_DIGEST =
+  "5e660d7c33d6786f312297bf34fa9571380005d4ea8ae06d7f171c2e727fdf82";

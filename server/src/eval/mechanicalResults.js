@@ -54,6 +54,8 @@ export function buildMechanicalResultRecord({
         "sectionFound",
         "paragraphCount",
         "hookChars",
+        "aboutChars",
+        "headlineChars",
         "limit",
         "windowParagraphs",
         "windowChars",
