@@ -8,6 +8,7 @@ const authenticatedRequestsQuery = makeFunctionReference("requests:listRequests"
 const registerAgentMutation = makeFunctionReference("agents:registerAgent");
 const updateAgentMutation = makeFunctionReference("agents:updateAgent");
 const createRequestMutation = makeFunctionReference("requests:createRequest");
+const updateRequestMutation = makeFunctionReference("requests:updateRequest");
 
 function labels(items) {
   return Array.isArray(items)
@@ -57,13 +58,11 @@ export function mapGovernedPilotAgent(row) {
     accessUrl: governed.accessUrl ?? "",
     repoUrl: governed.repoUrl ?? "",
     version: version?.version ?? "unversioned",
-    evalHistory: [],
-    changelog: [],
-    proposedImprovements: [],
     convexRecord: governed,
     governedInConvex: true,
     convexGovernance: {
       versionState: version?.state ?? null,
+      isCurrentApproved: row.isCurrentApproved === true,
       runner: governed.runner,
       invocationType: governed.invocation?.type ?? null,
       usabilityModes: [...governed.usabilityModes],
@@ -91,17 +90,28 @@ export function mapGovernedPilotAgent(row) {
   return mapped;
 }
 
-export function overlayGovernedPilotAgents(localAgents, rows) {
-  if (!Array.isArray(localAgents) || !Array.isArray(rows)) return localAgents;
-  const governed = rows.map(mapGovernedPilotAgent).filter(Boolean);
-  const governedIds = new Set(governed.map((agent) => agent.id));
-  // This is a merge, never an object overlay: Convex rows are complete view
-  // models and win as a whole. Local data contributes only records that have
-  // no Convex counterpart during the temporary hybrid rollout.
-  return [
-    ...localAgents.filter((agent) => !governedIds.has(agent.id)),
-    ...governed,
-  ].sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+export function mapGovernedDirectoryRows(rows) {
+  if (!Array.isArray(rows)) return [];
+  return rows
+    .map(mapGovernedPilotAgent)
+    .filter(Boolean)
+    .sort((a, b) => String(a.id).localeCompare(String(b.id), undefined, { numeric: true }));
+}
+
+function mapRequest(row) {
+  return {
+    id: row.displayId,
+    convexId: row._id,
+    title: row.title,
+    desc: row.desc,
+    requestedBy: row.requestedBy,
+    date: row.date,
+    priority: row.priority,
+    status: row.status,
+    assignee: row.assignee ?? "",
+    notes: row.notes ?? "",
+    shippedAgentId: row.shippedAgentId ?? null,
+  };
 }
 
 export function createConvexDirectoryClient({ url, clientFactory } = {}) {
@@ -109,8 +119,8 @@ export function createConvexDirectoryClient({ url, clientFactory } = {}) {
   if (!normalizedUrl) {
     return {
       enabled: false,
-      async read(localAgents) {
-        return { agents: localAgents, succeeded: false };
+      async read() {
+        return { agents: [], succeeded: false };
       },
     };
   }
@@ -128,8 +138,8 @@ export function createConvexDirectoryClient({ url, clientFactory } = {}) {
   ) {
     return {
       enabled: false,
-      async read(localAgents) {
-        return { agents: localAgents, succeeded: false };
+      async read() {
+        return { agents: [], succeeded: false };
       },
     };
   }
@@ -157,18 +167,25 @@ export function createConvexDirectoryClient({ url, clientFactory } = {}) {
     async createRequest(args) {
       return await client.mutation(createRequestMutation, args);
     },
-    async read(localAgents) {
+    async updateRequest(args) {
+      return await client.mutation(updateRequestMutation, args);
+    },
+    async listRequests() {
+      const rows = await client.query(authenticatedRequestsQuery, {});
+      return rows.map(mapRequest);
+    },
+    async read() {
       try {
         const rows = await client.query(
           governedDirectoryQuery,
           {},
         );
         return {
-          agents: overlayGovernedPilotAgents(localAgents, rows),
+          agents: mapGovernedDirectoryRows(rows),
           succeeded: true,
         };
       } catch {
-        return { agents: localAgents, succeeded: false };
+        return { agents: [], succeeded: false };
       }
     },
   };

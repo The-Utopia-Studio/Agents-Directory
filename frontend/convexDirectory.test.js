@@ -6,37 +6,16 @@ import appSource from "../app.js?raw";
 import clientSource from "./convexDirectory.js?raw";
 import {
   createConvexDirectoryClient,
-  overlayGovernedPilotAgents,
+  mapGovernedDirectoryRows,
 } from "./convexDirectory";
 
-const localAgents = Array.from({ length: 8 }, (_, index) => {
-  const id = `A${index + 1}`;
-  return {
-    id,
-    name: `Local ${id}`,
-    tagline: `Local tagline ${id}`,
-    platform: "Claude",
-    status: "Experimental",
-    category: "Other",
-    owner: "Local owner",
-    initials: "LO",
-    version: "local",
-    invocation: { type: "link" },
-    usabilityModes: ["download-install"],
-    objective: `Local objective ${id}`,
-    successCriteria: ["Local criterion"],
-    guardrails: ["Local guardrail"],
-    inputs: ["Local input"],
-    outputs: ["Local output"],
-    skills: [],
-    tools: [],
-    context: [],
-  };
-});
-
+const a7Digest = "a".repeat(64);
+const a8Commit = "2a8f2b9562c4d4569c156e2ae7559ab04a54b883";
 const governedRows = [
   {
+    isCurrentApproved: true,
     agent: {
+      _id: "agent-a7",
       displayId: "A7",
       name: "Biocraft single-shot draft",
       tagline: "Governed A7",
@@ -44,7 +23,7 @@ const governedRows = [
       status: "Experimental",
       category: "Personal Branding",
       owner: "Sarah",
-      initials: "S",
+      initials: "SA",
       model: "Claude Sonnet 4.6",
       description: "Governed A7 description",
       objective: "Governed A7 objective",
@@ -54,41 +33,36 @@ const governedRows = [
       runner: "native",
       invocation: { type: "runtime", configRef: "server-owned:a7" },
       usabilityModes: ["hosted-run", "download-install"],
-      executionContract: {
-        inputs: [
-          { key: "fellowName", required: true },
-          { key: "sourceMaterial", required: true },
-        ],
-      },
-      outcomeContract: {
-        successCriteria: [{ id: "hook", label: "Hook is within limit" }],
-      },
+      executionContract: { inputs: [{ key: "sourceMaterial", required: true }] },
+      evidenceContract: { acceptedTypes: ["run"], requiredReturnArtifact: false },
+      outcomeContract: { successCriteria: [{ id: "hook", label: "Hook is within limit" }] },
       guardrails: [{ id: "grounded", label: "No fabricated claims" }],
       skills: ["biocraft"],
       tools: [],
       context: [{ label: "Supplied source material" }],
     },
     version: {
-      version: "biocraft-singleshot-v4",
-      state: "candidate",
+      version: "biocraft-singleshot-v5",
+      state: "approved",
       artifact: {
         locator: "server/src/artifacts/biocraft/SKILL.md",
-        declaredDigest: "a".repeat(64),
+        declaredDigest: a7Digest,
         declaredDigestAlgorithm: "sha256",
       },
     },
   },
   {
+    isCurrentApproved: false,
     agent: {
+      _id: "agent-a8",
       displayId: "A8",
-      name: "UX&QA",
+      name: "UX&QA Agent",
       tagline: "Governed A8",
       platform: "Codex",
       status: "Experimental",
       category: "Design & Product",
       owner: "Aiden Kim",
       initials: "AK",
-      model: "—",
       description: "Governed A8 description",
       objective: "Governed A8 objective",
       whenToUse: "Use A8 from governed material",
@@ -96,12 +70,9 @@ const governedRows = [
       outputs: ["Governed A8 output"],
       runner: "foreign-runtime-handoff",
       usabilityModes: ["prepared-handoff"],
-      executionContract: {
-        inputs: [{ key: "approvedBuild", required: true }],
-      },
-      outcomeContract: {
-        successCriteria: [{ id: "issues", label: "Issue register returned" }],
-      },
+      executionContract: { inputs: [{ key: "approvedBuild", required: true }] },
+      evidenceContract: { acceptedTypes: ["test-report"], requiredReturnArtifact: true },
+      outcomeContract: { successCriteria: [{ id: "issues", label: "Issue register returned" }] },
       guardrails: [],
       skills: [],
       tools: [],
@@ -111,11 +82,10 @@ const governedRows = [
     version: {
       version: "0.1.0",
       state: "draft",
-      artifact: null,
       sourcePin: {
         kind: "git-commit",
         repoUrl: "https://github.com/aiden150/ux-qa-agent",
-        commitSha: "2a8f2b9562c4d4569c156e2ae7559ab04a54b883",
+        commitSha: a8Commit,
         isContentDigest: false,
       },
     },
@@ -124,416 +94,181 @@ const governedRows = [
 
 function sliceSource(startMarker, endMarker) {
   const start = appSource.indexOf(startMarker);
-  const end = appSource.indexOf(endMarker);
+  const end = appSource.indexOf(endMarker, start + startMarker.length);
   expect(start).toBeGreaterThan(-1);
   expect(end).toBeGreaterThan(start);
   return appSource.slice(start, end);
 }
 
-const escHtmlStub = (value) =>
-  String(value ?? "").replace(
-    /[&<>"']/g,
-    (char) =>
-      ({
-        "&": "&amp;",
-        "<": "&lt;",
-        ">": "&gt;",
-        '"': "&quot;",
-        "'": "&#39;",
-      })[char],
-  );
-
-/** Evaluates the write-lock block plus the governed render helpers together. */
-function loadWriteGuards({ convexReadActive = false, catalogSource, authStatus = "signed-in" } = {}) {
-  const context = createContext({
-    escHtml: escHtmlStub,
-    toast: () => {},
-    window: {
-      ConvexDirectory: { enabled: true },
-      DirectoryAuth: {
-        getState: () => ({ status: authStatus, detail: "Auth fixture" }),
-      },
-    },
-  });
-  runInContext(
-    sliceSource("// ── WRITE LOCK", "// ── END WRITE LOCK"),
-    context,
-  );
-  runInContext(
-    sliceSource("function isGovernedPilot", "function renderGovernedIdentity"),
-    context,
-  );
-  if (catalogSource) context.setCatalogSource(catalogSource);
-  else context.setConvexReadActive(convexReadActive);
-  return context;
-}
-
-function loadGovernedWriteHelpers() {
-  return loadWriteGuards();
-}
-
-describe("Phase 4 Convex directory pilot", () => {
-  test("a successful query merges complete Convex rows and retains only unmatched local fixtures", async () => {
+describe("Phase 5 Convex-only directory", () => {
+  test("the read model is built only from Convex rows", async () => {
     const query = vi.fn().mockResolvedValue(governedRows);
     const client = createConvexDirectoryClient({
-      url: "https://pilot.example.convex.cloud",
+      url: "https://directory.example.convex.cloud",
       clientFactory: () => ({ query }),
     });
-    const result = await client.read(localAgents);
-
+    const result = await client.read([{ id: "A1", name: "must be ignored" }]);
     expect(result.succeeded).toBe(true);
-    expect(query).toHaveBeenCalledOnce();
-    for (let index = 0; index < 6; index += 1) {
-      expect(result.agents[index]).toBe(localAgents[index]);
-      expect(result.agents[index].governedInConvex).toBeUndefined();
-    }
-    expect(result.agents[6]).toMatchObject({
-      id: "A7",
+    expect(result.agents.map((agent) => agent.id)).toEqual(["A7", "A8"]);
+    expect(result.agents[0]).toMatchObject({
       name: "Biocraft single-shot draft",
-      version: "biocraft-singleshot-v4",
-      runner: "native",
-      invocation: { type: "runtime" },
-      usabilityModes: ["hosted-run", "download-install"],
-      description: "Governed A7 description",
       objective: "Governed A7 objective",
-      when: "Use A7 from governed material",
-      sop: "1. Use the governed SOP",
-      outputs: ["Governed A7 output"],
+      version: "biocraft-singleshot-v5",
       governedInConvex: true,
       convexGovernance: {
-        artifact: {
-          digest: "a".repeat(64),
-          algorithm: "sha256",
-        },
+        isCurrentApproved: true,
+        artifact: { digest: a7Digest, algorithm: "sha256" },
       },
     });
-    expect(result.agents[7]).toMatchObject({
-      id: "A8",
-      runner: "foreign-runtime-handoff",
-      usabilityModes: ["prepared-handoff"],
-      description: "Governed A8 description",
-      objective: "Governed A8 objective",
-      when: "Use A8 from governed material",
-      sop: "1. Use the governed A8 SOP",
-      outputs: ["Governed A8 output"],
-      governedInConvex: true,
-    });
-    expect(appSource.match(/\$\{governedBadge\(a\)\}/g)?.length).toBeGreaterThanOrEqual(
-      2,
-    );
-    expect(appSource).toContain("${renderGovernedIdentity(a)}");
+    for (const agent of result.agents) {
+      expect(agent).not.toHaveProperty("evalHistory");
+      expect(agent).not.toHaveProperty("changelog");
+      expect(agent).not.toHaveProperty("costPerOutcome");
+    }
   });
 
-  test("a failed Convex read returns the untouched local directory without governance labels", async () => {
-    const client = createConvexDirectoryClient({
-      url: "https://pilot.example.convex.cloud",
-      clientFactory: () => ({
-        query: vi.fn().mockRejectedValue(new Error("unavailable")),
-      }),
-    });
-    const result = await client.read(localAgents);
-
-    expect(result).toEqual({ agents: localAgents, succeeded: false });
-    expect(result.agents.some((agent) => agent.governedInConvex)).toBe(false);
-  });
-
-  test("the Convex client receives and clears the Clerk token without changing public reads", () => {
-    const setAuth = vi.fn();
-    const clearAuth = vi.fn();
-    const client = createConvexDirectoryClient({
-      url: "https://pilot.example.convex.cloud",
-      clientFactory: () => ({ query: vi.fn(), setAuth, clearAuth }),
-    });
-    client.setAuthToken("signed-clerk-jwt");
-    client.setAuthToken(null);
-    expect(setAuth).toHaveBeenCalledWith("signed-clerk-jwt");
-    expect(clearAuth).toHaveBeenCalledOnce();
-  });
-
-  test("A8's Git commit remains a source pin and is never mapped as an artifact digest", () => {
-    const overlaid = overlayGovernedPilotAgents(localAgents, governedRows);
-    const a8 = overlaid.find((agent) => agent.id === "A8");
-
+  test("A8's commit is a source pin, never an artifact digest", () => {
+    const a8 = mapGovernedDirectoryRows(governedRows).find((agent) => agent.id === "A8");
     expect(a8.convexGovernance.artifact).toBeNull();
     expect(a8.convexGovernance.sourcePin).toEqual({
       kind: "git-commit",
       repoUrl: "https://github.com/aiden150/ux-qa-agent",
-      commitSha: "2a8f2b9562c4d4569c156e2ae7559ab04a54b883",
+      commitSha: a8Commit,
       isContentDigest: false,
     });
-    expect(appSource).toContain("Git commit source pin:");
+  });
+
+  test("failed and unconfigured reads return no fallback catalogue", async () => {
+    const failed = createConvexDirectoryClient({
+      url: "https://directory.example.convex.cloud",
+      clientFactory: () => ({ query: vi.fn().mockRejectedValue(new Error("down")) }),
+    });
+    await expect(failed.read([{ id: "A1" }])).resolves.toEqual({ agents: [], succeeded: false });
+    await expect(createConvexDirectoryClient({ url: "" }).read([{ id: "A1" }])).resolves.toEqual({
+      agents: [],
+      succeeded: false,
+    });
+    expect(appSource).toContain("Directory unavailable");
+    expect(appSource).toContain("retryGovernedDirectory()");
+    expect(appSource).not.toContain("reset demo data");
+  });
+
+  test("the catalogue has no browser persistence, hydration, or id allocator", () => {
+    for (const forbidden of [
+      "function persist(",
+      "function hydrate(",
+      "nextAgentNum",
+      "nextReqNum",
+      "reservedAgentIds",
+      "mintAgentId",
+      "refreshReservedAgentIds",
+      "function resetData(",
+    ]) {
+      expect(appSource).not.toContain(forbidden);
+    }
+    expect(appSource).not.toMatch(/localStorage\.(setItem|removeItem)\(/);
+    expect(appSource).toContain("LEGACY_STORE_KEY");
+    expect(appSource).toContain("readBrowserMigrationSnapshot(localStorage,LEGACY_STORE_KEY)");
+  });
+
+  test("register, edit, create-request and update-request use authenticated Convex mutations", () => {
+    expect(clientSource).toContain("agents:registerAgent");
+    expect(clientSource).toContain("agents:updateAgent");
+    expect(clientSource).toContain("requests:createRequest");
+    expect(clientSource).toContain("requests:updateRequest");
+    expect(clientSource).toContain("requests:listRequests");
+    for (const marker of [
+      "async function saveNewAgent(){",
+      "async function saveEditAgent(id){",
+      "async function saveNewRequest(){",
+      "async function saveTriage(id){",
+    ]) {
+      const start = appSource.indexOf(marker);
+      expect(start).toBeGreaterThan(-1);
+      expect(appSource.slice(start, start + 900)).toContain("ConvexDirectory");
+    }
+  });
+
+  test("eval and approval remain locked, request conversion is visibly deferred", () => {
+    expect(sliceSource("function saveEval(id){", "async function saveTriage")).toContain(
+      "toast(EVAL_LOCK_REASON)",
+    );
+    expect(sliceSource("async function approveImprovement", "async function rejectImprovement")).toContain(
+      "toast(APPROVAL_LOCK_REASON)",
+    );
     expect(appSource).toContain(
-      "Source pin only — not an artifact-content digest.",
+      "Request-to-agent conversion is deferred. Register the agent separately; linking a request to a released agent needs its own governed workflow.",
     );
   });
 
-  test("deployment-config.js is ignored and must not be a tracked source file", () => {
-    const gitignore = readFileSync(
-      new URL("../.gitignore", import.meta.url),
-      "utf8",
+  test("proposal and reject have no browser-local stand-in", () => {
+    const propose = sliceSource("async function proposeImprovement", "async function approveImprovement");
+    const reject = sliceSource("async function rejectImprovement", "async function reopenVerifierRejectedImprovement");
+    expect(propose).toContain("DirectoryAPI.runImprovement");
+    expect(propose).toContain("setRailwayProposals");
+    expect(reject).toContain("DirectoryAPI.reject");
+    expect(reject).toContain("setRailwayProposals");
+    expect(`${propose}\n${reject}`).not.toMatch(/\bpersist\s*\(|proposedImprovements\s*=|agents\.push/);
+    expect(reject).toContain("Reject unavailable");
+  });
+
+  test("Railway affordances require the governed artifact or source pin", () => {
+    const context = createContext({
+      hasUsabilityMode: (agent, mode) => agent.usabilityModes.includes(mode),
+      canInstall: (agent) => agent.usabilityModes.includes("download-install"),
+      canHandoff: (agent) => agent.usabilityModes.includes("prepared-handoff"),
+    });
+    runInContext(
+      sliceSource("const GOVERNED_RUNTIME_MISMATCH", "async function loadRunCapability"),
+      context,
     );
+    const [a7, a8] = mapGovernedDirectoryRows(governedRows);
+    const a7Capability = {
+      installArtifact: {
+        available: true,
+        artifactVersion: "biocraft-singleshot-v5",
+        artifactDigest: a7Digest,
+        artifactDigestAlgorithm: "sha256",
+      },
+    };
+    expect(context.capabilityIdentityMatches(a7, a7Capability)).toBe(true);
+    expect(
+      context.capabilityIdentityMatches(a7, {
+        installArtifact: { ...a7Capability.installArtifact, artifactDigest: "b".repeat(64) },
+      }),
+    ).toBe(false);
+    expect(
+      context.capabilityIdentityMatches(a8, {
+        handoff: {
+          available: true,
+          repoUrl: "https://github.com/aiden150/ux-qa-agent",
+          commitSha: a8Commit,
+        },
+      }),
+    ).toBe(true);
+    expect(appSource).toContain(
+      "Runtime version does not match the governed version. Deployment or approval is incomplete.",
+    );
+  });
+
+  test("required live affordances remain present", () => {
+    for (const marker of [
+      "DirectoryAPI.runAgent",
+      "DirectoryAPI.downloadInstallArtifact",
+      "DirectoryAPI.handoffBriefing",
+      "DirectoryAPI.runImprovement",
+      "DirectoryAPI.runLoop",
+      "ConvexDirectory.registerAgent",
+      "ConvexDirectory.updateAgent",
+      "ConvexDirectory.createRequest",
+    ]) {
+      expect(appSource).toContain(marker);
+    }
+  });
+
+  test("deployment config is generated and never committed", () => {
+    const gitignore = readFileSync(new URL("../.gitignore", import.meta.url), "utf8");
     expect(gitignore).toMatch(/^deployment-config\.js$/m);
     expect(appSource).not.toMatch(/https:\/\/[^\s"']+\.convex\.cloud/);
-    expect(clientSource).not.toMatch(/https:\/\/[^\s"']+\.convex\.cloud/);
-  });
-
-  test("governed A7/A8 permit Convex edits while manual evals stay locked and proposals stay live", () => {
-    const helpers = loadWriteGuards({ catalogSource: "convex" });
-    const overlaid = overlayGovernedPilotAgents(localAgents, governedRows);
-    for (const id of ["A7", "A8"]) {
-      const agent = overlaid.find((row) => row.id === id);
-      expect(helpers.isGovernedPilot(agent)).toBe(true);
-      expect(helpers.renderDetailEditControl(agent)).toContain("onclick");
-      expect(helpers.renderEvalTitleActions(agent)).toContain(
-        `onclick="proposeImprovement('${id}')"`,
-      );
-      expect(helpers.renderEvalTitleActions(agent)).toContain("Log eval");
-      expect(helpers.renderEvalTitleActions(agent)).toContain("disabled");
-      expect(helpers.renderEvalTitleActions(agent)).toContain(
-        "ungoverned score would affect fleet health",
-      );
-      expect(helpers.renderGovernedPilotNotice(agent)).toContain(
-        "runs, feedback and reversible proposals continue in the loop service",
-      );
-      expect(helpers.renderEmptyEval(agent)).not.toContain("Log the first evaluation");
-      expect(helpers.renderEmptyEval(agent)).not.toContain("openModal('eval'");
-    }
-  });
-
-  test("signed-out catalog controls visibly request sign-in instead of silently appearing read-only", () => {
-    const helpers = loadWriteGuards({ catalogSource: "local", authStatus: "signed-out" });
-    expect(helpers.writeActionButton("Add agent", "openModal('addAgent')", "btn-primary")).toContain(
-      "Sign in to register, edit, or request",
-    );
-    expect(helpers.renderDetailEditControl({ id: "A7" })).toContain(
-      "Sign in to register, edit, or request",
-    );
-  });
-
-  test("hydration/boot never writes localStorage before the Convex outcome", () => {
-    const hydrateBody = sliceSource("function hydrate()", "function agentIdNumber");
-    // Comment may mention persist; executable lines must not invoke it or touch storage.
-    const hydrateCode = hydrateBody
-      .split("\n")
-      .filter((line) => !/^\s*\/\//.test(line))
-      .join("\n");
-    expect(hydrateCode).not.toMatch(/\bpersist\s*\(/);
-    expect(hydrateCode).not.toMatch(/localStorage\.(setItem|removeItem)\s*\(/);
-    // Existing local A7/A8 records are left alone — seed only fills a missing card.
-    expect(hydrateBody).toMatch(/if\(!agents\.some\(a=>a\.id==="A7"\)\)/);
-    expect(hydrateBody).toMatch(/if\(!agents\.some\(a=>a\.id==="A8"\)\)/);
-    expect(hydrateBody).not.toMatch(/fields\.some\(key=>JSON\.stringify\(prior/);
-
-    // Boot starts pending-locked so persist cannot fire until resolution.
-    const pending = loadWriteGuards({ catalogSource: "pending" });
-    expect(pending.writesLocked()).toBe(true);
-    expect(pending.catalogPending()).toBe(true);
-    expect(pending.renderWriteLockBanner()).toContain(
-      "Waiting for the Convex catalog read",
-    );
-    expect(pending.writeActionButton("+ Add agent", "openModal('addAgent')")).toContain(
-      "disabled",
-    );
-    expect(pending.writeActionButton("+ Add agent", "openModal('addAgent')")).not.toContain(
-      "onclick",
-    );
-
-    // Unconfigured / failed Convex unlocks only after that outcome is recorded.
-    const pilot = sliceSource(
-      "async function loadGovernedDirectoryPilot()",
-      "let reservedAgentIds",
-    );
-    expect(pilot).toMatch(
-      /if\(!\(window\.ConvexDirectory&&ConvexDirectory\.enabled\)\)\{[\s\S]*?setCatalogSource\("local"\)/,
-    );
-    expect(pilot).toMatch(/setCatalogSource\(succeeded\?"convex":"local"\)/);
-    expect(pilot).toMatch(/catch\(_error\)\{[\s\S]*?setCatalogSource\("local"\)/);
-
-    const unlocked = loadWriteGuards({ catalogSource: "local" });
-    expect(unlocked.writesLocked()).toBe(false);
-    expect(unlocked.renderWriteLockBanner()).toBe("");
-  });
-
-  test("local fixtures are visibly read-only rather than silently writing browser state", () => {
-    const helpers = loadGovernedWriteHelpers();
-    expect(helpers.writesLocked()).toBe(false);
-    for (const agent of localAgents.slice(0, 6)) {
-      expect(helpers.isGovernedPilot(agent)).toBe(false);
-      expect(helpers.renderDetailEditControl(agent)).toContain("disabled");
-      expect(helpers.renderDetailEditControl(agent)).toContain("local fixture is read-only");
-      expect(helpers.renderEvalTitleActions(agent)).toContain("proposeImprovement(");
-      expect(helpers.renderEvalTitleActions(agent)).not.toContain("openModal('eval'");
-      expect(helpers.renderGovernedPilotNotice(agent)).toBe("");
-      expect(helpers.renderEmptyEval(agent)).not.toContain("Log the first evaluation");
-      expect(helpers.writeActionButton("+ Add agent", "openModal('addAgent')")).toContain("disabled");
-    }
-    expect(helpers.renderWriteLockBanner()).toBe("");
-  });
-
-  test("an active Convex read exposes Convex-backed registration while local fixtures remain read-only", () => {
-    const helpers = loadWriteGuards({ convexReadActive: true });
-    expect(helpers.writesLocked()).toBe(true);
-    expect(helpers.convexReadActive()).toBe(true);
-    expect(helpers.renderWriteLockBanner()).toContain(
-      "Catalog is read-only while Convex is the source.",
-    );
-
-    for (const label of ["+ Add agent", "Request an Agent", "+ New request"]) {
-      const button = helpers.writeActionButton(label, "openModal('addAgent')");
-      expect(button).toContain("onclick");
-    }
-
-    // A1-A6 are ordinary local records, but the view is Convex-rendered, so a
-    // saved edit here would diverge from what another browser shows.
-    for (const agent of localAgents.slice(0, 6)) {
-      expect(helpers.isGovernedPilot(agent)).toBe(false);
-      expect(helpers.isReadOnlyRecord(agent)).toBe(true);
-      expect(helpers.renderDetailEditControl(agent)).not.toContain("onclick");
-      expect(helpers.renderEvalTitleActions(agent)).toContain("proposeImprovement(");
-      expect(helpers.renderEvalTitleActions(agent)).not.toContain("openModal('eval'");
-      expect(helpers.renderEmptyEval(agent)).not.toContain("openModal('eval'");
-      expect(helpers.renderGovernedPilotNotice(agent)).toContain("Convex is the catalog source");
-    }
-  });
-
-  test("Run automations stays live under b′ and does not bump a catalog version", () => {
-    // Under the catalog lock the button remains a real control — not a title-
-    // only disabled state. runCycle writes Railway proposals/queue/learnings
-    // only; auto-apply is dead so no version bump.
-    const autoBody = sliceSource(
-      "async function loadAutomations()",
-      "// ── Using an agent across platforms",
-    );
-    expect(autoBody).toMatch(
-      /<button class="btn btn-sm btn-primary" onclick="runLoopNow\(this\)">Run automations now<\/button>/,
-    );
-    expect(autoBody).toContain("AUTOMATION_LIVE_NOTE");
-    const runLoopBody = sliceSource(
-      "async function runLoopNow(btn){",
-      "// ── Using an agent across platforms",
-    );
-    expect(runLoopBody).toMatch(/Allowed under the catalog lock \(b′\)/);
-    expect(runLoopBody).not.toMatch(/if\(writesLocked\(\)\)return refuseLockedWrite\(\)/);
-    const runLoopCode = runLoopBody
-      .split("\n")
-      .filter((line) => !/^\s*\/\//.test(line))
-      .join("\n");
-    expect(runLoopCode).not.toMatch(/approveImprovement|DirectoryAPI\.approve/);
-    expect(appSource).toContain(
-      "A separately configured Railway scheduler sits outside this UI lock",
-    );
-  });
-
-  test("new Convex form paths never call local persistence", () => {
-    // persist() is the only writer of the catalogue blob, and resetData() is the
-    // only remover. Both must refuse while the view renders Convex.
-    const persistBody = sliceSource("function persist()", "function hydrate()");
-    expect(persistBody).toMatch(/if\(writesLocked\(\)\)return false/);
-
-    const localWriteEntryPoints = [
-      "function saveEval(id){",
-      "function saveTriage(id){",
-      "function shipRequestAsAgent(id){",
-      "async function approveImprovement(id,proposalId){",
-    ];
-    for (const entry of localWriteEntryPoints) {
-      const index = appSource.indexOf(entry);
-      expect(index, `${entry} not found`).toBeGreaterThan(-1);
-      expect(
-        appSource.slice(index, index + 420),
-        `${entry} is missing a write-lock guard`,
-      ).toMatch(/if\(writesLocked\(\)\)return refuseLockedWrite\(\)/);
-    }
-
-    for (const entry of ["async function saveNewAgent(){", "async function saveEditAgent(id){", "async function saveNewRequest(){"]) {
-      const start = appSource.indexOf(entry);
-      const next = appSource.slice(start, appSource.indexOf("\nfunction ", start + entry.length));
-      expect(next, `${entry} not found`).toContain("ConvexDirectory");
-      expect(next).not.toMatch(/\bpersist\s*\(/);
-      expect(next).not.toMatch(/\bagents\.push\s*\(/);
-      expect(next).not.toMatch(/\brequests\.push\s*\(/);
-    }
-
-    expect(appSource).toMatch(
-      /function resetData\(\)\{\s*if\(writesLocked\(\)\)return refuseLockedWrite\(\)/,
-    );
-    // Exactly two direct localStorage mutations remain: persist and resetData.
-    expect(appSource.match(/localStorage\.(setItem|removeItem)\(/g)).toHaveLength(2);
-  });
-
-  test("proposal and reject use the Railway overlay without localStorage writes under the lock", () => {
-    const proposeBody = sliceSource(
-      "async function proposeImprovement(id){",
-      "async function approveImprovement(id,proposalId){",
-    );
-    expect(proposeBody).not.toMatch(
-      /if\(writesLocked\(\)\)return refuseLockedWrite\(\)/,
-    );
-    expect(proposeBody).toMatch(
-      /if\(writesLocked\(\)&&setRailwayProposals\(id,proposals\)\)/,
-    );
-
-    const rejectBody = sliceSource(
-      "async function rejectImprovement(id,proposalId){",
-      "// ── RENDER",
-    );
-    expect(rejectBody).not.toMatch(
-      /if\(writesLocked\(\)\)return refuseLockedWrite\(\)/,
-    );
-    expect(rejectBody).toMatch(
-      /if\(writesLocked\(\)&&setRailwayProposals\(id,remaining\)\)/,
-    );
-    expect(appSource).toContain(
-      "Loop-service proposal · Railway file store · pilot-only.",
-    );
-    expect(appSource).toContain(
-      "This reversible proposal is read from Railway evidence and is not governed Convex catalog state.",
-    );
-    expect(appSource).toMatch(/const prop=pendingProposalsOf\(a\)/);
-    // Each defect is decided on its own, so a rejection under the lock replaces
-    // the overlay with the survivors rather than clearing the whole set.
-    expect(rejectBody).toMatch(
-      /const remaining=proposalsOf\(displayed\)\.filter\(p=>p!==target\)/,
-    );
-  });
-
-  test("approval remains locked and visibly explains the Railway catalog bump", () => {
-    const approveBody = sliceSource(
-      "async function approveImprovement(id,proposalId){",
-      "async function rejectImprovement(id,proposalId){",
-    );
-    expect(approveBody).toMatch(
-      /if\(writesLocked\(\)\)return refuseLockedWrite\(\)/,
-    );
-    expect(appSource).toContain(
-      "Approval stays locked during the pilot because it bumps the Railway catalog version",
-    );
-    expect(appSource).toContain(
-      "const approveLabel=`Record approval → catalog v${bumpVersion(a.version)}`",
-    );
-    expect(appSource).toContain(
-      "lockedControl(approveLabel,APPROVAL_LOCK_REASON,",
-    );
-  });
-
-  test("the agent page distinguishes maker refusal from a retained verifier rejection", () => {
-    expect(appSource).toContain("Maker produced no proposal.");
-    expect(appSource).toContain("AUTO-REJECTED BY VERIFIER");
-    expect(appSource).toContain("Re-open for human review");
-    expect(appSource).toContain("reopenVerifierRejectedImprovement");
-    expect(appSource).toContain("Verifier-rejected proposals are retained below.");
-  });
-
-  test("the browser directory uses only the three allowlisted Convex mutations", () => {
-    expect(clientSource).toMatch(
-      /makeFunctionReference\(\s*["']agents:listGovernedDirectoryPilot["']/,
-    );
-    expect(clientSource).toMatch(/client\.query\(\s*governedDirectoryQuery/);
-    expect(clientSource).toMatch(/agents:registerAgent/);
-    expect(clientSource).toMatch(/agents:updateAgent/);
-    expect(clientSource).toMatch(/requests:createRequest/);
-    expect(clientSource).not.toMatch(/api\.imports/);
-    expect(appSource).not.toMatch(/client\s*\.\s*mutation\s*\(/);
-    expect(appSource).not.toMatch(/ConvexHttpClient/);
   });
 });

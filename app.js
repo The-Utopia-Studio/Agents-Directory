@@ -167,22 +167,19 @@ const SEED_REQUESTS=[
   {id:"R5",title:"Meeting Notes Agent",desc:"Summarize Granola meeting notes into structured action items and follow-ups.",requestedBy:"Mo",date:"Jul 8, 2026",priority:"Nice to have",status:"Declined",assignee:"",notes:"Granola already handles this well. Revisit if quality drops.",shippedAgentId:null}
 ];
 
-// ── STATE (hydrated from localStorage) ──
-let agents=[],requests=[],nextAgentNum=1,nextReqNum=1;
-const STORE_KEY="utopia_agents_dir_v2";
+// ── STATE (Convex is the only catalogue source) ──
+let agents=[],requests=[];
+let requestReadState="signed-out";
+// Kept only so the read-only migration export can inspect an old browser blob.
+// No catalogue field is rendered from it and no code writes it.
+const LEGACY_STORE_KEY="utopia_agents_dir_v2";
 let migrationReview=null;
-// Phase 4 is a display-only overlay. The legacy `agents` array remains the
-// local write target; governed reads must never be persisted back into it.
+// The map is an index over the complete Convex view model. It never contains
+// browser-local records and is never persisted.
 let governedPilotById=new Map();
 
 function displayedAgents(){
-  // Convex-only registrations have no browser record. Keep unmatched local
-  // fixtures for the short hybrid window, but render every governed row as a
-  // complete record rather than attempting an overlay.
-  return [
-    ...agents.filter(agent=>!governedPilotById.has(agent.id)),
-    ...governedPilotById.values(),
-  ].sort((a,b)=>String(a.id).localeCompare(String(b.id),undefined,{numeric:true}));
+  return [...agents];
 }
 
 // ── WRITE LOCK (Convex-read view) ──
@@ -192,19 +189,18 @@ function displayedAgents(){
 // on Railway's agent row, is read back explicitly from Railway, and cannot be
 // approved here because approval bumps the divergent Railway catalog version.
 //
-// catalogSource starts as "pending" so boot cannot write localStorage before
-// the Convex outcome is known. A Safari-only edit must survive long enough to
-// export; seed refreshes and empty-store seeding stay in memory only.
-//   pending → locked (outcome unknown)
-//   convex  → locked (Convex is the displayed catalog)
-//   local   → unlocked (Convex unavailable, unconfigured, or failed)
+// There is deliberately no `local` state and no fallback catalogue.
+//   pending     → Convex read is in flight
+//   convex      → governed directory is available
+//   unavailable → explicit failure + Retry
 let catalogSource="pending";
-const WRITE_LOCK_REASON="Convex is the catalog source. Local registration, edits and requests are disabled so they cannot diverge per browser.";
-const WRITE_LOCK_PENDING_REASON="Local writes are paused until the Convex catalog read resolves, so a browser-only edit cannot be overwritten on boot.";
+let catalogFailureReason="The governed directory could not be loaded.";
+const WRITE_LOCK_REASON="Convex is the catalog source. Browser catalogue writes and fallbacks have been removed.";
+const WRITE_LOCK_PENDING_REASON="Waiting for the governed Convex directory.";
 const EVAL_LOCK_REASON="Manual eval logging stays locked during the pilot because an ungoverned score would affect fleet health and triage without a governed eval case or evidence link.";
 const APPROVAL_LOCK_REASON="Approval stays locked during the pilot because it bumps the Railway catalog version while Convex is the displayed authority. You may reject this reversible loop-service proposal.";
 const AUTOMATION_LIVE_NOTE="Run automations stays available under the catalog lock: the cycle stamps reversible proposals and Railway queue/learnings/loop-run records only. Auto-apply is dead, so it never bumps a catalog version. A separately configured Railway scheduler sits outside this UI lock.";
-function writesLocked(){return catalogSource!=="local"}
+function writesLocked(){return true}
 function authState(){
   const auth=typeof window!=="undefined"?window.DirectoryAuth:null;
   return auth&&typeof auth.getState==="function"?auth.getState():{status:"unavailable",detail:"Clerk sign-in is unavailable in this browser."};
@@ -221,17 +217,15 @@ function convexReadActive(){return catalogSource==="convex"}
 function catalogPending(){return catalogSource==="pending"}
 function writeLockReason(){return catalogPending()?WRITE_LOCK_PENDING_REASON:WRITE_LOCK_REASON}
 function setCatalogSource(source){
-  if(source!=="pending"&&source!=="convex"&&source!=="local")return;
+  if(source!=="pending"&&source!=="convex"&&source!=="unavailable")return;
   catalogSource=source;
 }
-// Kept for tests and call sites that still speak in the old boolean.
-function setConvexReadActive(active){setCatalogSource(active===true?"convex":"local")}
 function renderWriteLockBanner(){
-  if(!writesLocked())return"";
   if(catalogPending()){
     return `<div class="write-lock-banner"><strong>Waiting for the Convex catalog read.</strong> ${escHtml(WRITE_LOCK_PENDING_REASON)}</div>`;
   }
-  return `<div class="write-lock-banner"><strong>Catalog is read-only while Convex is the source.</strong> ${escHtml(WRITE_LOCK_REASON)} Runs, trace feedback, loop proposals, queue and learnings remain live in the loop service; proposal approval and manual eval logging remain locked. ${escHtml(AUTOMATION_LIVE_NOTE)}</div>`;
+  if(catalogSource==="unavailable")return"";
+  return `<div class="write-lock-banner"><strong>Convex is the catalogue authority.</strong> Signed-in registration, edits and requests write there directly; browser-storage fallbacks are removed. Runs, trace feedback, loop proposals, queue and learnings remain live in the loop service; proposal approval and manual eval logging remain locked. ${escHtml(AUTOMATION_LIVE_NOTE)}</div>`;
 }
 function lockedControl(label,reason,cls){
   const classes=cls||"btn";
@@ -304,6 +298,7 @@ function applyRailwayProposalOverlay(serviceAgents){
       railwayProposalRead:true,
     }];
   }));
+  agents=[...governedPilotById.values()].sort((a,b)=>String(a.id).localeCompare(String(b.id),undefined,{numeric:true}));
   if(state&&state.agent&&governedPilotById.has(state.agent.id)){
     state.agent=governedPilotById.get(state.agent.id);
   }
@@ -329,120 +324,62 @@ function setRailwayProposals(agentId,proposals){
   if(!governed)return false;
   const updated={...governed,proposedImprovements:Array.isArray(proposals)?proposals:[],proposedImprovement:null,railwayProposalRead:true};
   governedPilotById.set(agentId,updated);
+  agents=agents.map(agent=>agent.id===agentId?updated:agent);
   if(state.agent&&state.agent.id===agentId)state.agent=updated;
   return true;
 }
 
 async function loadGovernedDirectoryPilot(){
-  // Unconfigured Convex is a known outcome: unlock the legacy local view. Leaving
-  // catalogSource at "pending" would lock the UI forever with no Convex to resolve.
   if(!(window.ConvexDirectory&&ConvexDirectory.enabled)){
+    agents=[];requests=[];
     governedPilotById=new Map();
-    setCatalogSource("local");
+    catalogFailureReason="The governed directory is not configured on this deployment.";
+    setCatalogSource("unavailable");
     render();
     return false;
   }
   try{
-    const result=await ConvexDirectory.read(agents);
+    const result=await ConvexDirectory.read();
     const succeeded=Boolean(result&&result.succeeded);
-    const overlaid=succeeded&&Array.isArray(result.agents)?result.agents:agents;
+    if(!succeeded||!Array.isArray(result.agents))throw new Error("Convex directory read failed");
+    agents=result.agents.map(agent=>({...agent,proposedImprovements:[],proposedImprovement:null,railwayProposalRead:false}));
     governedPilotById=new Map(
-      overlaid
-        .filter(agent=>agent&&agent.governedInConvex===true)
-        .map(agent=>[agent.id,{...agent,proposedImprovements:[],proposedImprovement:null,railwayProposalRead:false}]),
+      agents.filter(agent=>agent&&agent.governedInConvex===true).map(agent=>[agent.id,agent]),
     );
-    setCatalogSource(succeeded?"convex":"local");
-    if(succeeded)await loadRailwayProposalOverlay({renderAfter:false});
+    setCatalogSource("convex");
+    await loadRailwayProposalOverlay({renderAfter:false});
     render();
-    return succeeded;
+    return true;
   }catch(_error){
-    // Preserve the complete local directory, make no governance claim, and
-    // unlock local writes — nothing here is Convex-rendered.
+    agents=[];requests=[];
     governedPilotById=new Map();
-    setCatalogSource("local");
+    catalogFailureReason="The governed directory could not be loaded.";
+    setCatalogSource("unavailable");
     render();
     return false;
   }
 }
-
-// Agent ids are ONE namespace shared with the loop service. A browser that
-// mints an id the service already owns does not just mislabel a card: evals,
-// proposals and briefings for that id resolve against the server's record, so
-// a local agent would write onto someone else's. This is a temporary collision
-// MITIGATION, not an atomic reservation: GET /api/agents only observes the ids
-// currently known to the service, it does not claim one. When the service is
-// reachable and responds before minting, the browser avoids those ids; a
-// hardcoded ceiling would be the same collision with a delay on it. Convex
-// becomes the sole allocator in Phase 5.
-let reservedAgentIds=[];
-
-// Last line of defence: no code path writes the local store while the catalog
-// source is pending or Convex-backed, so a missed affordance cannot silently
-// create a divergent copy or overwrite a browser-only edit before export.
-function persist(){
-  if(writesLocked())return false;
-  try{localStorage.setItem(STORE_KEY,JSON.stringify({agents,requests,nextAgentNum,nextReqNum,reservedAgentIds}))}catch(e){}
-  return true;
-}
-function hydrate(){
-  // Read-only boot. Never call persist() here: a Safari-only edit must survive
-  // until the Convex outcome is known and the operator can export. Missing A7/A8
-  // cards may appear from seed in memory only; existing local records are left
-  // untouched — no seed "refresh" that would later write over them.
-  try{const s=JSON.parse(localStorage.getItem(STORE_KEY));
-    if(s&&Array.isArray(s.agents)){
-      agents=s.agents;requests=s.requests;nextAgentNum=s.nextAgentNum;nextReqNum=s.nextReqNum;
-      reservedAgentIds=Array.isArray(s.reservedAgentIds)?s.reservedAgentIds:[];
-      if(!agents.some(a=>a.id==="A7")){
-        const seededA7=SEED_AGENTS.find(a=>a.id==="A7");
-        if(seededA7)agents.push(JSON.parse(JSON.stringify(seededA7)));
-      }
-      if(!agents.some(a=>a.id==="A8")){
-        const seededA8=SEED_AGENTS.find(a=>a.id==="A8");
-        if(seededA8)agents.push(JSON.parse(JSON.stringify(seededA8)));
-      }
-      nextAgentNum=Number(nextAgentNum)||1;
-      return;
-    }
-  }catch(e){}
-  agents=JSON.parse(JSON.stringify(SEED_AGENTS));
-  requests=JSON.parse(JSON.stringify(SEED_REQUESTS));
-  nextAgentNum=agents.length+1;nextReqNum=requests.length+1;
-}
-function agentIdNumber(id){const m=/^A(\d+)$/.exec(String(id||""));return m?Number(m[1]):0}
-function highestAgentNumber(ids){return ids.reduce((max,id)=>Math.max(max,agentIdNumber(id)),0)}
-// Mint above every id observed as taken, local or service-known. The floor is
-// derived each time rather than stored, so a stale counter cannot reissue one.
-// Ids stay in the A<n> namespace Convex's nextDisplayId matches, so nothing
-// needs renaming when the catalog moves there (TUS-2327).
-function mintAgentId(){
-  const taken=new Set([...agents.map(a=>a.id),...reservedAgentIds]); // ids observed as taken; not a reservation
-  let n=Math.max(Number(nextAgentNum)||1,highestAgentNumber([...taken])+1);
-  while(taken.has("A"+n))n++;
-  nextAgentNum=n+1;
-  return "A"+n;
-}
-async function refreshReservedAgentIds(){
-  if(!(window.DirectoryAPI&&DirectoryAPI.enabled))return false;
+async function loadConvexRequests(){
+  if(!authCanWrite()){
+    requests=[];requestReadState="signed-out";return false;
+  }
+  if(!(window.ConvexDirectory&&ConvexDirectory.enabled)){
+    requests=[];requestReadState="unavailable";return false;
+  }
+  requestReadState="loading";
   try{
-    const r=await DirectoryAPI.listAgents();
-    reservedAgentIds=((r&&r.agents)||[]).map(a=>a&&a.id).filter(Boolean);
-    // persist() is a no-op while writes are locked; minting is disabled then too.
-    persist();
+    requests=await ConvexDirectory.listRequests();
+    requestReadState="ready";
     return true;
-  }catch(e){return false}
+  }catch(_error){
+    requests=[];requestReadState="unavailable";
+    return false;
+  }
 }
-function resetData(){
-  if(writesLocked())return refuseLockedWrite();
-  if(!confirm("Reset the directory to seed data? Local changes will be lost."))return;
-  localStorage.removeItem(STORE_KEY);
-  governedPilotById=new Map();
+function retryGovernedDirectory(){
   setCatalogSource("pending");
-  hydrate();
-  state.view="list";
   render();
-  loadGovernedDirectoryPilot();
-  toast("Reset to seed data");
+  void loadGovernedDirectoryPilot();
 }
 
 const CATEGORIES=["Personal Branding","Marketing & Content","Design & Product","Research & Analysis","Operations & Workflow","Investment & DD","Other"];
@@ -483,19 +420,7 @@ function parseLines(s){return s?s.split("\n").map(x=>x.replace(/^\s*[-•\d.]+\s
 // eval helpers (history is the source of truth)
 function latestEval(a){return a.evalHistory&&a.evalHistory.length?a.evalHistory[a.evalHistory.length-1]:null}
 function agentEvalStatus(a){const e=latestEval(a);return e?e.status:"Not evaluated"}
-function daysSince(d){if(!d)return Infinity;const dt=new Date(d);if(isNaN(dt))return Infinity;return Math.floor((Date.now()-dt.getTime())/86400000)}
 function bumpVersion(v){const m=String(v||"0.0").match(/^(\d+)\.(\d+)/);if(!m)return"1.0";return m[1]+"."+(parseInt(m[2],10)+1)}
-
-// fleet health — powers the top-of-list health strip (a success-criteria metric)
-function fleetHealth(){
-  const evaluated=agents.filter(a=>latestEval(a));
-  const scores=evaluated.map(a=>latestEval(a).score).filter(n=>typeof n==="number");
-  const avg=scores.length?Math.round(scores.reduce((x,y)=>x+y,0)/scores.length):0;
-  const coverage=agents.length?Math.round(evaluated.length/agents.length*100):0;
-  const needsReview=agents.filter(a=>{const e=latestEval(a);if(!e)return true;return e.status==="Needs improvement"||e.score<70||daysSince(e.date)>30}).length;
-  const proposals=agents.reduce((n,a)=>n+pendingProposalsOf(a).length,0);
-  return{avg,coverage,needsReview,proposals,evaluated:evaluated.length,total:agents.length};
-}
 
 // ── MODAL FORMS ──
 function agentFormHtml(agent){
@@ -635,7 +560,7 @@ function triageFormHtml(req){
   </div>
   <div class="modal-footer">
     <button class="btn" onclick="closeModal()">Cancel</button>
-    ${req.shippedAgentId?"":`<button class="btn" onclick="shipRequestAsAgent('${req.id}')">Ship as agent &rarr;</button>`}
+    ${lockedControl("Ship as agent","Request-to-agent conversion is deferred. Register the agent separately; linking a request to a released agent needs its own governed workflow.","btn")}
     <button class="btn btn-primary" onclick="saveTriage('${req.id}')">Save changes</button>
   </div>`;
 }
@@ -644,7 +569,7 @@ function triageFormHtml(req){
 function openModal(type,data){
   // Only register, edit and request have a Convex mutation in this hybrid
   // phase. No form is allowed to silently fall back to localStorage.
-  if(["addAgent","editAgent","request"].includes(type)){
+  if(["addAgent","editAgent","request","triage"].includes(type)){
     if(!authCanWrite()||!convexWritesAvailable())return refuseLockedWrite();
     if(type==="editAgent"&&!data?.governedInConvex){
       toast("This local fixture is read-only until it is registered in Convex.");return;
@@ -792,42 +717,31 @@ async function saveNewRequest(){
   if(!title||!desc||!name){toast("Fill in all required fields");return}
   try{
     const requestId=await ConvexDirectory.createRequest({title,desc,requestedBy:name,priority:document.getElementById("r-priority").value});
-    closeModal();toast(`Request recorded in Convex: ${requestId}`);render();
+    closeModal();await loadConvexRequests();toast(`Request recorded in Convex: ${requestId}`);render();
   }catch(error){toast(`Request was not submitted: ${error&&error.message?error.message:"Convex rejected the request"}`)}
 }
 
 function saveEval(id){
-  if(writesLocked())return refuseLockedWrite();
-  if(!authCanWrite())return refuseLockedWrite();
-  const a=agents.find(x=>x.id===id);if(!a)return;
-  const notes=document.getElementById("e-notes").value.trim();
-  if(!notes){toast("Add eval notes");return}
-  let score=parseInt(document.getElementById("e-score").value,10);if(isNaN(score))score=null;else score=Math.max(0,Math.min(100,score));
-  const entry={date:document.getElementById("e-date")?document.getElementById("e-date").value:new Date().toISOString().split("T")[0],status:document.getElementById("e-status").value,score,notes,knownIssues:document.getElementById("e-issues").value.trim(),by:document.getElementById("e-by").value.trim(),traceUrl:document.getElementById("e-trace").value.trim()};
-  if(!entry.date)entry.date=new Date().toISOString().split("T")[0];
-  a.evalHistory.push(entry);
-  if(window.DirectoryAPI&&DirectoryAPI.enabled){DirectoryAPI.logEval(id,entry).catch(()=>{})}
-  persist();closeModal();toast("Evaluation logged");state.agent=a;render();
+  toast(EVAL_LOCK_REASON);
 }
 
-function saveTriage(id){
-  if(writesLocked())return refuseLockedWrite();
-  if(!authCanWrite())return refuseLockedWrite();
+async function saveTriage(id){
+  if(!authCanWrite()||!convexWritesAvailable())return refuseLockedWrite();
   const r=requests.find(x=>x.id===id);if(!r)return;
-  r.status=document.getElementById("t-status").value;
-  r.priority=document.getElementById("t-priority").value;
-  r.assignee=document.getElementById("t-assignee").value.trim();
-  r.notes=document.getElementById("t-notes").value.trim();
-  persist();closeModal();toast("Request updated: "+r.title);render();
+  try{
+    await ConvexDirectory.updateRequest({
+      id:r.convexId,
+      status:document.getElementById("t-status").value,
+      priority:document.getElementById("t-priority").value,
+      assignee:document.getElementById("t-assignee").value.trim(),
+      notes:document.getElementById("t-notes").value.trim(),
+    });
+    closeModal();await loadConvexRequests();toast("Request updated: "+r.title);render();
+  }catch(error){toast(`Request was not updated: ${error&&error.message?error.message:"Convex rejected the request"}`)}
 }
 
-// Requests → Agents: open a prefilled Add Agent form, mark request Shipped on save
 function shipRequestAsAgent(id){
-  if(writesLocked())return refuseLockedWrite();
-  if(!authCanWrite())return refuseLockedWrite();
-  const r=requests.find(x=>x.id===id);if(!r)return;
-  state.pendingRequestId=id;
-  openModal("addAgent",{name:r.title.replace(/ Agent$/,""),tagline:r.desc.slice(0,120),description:r.desc,platform:"Claude",status:"Experimental",category:"",owner:r.assignee||"",model:"",version:"1.0",objective:"",successCriteria:[],guardrails:[],when:"",sop:"",inputs:[],outputs:[],skills:[],tools:[],context:[],accessUrl:"",repoUrl:""});
+  toast("Request-to-agent conversion is deferred. Register the agent separately; linking a request to a released agent needs its own governed workflow.");
 }
 
 // ── THE LOOP: propose → human approves/rejects → new version ──
@@ -837,7 +751,7 @@ function shipRequestAsAgent(id){
 // backed by a template the front-end wrote about itself. No evidence, or no
 // service, means no proposal.
 async function proposeImprovement(id){
-  const a=agents.find(x=>x.id===id);if(!a)return;
+  const a=governedPilotById.get(id);if(!a){toast("Cannot propose: the governed agent record is unavailable.");return}
   if(!(window.DirectoryAPI&&DirectoryAPI.enabled)){
     toast("Cannot propose offline — the optimizer reads real traces and feedback, which only the loop service can see");
     return;
@@ -847,13 +761,12 @@ async function proposeImprovement(id){
     const proposals=(Array.isArray(result)?result:[result]).filter(Boolean).map(p=>({...p}));
     if(!proposals.length){toast("The optimizer returned no proposal");return}
     const count=proposals.length===1?"1 proposal":`${proposals.length} proposals`;
-    if(writesLocked()&&setRailwayProposals(id,proposals)){
+    if(setRailwayProposals(id,proposals)){
       render();
       toast(`${count} created from Railway evidence, one per defect. Catalog approval remains locked during the Convex pilot.`);
       return;
     }
-    a.proposedImprovements=proposals;a.proposedImprovement=null;
-    persist();state.agent=a;render();toast(`${count} by ${proposals[0].source} — each awaiting its own review`);
+    toast("Proposal was created by Railway but could not be attached to the governed directory view. Reload before trying again.");
   }catch(e){
     // Refusals are the expected result with no evidence; show the reason
     // verbatim so it names what is missing.
@@ -864,41 +777,21 @@ async function proposeImprovement(id){
 // remaining proposals stay pending rather than being cleared by a decision
 // nobody made about them.
 async function approveImprovement(id,proposalId){
-  if(writesLocked())return refuseLockedWrite();
-  const a=agents.find(x=>x.id===id);if(!a)return;
-  const pending=pendingProposalsOf(a);
-  const target=pending.find(p=>p.id===proposalId)||(pending.length===1?pending[0]:null);
-  if(!target)return;
-  const remaining=proposalsOf(a).filter(p=>p!==target);
-  if(window.DirectoryAPI&&DirectoryAPI.enabled){
-    try{
-      const r=await DirectoryAPI.approve(id,target.id);
-      a.version=r.version;if(r.agent&&r.agent.changelog)a.changelog=r.agent.changelog;
-      a.proposedImprovements=remaining;a.proposedImprovement=null;
-      persist();state.agent=a;render();toast("Review decision recorded · catalog label v"+r.version+" · agent behavior unchanged");return;
-    }catch(e){toast("Approval failed — check connection and retry");return}
-  }
-  const nv=bumpVersion(a.version);
-  a.changelog.push({version:nv,date:new Date().toISOString().split("T")[0],note:"Approved improvement: "+target.summary});
-  a.version=nv;a.proposedImprovements=remaining;a.proposedImprovement=null;
-  persist();state.agent=a;render();toast("Review decision recorded · catalog label v"+nv+" · agent behavior unchanged");
+  toast(APPROVAL_LOCK_REASON);
 }
 async function rejectImprovement(id,proposalId){
-  const a=agents.find(x=>x.id===id);if(!a)return;
-  const displayed=governedPilotById.get(id)||a;
+  const displayed=governedPilotById.get(id);if(!displayed){toast("Cannot reject: the governed agent record is unavailable.");return}
   const pending=pendingProposalsOf(displayed);
   const target=pending.find(p=>p.id===proposalId)||(pending.length===1?pending[0]:null);
   if(!target)return;
-  if(window.DirectoryAPI&&DirectoryAPI.enabled){
-    try{await DirectoryAPI.reject(id,target.id)}
-    catch(e){toast("Reject failed — the loop-service proposal was not changed");return}
-  }
+  if(!(window.DirectoryAPI&&DirectoryAPI.enabled)){toast("Reject unavailable — the Railway loop service cannot be reached.");return}
+  try{await DirectoryAPI.reject(id,target.id)}
+  catch(e){toast(`Reject failed — ${String(e&&e.message||"the loop-service proposal was not changed")}`);return}
   const remaining=proposalsOf(displayed).filter(p=>p!==target);
-  if(writesLocked()&&setRailwayProposals(id,remaining)){
+  if(setRailwayProposals(id,remaining)){
     render();toast("Loop-service proposal rejected and cleared from Railway");return;
   }
-  a.proposedImprovements=remaining;a.proposedImprovement=null;
-  persist();state.agent=a;render();toast("Improvement rejected");
+  toast("Railway rejected the proposal, but the governed view could not refresh. Reload to reconcile it.");
 }
 async function reopenVerifierRejectedImprovement(id,proposalId){
   if(!(window.DirectoryAPI&&DirectoryAPI.enabled)){toast("Cannot reopen — the loop service is unavailable");return}
@@ -909,7 +802,11 @@ async function reopenVerifierRejectedImprovement(id,proposalId){
       const proposals=proposalsOf(displayed).map(p=>p&&p.id===reopened.id?reopened:p);
       setRailwayProposals(id,proposals);
       const updated=governedPilotById.get(id);
-      if(updated)governedPilotById.set(id,{...updated,latestProposalAttempt:{outcome:"reopened-for-human-review",recordedAt:reopened.reopenedForHumanReviewAt,proposalId:reopened.id}});
+      if(updated){
+        const next={...updated,latestProposalAttempt:{outcome:"reopened-for-human-review",recordedAt:reopened.reopenedForHumanReviewAt,proposalId:reopened.id}};
+        governedPilotById.set(id,next);
+        agents=agents.map(agent=>agent.id===id?next:agent);
+      }
       render();toast("Verifier rejection reopened for human review");return;
     }
     toast("Reopened in the loop service — refresh this agent to view it");
@@ -926,13 +823,7 @@ function renderSubTabs(){
 }
 
 function renderHealthStrip(){
-  const h=fleetHealth();
-  return `<div class="health-strip">
-    <div class="health-stat"><span class="health-num">${h.avg}</span><span class="health-label">Fleet health<br>avg eval score</span></div>
-    <div class="health-stat"><span class="health-num">${h.coverage}%</span><span class="health-label">Eval coverage<br>${h.evaluated}/${h.total} evaluated</span></div>
-    <div class="health-stat"><span class="health-num ${h.needsReview?"health-warn":""}">${h.needsReview}</span><span class="health-label">Need review<br>weak · stale · unevaluated</span></div>
-    <div class="health-stat"><span class="health-num ${h.proposals?"health-loop":""}">${h.proposals}</span><span class="health-label">Improvements<br>awaiting approval</span></div>
-  </div>`;
+  return `<div class="health-strip"><div class="health-stat"><span class="health-num">—</span><span class="health-label">No governed evaluation data yet<br>Legacy browser scores are intentionally omitted</span></div></div>`;
 }
 
 function readinessLabel(status){return status==="ready"?"Ready":status==="blocked"?"Blocked":"Needs review"}
@@ -967,7 +858,7 @@ async function prepareMigrationReview(button){
   if(!window.MigrationExport){toast("Migration exporter is still loading — retry in a moment");return}
   if(button){button.disabled=true;button.textContent="Inspecting…"}
   try{
-    const browserSnapshot=MigrationExport.readBrowserMigrationSnapshot(localStorage,STORE_KEY);
+    const browserSnapshot=MigrationExport.readBrowserMigrationSnapshot(localStorage,LEGACY_STORE_KEY);
     let serviceSnapshot=null,serviceIssue="not-attempted";
     if(window.DirectoryAPI){
       if(!DirectoryAPI.enabled)await DirectoryAPI.ready;
@@ -1019,7 +910,7 @@ function renderAgentsList(){
     ${renderMigrationReadiness()}
     ${renderHealthStrip()}
     <div id="automations" class="automations"></div>
-    <p class="count-line">${filtered.length} agent${filtered.length!==1?"s":""} across the team. Click one to see its goals, skills, tools, context, and eval history. ${writesLocked()?`<span class="locked-inline-reason">Reset disabled: ${escHtml(writeLockReason())}</span>`:`<a class="reset-link" onclick="resetData()">reset demo data</a>`}</p>
+    <p class="count-line">${filtered.length} agent${filtered.length!==1?"s":""} across the team. Click one to see its goals, skills, tools and context. Governed evaluation history is not available yet.</p>
     <div class="filters">
       ${cats.map(c=>`<button class="filter-chip ${state.catFilter===c?"active":""}" onclick="setFilter('cat','${escHtml(c)}')">${escHtml(c)}</button>`).join("")}
       <div class="filter-sep"></div>
@@ -1042,8 +933,8 @@ function renderAgentsList(){
 }
 
 function renderRequests(){
-  const requestWritesLocked=!authCanWrite()||writesLocked();
-  const requestReason=catalogActionReason();
+  const requestWritesLocked=!authCanWrite()||!convexWritesAvailable();
+  const requestReason=!authCanWrite()?authWriteReason():"The authenticated Convex request service is unavailable.";
   const groups={"In Progress":[],"Approved":[],"Requested":[],"Shipped":[],"Declined":[]};
   requests.forEach(r=>{if(groups[r.status])groups[r.status].push(r)});
   function grp(name,items){
@@ -1066,7 +957,7 @@ ${requestWritesLocked?`<div class="locked-inline-reason">${escHtml(requestReason
     ${renderSubTabs()}
     ${renderWriteLockBanner()}
     ${renderMigrationReadiness()}
-    <p class="count-line">${requestWritesLocked?`Requests are visible but triage and shipping are locked. ${escHtml(requestReason)}`:"Agent requests from the team. Click a request to triage it — or ship an approved one straight into the catalog."}</p>
+    <p class="count-line">${!authCanWrite()?`Sign in to view requests. ${escHtml(requestReason)}`:requestReadState==="unavailable"?`Requests unavailable. Retry sign-in or reload before triage.`:"Agent requests from the team. Click a request to triage it. Request-to-agent conversion is deferred; register an agent separately."}</p>
     ${active}
     ${done?`<div class="resolved-divider"><div class="resolved-title">RESOLVED</div>${done}</div>`:""}`;
 }
@@ -1237,7 +1128,19 @@ function renderDetail(a){
 function render(){
   renderAuthSurface();
   const app=document.getElementById("app");
-  if(state.view==="detail"&&state.agent){const fresh=displayedAgents().find(x=>x.id===state.agent.id);if(fresh)state.agent=fresh;app.innerHTML=renderDetail(state.agent);loadRunCapability(state.agent.id);return}
+  if(catalogPending()){
+    app.innerHTML=`<div class="directory-state directory-state-loading"><h2>Loading governed directory…</h2><p>Waiting for Convex.</p></div>`;
+    return;
+  }
+  if(catalogSource==="unavailable"){
+    app.innerHTML=`<div class="directory-state directory-state-error"><h2>Directory unavailable</h2><p>${escHtml(catalogFailureReason)}</p><button class="btn btn-primary" onclick="retryGovernedDirectory()">Retry</button></div>`;
+    return;
+  }
+  if(state.view==="detail"&&state.agent){
+    const fresh=displayedAgents().find(x=>x.id===state.agent.id);
+    if(!fresh){state.view="list";state.agent=null}
+    else{state.agent=fresh;app.innerHTML=renderDetail(state.agent);loadRunCapability(state.agent.id);return}
+  }
   app.innerHTML=state.subTab==="agents"?renderAgentsList():renderRequests();
   if(state.subTab==="agents"&&window.DirectoryAPI&&DirectoryAPI.enabled)loadAutomations();
 }
@@ -1303,6 +1206,26 @@ function slug(s){return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").repla
 // view. The run form is built from this, never from the editable inputs[]
 // labels on the record — renaming a label must not break the run.
 const runCapabilities={};
+const GOVERNED_RUNTIME_MISMATCH="Runtime version does not match the governed version. Deployment or approval is incomplete.";
+function capabilityIdentityMatches(a,capability){
+  const governance=a&&a.convexGovernance;
+  if(!governance)return false;
+  if(hasUsabilityMode(a,"hosted-run")||canInstall(a)){
+    const expected=governance.artifact;
+    const actual=capability&&capability.installArtifact;
+    if(!governance.isCurrentApproved||!expected||!actual||actual.available!==true)return false;
+    if(actual.artifactVersion!==a.version)return false;
+    if(actual.artifactDigestAlgorithm!==expected.algorithm)return false;
+    if(actual.artifactDigest!==expected.digest)return false;
+  }
+  if(canHandoff(a)){
+    const expected=governance.sourcePin;
+    const actual=capability&&capability.handoff;
+    if(!expected||!actual||actual.available!==true)return false;
+    if(actual.commitSha!==expected.commitSha||actual.repoUrl!==expected.repoUrl)return false;
+  }
+  return true;
+}
 async function loadRunCapability(id){
   const a=agents.find(x=>x.id===id),slot=document.getElementById("run-action"),installSlot=document.getElementById("install-actions"),handoffSlot=document.getElementById("handoff-actions");
   if(!a)return;
@@ -1320,6 +1243,12 @@ async function loadRunCapability(id){
   }
   try{
     const capability=await DirectoryAPI.invocationCapability(id);
+    if(!capabilityIdentityMatches(a,capability)){
+      delete runCapabilities[id];
+      showCapabilityFailure(a,{slot,installSlot,handoffSlot},GOVERNED_RUNTIME_MISMATCH);
+      return;
+    }
+    capability.governedIdentityMatched=true;
     runCapabilities[id]=capability;
     if(slot&&hasUsabilityMode(a,"hosted-run")){
       if(capability.serverRun&&capability.artifactAvailable&&capability.configured&&capability.runnable)slot.innerHTML=`<button class="btn btn-sm btn-primary" onclick="toggleRun('${id}')">&#9654; ${capability.mode==="single-shot"?"Run single-shot draft":"Run here"}</button>`;
@@ -1380,18 +1309,21 @@ function buildAgentPrompt(a){
 function copyText(text,msg){(navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(text):Promise.reject()).then(()=>toast(msg)).catch(()=>{const ta=document.createElement("textarea");ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast(msg)}catch(e){toast("Copy failed")}ta.remove()})}
 function copyAgentPrompt(id){const a=agents.find(x=>x.id===id);if(a)copyText(buildAgentPrompt(a),"Summary copied — a description of this record, not the agent")}
 async function copyHandoffBriefing(id){
+  if(runCapabilities[id]?.governedIdentityMatched!==true){toast(GOVERNED_RUNTIME_MISMATCH);return}
   try{
     const brief=await DirectoryAPI.handoffBriefing(id);
     copyText(brief.content,`Engagement brief copied · ${brief.briefVersion} · commit ${String(brief.commitSha).slice(0,7)}`);
   }catch(e){toast(`Briefing unavailable: ${String(e.message||e)}`)}
 }
 async function copyInstallSkill(id){
+  if(runCapabilities[id]?.governedIdentityMatched!==true){toast(GOVERNED_RUNTIME_MISMATCH);return}
   try{
     const artifact=await DirectoryAPI.installSkill(id);
     copyText(artifact.content,`Single-shot SKILL.md copied · ${artifact.artifactVersion}`);
   }catch(e){toast(`Single-shot export failed: ${String(e.message||e)}`)}
 }
 async function downloadInstallArtifact(id){
+  if(runCapabilities[id]?.governedIdentityMatched!==true){toast(GOVERNED_RUNTIME_MISMATCH);return}
   try{
     const artifact=await DirectoryAPI.downloadInstallArtifact(id);
     const url=URL.createObjectURL(artifact.blob),a=document.createElement("a");
@@ -1422,6 +1354,7 @@ function toggleRun(id){
 }
 async function runAgentUI(id){
   const box=document.getElementById("run-out");if(!box)return;
+  if(runCapabilities[id]?.governedIdentityMatched!==true){box.innerHTML=`<div class="run-status run-err">${escHtml(GOVERNED_RUNTIME_MISMATCH)}</div>`;return}
   const inputs={};document.querySelectorAll("#run-panel [data-k]").forEach(el=>{if(el.value.trim())inputs[el.getAttribute("data-k")]=el.value.trim()});
   box.innerHTML='<div class="run-status">Running…</div>';
   try{
@@ -1474,7 +1407,6 @@ function goBack(){state.view="list";state.agent=null;render()}
 function switchSubTab(tab){state.subTab=tab;state.view="list";render()}
 
 // ── BOOT ──
-hydrate();
 render();
 if(window.DirectoryAuth&&typeof DirectoryAuth.subscribe==="function"){
   // Clerk republishes on every session/token refresh. Redrawing the whole page
@@ -1491,17 +1423,17 @@ if(window.DirectoryAuth&&typeof DirectoryAuth.subscribe==="function"){
     const key=authIdentityKey(next);
     if(key===lastAuthIdentity)return;
     lastAuthIdentity=key;
-    render();
+    void loadConvexRequests().then(()=>render());
   });
+  if(DirectoryAuth.ready&&typeof DirectoryAuth.ready.then==="function"){
+    DirectoryAuth.ready.then(()=>loadConvexRequests()).then(()=>render());
+  }
 }
-// Non-blocking read pilot: first paint is always the complete local directory.
-// Only a successful query overlays A7/A8 and earns the governance indicator.
+// Convex is the only catalogue source. Pending and failed reads are rendered as
+// explicit states; neither may fall back to browser seed data.
 loadGovernedDirectoryPilot();
 // The probe resolves after the first render — refresh the automations panel then.
 if(window.DirectoryAPI)DirectoryAPI.ready.then(()=>{
-  // Observe the service's known ids as early as possible, so the first mint in
-  // a fresh browser already avoids them when the service is reachable.
-  refreshReservedAgentIds();
   loadRailwayProposalOverlay();
   if(state.view==="list"&&state.subTab==="agents")loadAutomations();
   // Re-load capability once the probe has resolved — first paint may have

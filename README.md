@@ -496,10 +496,19 @@ off, it is off.
   serializes top-level mutations, so the true optimistic-concurrency race can't
   be reproduced locally. The relevant test is `test.skip`-ed pending a deployed
   staging environment with two authenticated identities.
+- **Concurrent display-ID allocation is not proven in production.** Eight
+  simultaneous `registerAgent` callers receive distinct `A<n>` values under
+  `convex-test`, but that harness serializes top-level mutations. The current
+  scan-and-insert allocator has no database uniqueness constraint; a genuine
+  deployed overlap still needs a two-session smoke test before multi-user use.
+- **Phase 5 removes legacy display-only measurements.** `evalHistory`,
+  `changelog`, and `costPerOutcome` are no longer rendered from browser data;
+  they return only when governed, version-linked Convex query models exist for
+  them.
 - **Railway has no service principal for Convex.** The loop service holds no
   Convex client or credentials, so it cannot write to the authority layer at
-  all. The front-end likewise talks only to `localStorage` and the optional
-  loop-service REST API — not to Convex.
+  all. The front-end reads and edits the catalogue through Convex, while live
+  run/export/proposal affordances still use the optional loop-service REST API.
 
 ## Specs and what's next
 

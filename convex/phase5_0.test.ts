@@ -44,6 +44,23 @@ async function importedA7A8(t: any) {
 }
 
 describe("Phase 5.0 authority contracts", () => {
+  test("simultaneous registration callers receive distinct display ids under the Convex test harness", async () => {
+    const t = convexTest(schema, modules).withIdentity(owner);
+    const created = await Promise.all(
+      Array.from({ length: 8 }, (_, index) =>
+        t.mutation(
+          authorityApi.agents.registerAgent,
+          registration({ name: `Concurrent fixture ${index + 1}` }),
+        ),
+      ),
+    );
+    const ids = created.map((row) => row.displayId);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.slice().sort()).toEqual(
+      Array.from({ length: 8 }, (_, index) => `A${index + 1}`).sort(),
+    );
+  });
+
   test("registration derives owner identity and agent edits are owner-or-approver only", async () => {
     const base = convexTest(schema, modules);
     await expect(

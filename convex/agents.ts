@@ -183,7 +183,12 @@ export const listGovernedDirectoryPilot = query({
           ) ??
           orderedVersions[0] ??
           null;
-        return { agent, version };
+        return {
+          agent,
+          version,
+          isCurrentApproved:
+            version !== null && version._id === agent.currentApprovedVersionId,
+        };
       }),
     );
   },
