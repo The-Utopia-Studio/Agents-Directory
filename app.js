@@ -1778,7 +1778,7 @@ function mechOutputSourceLabel(r){
   return String(src).split(":")[0]||"unknown";
 }
 
-function renderMechHeadlineCard(side,outputSource,{semantic="coverage"}={}){
+function renderMechHeadlineCard(side,outputSource,{semantic="quality"}={}){
   if(!side)return"";
   if(side.verification==="failed"){
     return`<div class="mech-card mech-card-fail"><div class="mech-card-eyebrow">Verification failed</div>
@@ -1787,8 +1787,7 @@ function renderMechHeadlineCard(side,outputSource,{semantic="coverage"}={}){
   const ver=side.artifactVersion||"";
   const short=shortVersionLabel(ver)||"—";
   const src=outputSource||side.outputSource||"";
-  const semClass=semantic==="quality"?"mech-card-quality":"mech-card-coverage";
-  return`<div class="mech-card ${semClass}">
+  return`<div class="mech-card mech-card-quality">
     <div class="mech-card-eyebrow"><span class="mech-card-ver">${escHtml(short)}</span> · <span class="mech-card-artifact">${escHtml(ver)}</span></div>
     <div class="mech-card-score">${side.mechanicalCheckScore==null?"—":side.mechanicalCheckScore}</div>
     <div class="mech-card-unit">mechanical check score</div>
@@ -1798,13 +1797,41 @@ function renderMechHeadlineCard(side,outputSource,{semantic="coverage"}={}){
   </div>`;
 }
 
-/** Coverage delta: detections only — never a signed score (minus reads as regression). */
-function renderMechCoverageDeltaChip(left,right){
+/** Coverage side strip: version + demoted score — never the headline number. */
+function renderMechCoverageSideMeta(side,outputSource){
+  if(!side)return"";
+  if(side.verification==="failed"){
+    return`<div class="mech-coverage-side"><div class="mech-card-eyebrow">Verification failed</div>
+      <div class="mech-refuse">Not a score. ${escHtml(side.error||side.verificationError||"digest mismatch")}</div></div>`;
+  }
+  const ver=side.artifactVersion||"";
+  const short=shortVersionLabel(ver)||"—";
+  const src=outputSource||side.outputSource||"";
+  const score=side.mechanicalCheckScore==null?"—":side.mechanicalCheckScore;
+  return`<div class="mech-coverage-side">
+    <div class="mech-card-eyebrow"><span class="mech-card-ver">${escHtml(short)}</span> · <span class="mech-card-artifact">${escHtml(ver)}</span></div>
+    <div class="mech-coverage-score-meta">score ${escHtml(String(score))} · passed ${side.passed?.length||0} · failed ${side.failed?.length||0}</div>
+    ${src?`<div class="mech-card-meta">output source: ${escHtml(src)}</div>`:""}
+  </div>`;
+}
+
+/**
+ * Coverage headline is detections — scores are not a quality signal in either
+ * direction (adding checks a fixture passes raises the number without catching
+ * more issues). Lead with caught N → M; demote raw scores to secondary meta.
+ */
+function renderMechCoverageHeadline(left,right,outputSource){
   const L=(left?.failed||[]).length;
   const R=(right?.failed||[]).length;
-  return`<div class="mech-delta-chip mech-delta-coverage" title="Detections on the same output. More failed checks means stronger coverage, not worse quality.">
-    <div class="mech-delta-chip-label">detections</div>
-    <div class="mech-delta-chip-value">caught ${L} → ${R} issues</div>
+  return`<div class="mech-coverage-headline" title="Detections on the same output. More failed checks means stronger coverage, not worse quality. The mechanical check score is not a quality signal in either direction.">
+    <div class="mech-coverage-lead">
+      <div class="mech-coverage-lead-label">detections</div>
+      <div class="mech-coverage-lead-value">caught ${L} → ${R} issues</div>
+    </div>
+    <div class="mech-coverage-sides">
+      ${renderMechCoverageSideMeta(left,outputSource)}
+      ${renderMechCoverageSideMeta(right,outputSource)}
+    </div>
   </div>`;
 }
 
@@ -1940,11 +1967,7 @@ function renderMechanicalCompareResult(r){
     ].filter(Boolean).join(" ");
     const subtitle=r.coverageReading?.detail
       ||"Same output, different check sets — stronger coverage, not worse quality.";
-    return`<div class="mech-headline-row">
-        ${renderMechHeadlineCard(left,r.outputSource,{semantic:"coverage"})}
-        ${renderMechCoverageDeltaChip(left,right)}
-        ${renderMechHeadlineCard(right,r.outputSource,{semantic:"coverage"})}
-      </div>
+    return`${renderMechCoverageHeadline(left,right,r.outputSource)}
       <p class="mech-subtitle">${escHtml(subtitle)}</p>
       ${renderMechQualityRefusedTile(r)}
       ${renderMechExperimentCaption(r,{experimentLabel:"Experiment A",tooltip})}

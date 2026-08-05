@@ -630,6 +630,44 @@ input[type="date"] { color-scheme: dark; }
 @media (max-width: 720px) {
   .mech-headline-row { grid-template-columns: 1fr; }
   .mech-delta-chip { justify-self: stretch; }
+  .mech-coverage-sides { grid-template-columns: 1fr; }
+}
+.mech-coverage-headline {
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  padding: 16px 18px;
+  background: var(--surface);
+}
+.mech-coverage-lead {
+  text-align: center;
+  margin-bottom: 14px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+.mech-coverage-lead-label {
+  font-size: 10px;
+  letter-spacing: var(--tracking-eyebrow);
+  text-transform: uppercase;
+  color: var(--foreground-subtle);
+  margin-bottom: 6px;
+}
+.mech-coverage-lead-value {
+  font-size: clamp(28px, 5vw, 44px);
+  font-weight: 600;
+  color: var(--foreground);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+.mech-coverage-sides {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 20px;
+}
+.mech-coverage-side { min-width: 0; }
+.mech-coverage-score-meta {
+  font-size: 12.5px;
+  color: var(--foreground-subtle);
+  line-height: 1.4;
 }
 .mech-card {
   border: 1px solid var(--border-subtle);
@@ -685,9 +723,7 @@ input[type="date"] { color-scheme: dark; }
   font-weight: 600;
   line-height: 1.25;
 }
-/* Coverage: direction-neutral — no green/red, no arrows. */
-.mech-delta-coverage { color: var(--foreground); }
-/* Quality live may use conventional direction. */
+/* Quality live may use conventional direction. Coverage never styles scores as grades. */
 .mech-delta-quality.mech-delta-up { border-color: color-mix(in srgb, #2f6a3a 35%, var(--border-subtle)); }
 .mech-delta-quality.mech-delta-down { border-color: color-mix(in srgb, var(--warning-text) 35%, var(--border-subtle)); }
 .mech-subtitle {
