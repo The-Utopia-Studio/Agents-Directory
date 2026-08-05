@@ -9,6 +9,12 @@
 //   mock          — canned response for offline demos
 import { requestJsonEndpoint } from "./networkPolicy.js";
 import {
+  gapBankForPrompt,
+  normalizeGapAnswers,
+  parseGapResponse,
+  unansweredGaps,
+} from "./gapFill.js";
+import {
   getRuntimeArtifactMode,
   getRuntimeArtifactDescriptor,
   getRuntimeInputContract,
@@ -80,6 +86,254 @@ function mockInvoker() {
   };
 }
 
+function sumUsage(parts) {
+  let inputTokens = 0;
+  let outputTokens = 0;
+  let haveInput = false;
+  let haveOutput = false;
+  for (const part of parts) {
+    if (typeof part?.inputTokens === "number") {
+      inputTokens += part.inputTokens;
+      haveInput = true;
+    }
+    if (typeof part?.outputTokens === "number") {
+      outputTokens += part.outputTokens;
+      haveOutput = true;
+    }
+  }
+  return {
+    ...(haveInput ? { inputTokens } : {}),
+    ...(haveOutput ? { outputTokens } : {}),
+    ...(haveInput && haveOutput
+      ? { totalTokens: inputTokens + outputTokens }
+      : {}),
+  };
+}
+
+function usageFromPayload(payload) {
+  return {
+    ...(typeof payload.usage?.input_tokens === "number"
+      ? { inputTokens: payload.usage.input_tokens }
+      : {}),
+    ...(typeof payload.usage?.output_tokens === "number"
+      ? { outputTokens: payload.usage.output_tokens }
+      : {}),
+    ...(typeof payload.usage?.input_tokens === "number" &&
+    typeof payload.usage?.output_tokens === "number"
+      ? {
+          totalTokens:
+            payload.usage.input_tokens + payload.usage.output_tokens,
+        }
+      : {}),
+  };
+}
+
+function artifactMeta(agentId) {
+  const descriptor = getRuntimeArtifactDescriptor(agentId);
+  return {
+    artifactDigest: descriptor?.artifactDigest || undefined,
+    artifactDigestAlgorithm: descriptor?.artifactDigestAlgorithm || undefined,
+    artifactVersion: descriptor?.artifactVersion || undefined,
+  };
+}
+
+async function callAnthropicMessages({
+  fetchImpl,
+  apiKey,
+  model,
+  timeoutMs,
+  system,
+  userContent,
+}) {
+  const controller = new AbortController();
+  const timer = setTimeout(
+    () => controller.abort(new Error("Anthropic generation timed out")),
+    timeoutMs,
+  );
+  const started = Date.now();
+  let response;
+  let payload;
+  try {
+    response = await fetchImpl("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "anthropic-version": "2023-06-01",
+        "x-api-key": apiKey,
+      },
+      body: JSON.stringify({
+        model,
+        max_tokens: 4096,
+        system,
+        messages: [{ role: "user", content: userContent }],
+      }),
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw Object.assign(
+        new Error(`Anthropic Messages API returned ${response.status}`),
+        { status: 502, runtimeSafe: true },
+      );
+    }
+    try {
+      payload = await response.json();
+    } catch {
+      throw Object.assign(
+        new Error("Anthropic Messages API returned invalid JSON"),
+        { status: 502, runtimeSafe: true },
+      );
+    }
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw Object.assign(new Error("Anthropic generation timed out"), {
+        status: 504,
+      });
+    }
+    if (error.runtimeSafe) throw error;
+    throw Object.assign(
+      new Error("Anthropic Messages API request failed"),
+      { status: 502 },
+    );
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const latencyMs = Date.now() - started;
+  if (
+    payload.stop_reason === "refusal" ||
+    payload.content?.some?.((block) => block.type === "refusal")
+  ) {
+    throw Object.assign(new Error("Anthropic refused the runtime request"), {
+      status: 502,
+      usage: usageFromPayload(payload),
+      latencyMs,
+    });
+  }
+
+  const usage = usageFromPayload(payload);
+  const output = (payload.content || [])
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n")
+    .trim();
+  if (!output) {
+    throw Object.assign(
+      new Error("Anthropic Messages API returned no text output"),
+      { status: 502, failureCode: "empty_output", usage, latencyMs },
+    );
+  }
+
+  return {
+    output,
+    usage,
+    latencyMs,
+    modelId: payload.model || model,
+  };
+}
+
+async function invokeGapFill(agent, inputs, ctx) {
+  const { values, missing } = resolveRuntimeInputs(agent.id, inputs);
+  if (missing.length) {
+    throw Object.assign(
+      new Error(
+        `Gap-fill mode needs this material up front and none was supplied: ${missing.join(", ")}`,
+      ),
+      { status: 400 },
+    );
+  }
+
+  const continuing = Object.prototype.hasOwnProperty.call(
+    inputs || {},
+    "gapAnswers",
+  );
+  const gapAnswers = continuing
+    ? normalizeGapAnswers(inputs.gapAnswers)
+    : undefined;
+
+  const detectPayload = {
+    phase: "detect-gaps",
+    fellowName: values.fellowName,
+    sourceMaterial: values.sourceMaterial,
+    gapBank: gapBankForPrompt(),
+  };
+
+  const call1 = await callAnthropicMessages({
+    ...ctx,
+    userContent: JSON.stringify(detectPayload, null, 2),
+  });
+
+  let gaps;
+  try {
+    gaps = parseGapResponse(call1.output);
+  } catch (error) {
+    error.usage = call1.usage;
+    error.latencyMs = call1.latencyMs;
+    throw error;
+  }
+
+  if (gaps.length && !continuing) {
+    return {
+      status: "needs_input",
+      gaps,
+      output: "",
+      callCount: 1,
+      gapsCount: gaps.length,
+      provider: "anthropic",
+      modelId: call1.modelId,
+      latencyMs: call1.latencyMs,
+      ...artifactMeta(agent.id),
+      ...call1.usage,
+    };
+  }
+
+  if (gaps.length && continuing) {
+    const missingAnswers = unansweredGaps(gaps, gapAnswers);
+    if (missingAnswers.length) {
+      throw Object.assign(
+        new Error(
+          `Gap-fill continue is missing answers for: ${missingAnswers
+            .map((g) => g.id)
+            .join(", ")}`,
+        ),
+        {
+          status: 400,
+          usage: call1.usage,
+          latencyMs: call1.latencyMs,
+        },
+      );
+    }
+  }
+
+  const draftPayload = {
+    phase: "draft",
+    fellowName: values.fellowName,
+    sourceMaterial: values.sourceMaterial,
+    gapAnswers: gapAnswers || {},
+    ...(values.exclusions ? { exclusions: values.exclusions } : {}),
+  };
+
+  const call2 = await callAnthropicMessages({
+    ...ctx,
+    userContent: JSON.stringify(draftPayload, null, 2),
+  });
+
+  const checkResults = validateRuntimeArtifactOutput(agent.id, call2.output);
+  const usage = sumUsage([call1.usage, call2.usage]);
+
+  return {
+    status: "ok",
+    output: call2.output,
+    ...(checkResults.length ? { checkResults } : {}),
+    callCount: 2,
+    gapsCount: gaps.length,
+    provider: "anthropic",
+    modelId: call2.modelId || call1.modelId,
+    latencyMs: call1.latencyMs + call2.latencyMs,
+    ...artifactMeta(agent.id),
+    ...usage,
+  };
+}
+
 export function runtimeInvoker(config = {}) {
   const anthropic = config.runtime?.anthropic || {};
   const model = anthropic.model || "claude-sonnet-4-6";
@@ -87,6 +341,7 @@ export function runtimeInvoker(config = {}) {
   const fetchImpl = anthropic.fetch || globalThis.fetch;
   return {
     name: "runtime",
+    // Per-agent mode is applied in getInvoker from the registry.
     mode: "single-shot",
     provider: "anthropic",
     modelId: model,
@@ -116,6 +371,18 @@ export function runtimeInvoker(config = {}) {
 
       const system = await loadRuntimeArtifact(agent.id);
       const runtimeMode = getRuntimeArtifactMode(agent.id);
+      const ctx = {
+        fetchImpl,
+        apiKey: anthropic.apiKey,
+        model,
+        timeoutMs,
+        system,
+      };
+
+      if (runtimeMode === "gap-fill") {
+        return invokeGapFill(agent, inputs, ctx);
+      }
+
       const { values, missing } = resolveRuntimeInputs(agent.id, inputs);
       if (runtimeMode === "single-shot" && missing.length) {
         throw Object.assign(
@@ -125,138 +392,36 @@ export function runtimeInvoker(config = {}) {
           { status: 400 },
         );
       }
-      // The registered file is the effective runtime artifact. Export and ZIP
-      // read this same file, so no adapter-only prompt suffix can fork evidence.
-      const runtimeSystem = system;
-      const controller = new AbortController();
-      const timer = setTimeout(
-        () => controller.abort(new Error("Anthropic generation timed out")),
-        timeoutMs,
-      );
-      const started = Date.now();
-      let response;
-      let payload;
-      try {
-        response = await fetchImpl("https://api.anthropic.com/v1/messages", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "anthropic-version": "2023-06-01",
-            "x-api-key": anthropic.apiKey,
-          },
-          body: JSON.stringify({
-            model,
-            max_tokens: 4096,
-            system: runtimeSystem,
-            messages: [
-              {
-                role: "user",
-                // Contract-backed agents send only resolved fields: material
-                // this mode cannot read (URLs, Drive links, file paths) must
-                // not reach the model as if it were readable source.
-                content: JSON.stringify(
-                  runtimeMode === "single-shot" ? values : inputs || {},
-                  null,
-                  2,
-                ),
-              },
-            ],
-          }),
-          signal: controller.signal,
-        });
-        if (!response.ok) {
-          throw Object.assign(
-            new Error(`Anthropic Messages API returned ${response.status}`),
-            { status: 502, runtimeSafe: true },
-          );
-        }
-        try {
-          payload = await response.json();
-        } catch {
-          throw Object.assign(
-            new Error("Anthropic Messages API returned invalid JSON"),
-            { status: 502, runtimeSafe: true },
-          );
-        }
-      } catch (error) {
-        if (controller.signal.aborted) {
-          throw Object.assign(new Error("Anthropic generation timed out"), {
-            status: 504,
-          });
-        }
-        if (error.runtimeSafe) throw error;
-        throw Object.assign(
-          new Error("Anthropic Messages API request failed"),
-          { status: 502 },
-        );
-      } finally {
-        clearTimeout(timer);
-      }
-      const latencyMs = Date.now() - started;
 
-      if (
-        payload.stop_reason === "refusal" ||
-        payload.content?.some?.((block) => block.type === "refusal")
-      ) {
-        throw Object.assign(new Error("Anthropic refused the runtime request"), {
-          status: 502,
-        });
-      }
-      // Anthropic has already billed by this point, so every downstream exit
-      // carries usage — a failure whose spend cannot be attributed is a hole
-      // in the cost record, not just a missing diagnostic.
-      const usage = {
-        ...(typeof payload.usage?.input_tokens === "number"
-          ? { inputTokens: payload.usage.input_tokens }
-          : {}),
-        ...(typeof payload.usage?.output_tokens === "number"
-          ? { outputTokens: payload.usage.output_tokens }
-          : {}),
-        ...(typeof payload.usage?.input_tokens === "number" &&
-        typeof payload.usage?.output_tokens === "number"
-          ? {
-              totalTokens:
-                payload.usage.input_tokens + payload.usage.output_tokens,
-            }
-          : {}),
-      };
-
-      const output = (payload.content || [])
-        .filter((block) => block.type === "text")
-        .map((block) => block.text)
-        .join("\n")
-        .trim();
-      if (!output) {
-        throw Object.assign(
-          new Error("Anthropic Messages API returned no text output"),
-          { status: 502, failureCode: "empty_output", usage, latencyMs },
-        );
-      }
+      const call = await callAnthropicMessages({
+        ...ctx,
+        userContent: JSON.stringify(
+          runtimeMode === "single-shot" ? values : inputs || {},
+          null,
+          2,
+        ),
+      });
 
       // A failed check is a quality miss, not a safety stop: the guardrails are
       // the safety layer. Returning the output marked failed keeps the tokens
       // we already paid for, lets a reviewer see whether the check or the model
       // was wrong, and produces a rateable run instead of a dead error.
-      const checkResults = validateRuntimeArtifactOutput(agent.id, output);
+      const checkResults = validateRuntimeArtifactOutput(agent.id, call.output);
 
       return {
-        output,
+        status: "ok",
+        output: call.output,
         ...(checkResults.length ? { checkResults } : {}),
-        artifactDigest:
-          getRuntimeArtifactDescriptor(agent.id)?.artifactDigest || undefined,
-        artifactDigestAlgorithm:
-          getRuntimeArtifactDescriptor(agent.id)?.artifactDigestAlgorithm ||
-          undefined,
-        artifactVersion:
-          getRuntimeArtifactDescriptor(agent.id)?.artifactVersion || undefined,
+        callCount: 1,
+        ...artifactMeta(agent.id),
         provider: "anthropic",
-        modelId: payload.model || model,
-        latencyMs,
+        modelId: call.modelId,
+        latencyMs: call.latencyMs,
         // TODO: costUsd is never calculated here, so no run — passed or failed
         // — carries attributable spend. Token counts are recorded; converting
         // them to cost needs per-model pricing that this adapter does not have.
         // Until that exists, treat cost-per-outcome as unimplemented, not zero.
-        ...usage,
+        ...call.usage,
       };
     },
   };
@@ -273,7 +438,14 @@ export function getInvoker(agent, config) {
     case "http": return httpInvoker(config);
     case "mock": return mockInvoker();
     case "mcp": return portStub("mcp", "provide an MCP bridge endpoint");
-    case "runtime": return runtimeInvoker(config);
+    case "runtime": {
+      const base = runtimeInvoker(config);
+      const mode =
+        getRuntimeArtifactMode(agent.id) ||
+        agent.invocation?.mode ||
+        base.mode;
+      return { ...base, mode };
+    }
     case "prompt":
     case "link":
     default: return manual(type);

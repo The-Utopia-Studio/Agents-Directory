@@ -141,6 +141,21 @@ const SEED_AGENTS=[
     changelog:[{version:"1.0",date:"2026-08-01",note:"Stateless single-shot draft mode using a server-owned SKILL.md."}],
     proposedImprovements:[]},
 
+  {id:"A9",name:"Biocraft gap-fill draft",tagline:"Sarah's interview bank as batched gaps, then a text draft. Paste material; answer only what is still missing.",description:"Hosted gap-fill mode adapted from /biocraft. Call 1 returns structured gaps against a fixed question bank; Call 2 drafts three labelled text sections. No Chrome, Drive, or HTML file write.",platform:"Claude",status:"Experimental",category:"Personal Branding",owner:"Sarah",initials:"SA",model:"Claude Sonnet 4.6",version:"1.0",
+    objective:"Detect structured gaps against Sarah's fixed interview bank, then draft a LinkedIn About, spoken event introduction, and headline from pasted material plus answers.",
+    successCriteria:["LinkedIn About hook is 200 characters or fewer","Full LinkedIn About text is 2,600 characters or fewer","Suggested LinkedIn headline is 220 characters or fewer","Spoken event introduction reads aloud in 20 to 30 seconds"],
+    guardrails:["Never fabricate or alter a metric, achievement, employer relationship, credential, quote, role, or job title.","Distinguish work done for a company from founding or owning that company.","Preserve qualifiers such as Intern, Participant, and Apprenticeship.","Do not use an em dash or a double hyphen as an em-dash substitute.","Do not use emoji, exclamation points, hedging, or unnecessary passive voice.","Remove AI cliche and these terms on sight: utilize, leverage, facilitate, innovative, robust, seamless, cutting-edge, unlock, elevate, passionate, synergy, game-changer, revolutionize, revolutionary.","Do not use \"it is not X, it is Y\" contrast framing.","Do not report or annotate character counts. The host validates limits; a model-generated count is not evidence.","If a supplied quote is not grounded clearly enough to attribute, omit it.","Do not add a CTA to the third-person event introduction. The required CTA belongs only in the LinkedIn About.","Honour exclusions when supplied; never invent exclusions or treat them as gaps."],
+    autonomyLevel:"L1",
+    invocation:{type:"runtime",mode:"gap-fill",artifact:"biocraft-gapfill/SKILL.md"},
+    usabilityModes:["hosted-run","download-install"],
+    when:"When creating or updating a fellow's LinkedIn bio from incomplete pasted material that may still need Sarah's interview answers. After drafting, check the LinkedIn About fold on a phone.",
+    sop:"1. Paste the fellow's name and whatever source material you have (LinkedIn About/headline, pitch or venture notes)\n2. Optionally note anything that must NOT appear\n3. Run gap detection; answer only the returned questions\n4. Review every claim before using the output\n5. Paste the About into LinkedIn and check the fold on a phone",
+    inputs:["Fellow name","Source material (paste)","Optional exclusions","Gap answers when requested"],outputs:["Structured gaps or draft LinkedIn About","Draft spoken event introduction","Draft suggested headline"],
+    skills:["biocraft","personal-branding","copywriting"],tools:[],context:["Pasted fellow source material","Gap answers when needed"],
+    accessUrl:"",repoUrl:"",evalHistory:[],
+    changelog:[{version:"1.0",date:"2026-08-05",note:"Gap-fill hosted mode v1 adapted from Sarah's /biocraft; tools stripped; hook 200; keyword line banned."}],
+    proposedImprovements:[]},
+
   // A8 is prepared-handoff: the agent lives in Aiden's repo and runs in Codex.
   // Catalogue entry only — engagement terms are in the server handoff registry.
   {id:"A8",name:"UX&QA",tagline:"Independent UX and QA round against an approved non-production build.",description:"Prepared handoff to Aiden's pinned UX&QA agent. There is no hosted run and no downloadable install package in this directory — copy the engagement brief, complete its checklist, then hand over in Codex.",platform:"Codex",status:"Experimental",category:"Design & Product",owner:"Aiden Kim",initials:"AK",model:"—",version:"0.1.0",
@@ -1141,7 +1156,7 @@ function renderDetail(a){
         ${hasExportMode(a)?`<span id="install-actions"></span><span id="handoff-actions"></span>`:""}
         <span id="run-action"></span>
       </div>
-      <div class="use-hint">${hasUsabilityDefect(a)?`MISCONFIGURED: this agent has no stored usabilityModes. Edit the record before offering access.`:isSingleShotRuntime(a)?`Run, Copy as SKILL.md, evaluation, and Download use the same pinned single-shot artifact. This is not the full /biocraft agent: no Chrome, Drive, HTML rendering, or follow-up conversation.`:canHandoff(a)&&!canInstall(a)?`Prepared handoff: this agent is not installed or hosted here. The export is an engagement brief that pins the repository and commit where the agent actually lives, plus the setup checklist, prohibited actions, inputs, and how to return a result.`:needsInvokerConfiguration(a)?`${escHtml((a.invocation&&a.invocation.type)||"runtime")} execution is not configured. Use the stored prepared handoff/export path until an adapter is connected.`:`Available here: ${escHtml(a.usabilityModes.join(", "))}. The execution adapter remains ${escHtml((a.invocation&&a.invocation.type)||"link")}.`}</div>
+      <div class="use-hint">${hasUsabilityDefect(a)?`MISCONFIGURED: this agent has no stored usabilityModes. Edit the record before offering access.`:isGapFillRuntime(a)?`Run, Copy as SKILL.md, evaluation, and Download use the same pinned gap-fill artifact. Paste material; Call 1 returns structured gaps; Call 2 drafts. No Chrome, Drive, or HTML file write.`:isSingleShotRuntime(a)?`Run, Copy as SKILL.md, evaluation, and Download use the same pinned single-shot artifact. This is not the full /biocraft agent: no Chrome, Drive, HTML rendering, or follow-up conversation.`:canHandoff(a)&&!canInstall(a)?`Prepared handoff: this agent is not installed or hosted here. The export is an engagement brief that pins the repository and commit where the agent actually lives, plus the setup checklist, prohibited actions, inputs, and how to return a result.`:needsInvokerConfiguration(a)?`${escHtml((a.invocation&&a.invocation.type)||"runtime")} execution is not configured. Use the stored prepared handoff/export path until an adapter is connected.`:`Available here: ${escHtml(a.usabilityModes.join(", "))}. The execution adapter remains ${escHtml((a.invocation&&a.invocation.type)||"link")}.`}</div>
       <div id="run-panel" class="run-panel"></div>
     </div>
 
@@ -1280,6 +1295,12 @@ function canHandoff(a){return hasUsabilityMode(a,"prepared-handoff")}
 function hasExportMode(a){return canInstall(a)||canHandoff(a)}
 function needsInvokerConfiguration(a){return(a.invocation&&a.invocation.type)==="mcp"}
 function isSingleShotRuntime(a){return a.invocation&&a.invocation.type==="runtime"&&a.invocation.mode==="single-shot"}
+function isGapFillRuntime(a){return a.invocation&&a.invocation.type==="runtime"&&a.invocation.mode==="gap-fill"}
+function runtimeModeLabel(mode){
+  if(mode==="gap-fill")return"gap-fill";
+  if(mode==="single-shot")return"single-shot";
+  return mode||"runtime";
+}
 function invocationTier(a){return hasUsabilityDefect(a)?"misconfigured":a.usabilityModes.join(" + ")}
 function slug(s){return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").replace(/^-|-$/g,"")}
 
@@ -1332,14 +1353,15 @@ async function loadRunCapability(id){
     capability.governedIdentityMatched=true;
     runCapabilities[id]=capability;
     if(slot&&hasUsabilityMode(a,"hosted-run")){
-      if(capability.serverRun&&capability.artifactAvailable&&capability.configured&&capability.runnable)slot.innerHTML=`<button class="btn btn-sm btn-primary" onclick="toggleRun('${id}')">&#9654; ${capability.mode==="single-shot"?"Run single-shot draft":"Run here"}</button>`;
+      if(capability.serverRun&&capability.artifactAvailable&&capability.configured&&capability.runnable)slot.innerHTML=`<button class="btn btn-sm btn-primary" onclick="toggleRun('${id}')">&#9654; ${capability.mode==="single-shot"?"Run single-shot draft":capability.mode==="gap-fill"?"Run gap-fill draft":"Run here"}</button>`;
       else if(!capability.configured)slot.innerHTML=`<span class="run-unavailable">${escHtml(capability.unavailableReason||"Runtime unavailable")}</span>`;
     }
     // download-install: only a pinned server-owned artifact is installable.
     // With none registered there is no client-side substitute to fall back to.
     if(installSlot&&canInstall(a)){
       const install=capability.installArtifact;
-      if(install&&install.available)installSlot.innerHTML=`<button class="btn btn-sm" onclick="copyInstallSkill('${id}')">Copy single-shot SKILL.md</button><button class="btn btn-sm" onclick="downloadInstallArtifact('${id}')">Download single-shot (.zip)</button><span class="artifact-pin"><strong>${escHtml(install.artifactVersion)}</strong> · ${digestChip(install.artifactDigest,{algo:install.artifactDigestAlgorithm||"sha256"})}</span>`;
+      const modeWord=runtimeModeLabel(capability.mode||install&&install.mode);
+      if(install&&install.available)installSlot.innerHTML=`<button class="btn btn-sm" onclick="copyInstallSkill('${id}')">Copy ${escHtml(modeWord)} SKILL.md</button><button class="btn btn-sm" onclick="downloadInstallArtifact('${id}')">Download ${escHtml(modeWord)} (.zip)</button><span class="artifact-pin"><strong>${escHtml(install.artifactVersion)}</strong> · ${digestChip(install.artifactDigest,{algo:install.artifactDigestAlgorithm||"sha256"})}</span>`;
       else installSlot.innerHTML=`<span class="run-unavailable">No pinned installable artifact is registered for this agent, so there is nothing to install. The summary above is a description of the record, not the agent.</span>`;
     }
     // prepared-handoff: a briefing, never a generated skill file.
@@ -1399,8 +1421,9 @@ async function copyInstallSkill(id){
   if(runCapabilities[id]?.governedIdentityMatched!==true){toast(GOVERNED_RUNTIME_MISMATCH);return}
   try{
     const artifact=await DirectoryAPI.installSkill(id);
-    copyText(artifact.content,`Single-shot SKILL.md copied · ${artifact.artifactVersion}`);
-  }catch(e){toast(`Single-shot export failed: ${String(e.message||e)}`)}
+    const modeWord=runtimeModeLabel(runCapabilities[id]?.mode||artifact.mode);
+    copyText(artifact.content,`${modeWord} SKILL.md copied · ${artifact.artifactVersion}`);
+  }catch(e){toast(`Install export failed: ${String(e.message||e)}`)}
 }
 async function downloadInstallArtifact(id){
   if(runCapabilities[id]?.governedIdentityMatched!==true){toast(GOVERNED_RUNTIME_MISMATCH);return}
@@ -1419,9 +1442,35 @@ function contractField(f,i){
   const control=f.multiline?`<textarea id="run-in-${i}" data-k="${escHtml(f.key)}"></textarea>`:`<input id="run-in-${i}" data-k="${escHtml(f.key)}">`;
   return `<div class="run-field${f.multiline?" run-field-wide":""}"><label for="run-in-${i}">${escHtml(f.label)} ${req}</label>${help}${control}</div>`;
 }
+let gapFillState=null;
+function runModeLabel(mode){
+  if(mode==="gap-fill")return"gap-fill runtime";
+  if(mode==="single-shot")return"single-shot runtime";
+  return mode||"runtime";
+}
+function renderRunResult(id,r){
+  const box=document.getElementById("run-out");if(!box)return;
+  const cap=runCapabilities[id]||{};
+  const notesBox=cap.feedbackNotes===false?"":`<label class="run-feedback-notes-label" for="run-feedback-notes">Why this rating — what was wrong or right</label><textarea id="run-feedback-notes" class="run-feedback-notes" maxlength="${Number(cap.feedbackNotesMaxChars)||2000}" placeholder="Specific defects, fabrications, or things it got right."></textarea>`;
+  const feedback=r.tracePersisted&&r.traceId?`<div class="run-feedback" data-trace-id="${escHtml(r.traceId)}"><div class="run-feedback-title">Rate this run</div><div class="run-feedback-stars" role="radiogroup" aria-label="Rate this run">${[1,2,3,4,5].map(n=>`<label title="${n} star${n===1?"":"s"}"><input type="radio" name="run-rating" value="${n}"><span>&#9733;</span></label>`).join("")}</div>${notesBox}<button class="btn btn-sm" onclick="submitRunFeedback('${id}',this)">Submit feedback</button><div class="run-feedback-status"></div></div>`:"";
+  const failed=r.status==="checks_failed"&&(r.checkFailures||[]).length;
+  const banner=failed?`<div class="run-checks-failed"><div class="run-checks-title">&#9888; ${r.checkFailures.length} mechanical check${r.checkFailures.length===1?"":"s"} did not pass — review before shipping</div><ul>${r.checkFailures.map(c=>`<li><code>${escHtml(c.checkId)}</code> — ${escHtml(c.message)}</li>`).join("")}</ul><div class="run-checks-note">The output below was still generated and billed. A check can be wrong about a correct draft — if that is what happened, say so in the notes.</div></div>`:"";
+  const callMeta=typeof r.callCount==="number"?` · ${r.callCount} call${r.callCount===1?"":"s"}`:"";
+  box.innerHTML=`<div class="run-result${failed?" run-result-failed":""}">${banner}<div class="run-result-head">${failed?"Output (failed checks)":"Output"} <span class="run-via">via ${escHtml(runModeLabel(r.mode)||r.via)}${callMeta}</span> ${r.tracePersisted&&r.traceId?`<span class="run-trace">&#10003; metadata trace ${escHtml(r.traceId)} recorded</span>`:`<span class="run-via">trace not persisted</span>`}</div><pre>${escHtml(r.output)}</pre>${feedback}</div>`;
+}
+function renderGapFillForm(id,state){
+  const panel=document.getElementById("run-panel");
+  const out=document.getElementById("run-out");
+  if(!panel||!out)return;
+  const gaps=state.gaps||[];
+  const gapFields=gaps.map((g,i)=>`<div class="run-field run-field-wide"><label for="gap-ans-${i}">${escHtml(g.question)} <span class="run-req">required</span></label>${g.reason?`<div class="run-help">${escHtml(g.reason)}</div>`:""}<textarea id="gap-ans-${i}" data-gap-id="${escHtml(g.id)}"></textarea></div>`).join("");
+  const excl=state.exclusions?`<div class="run-field run-field-wide"><label for="gap-excl">Anything that must NOT appear <span class="run-opt">optional</span></label><textarea id="gap-excl">${escHtml(state.exclusions)}</textarea></div>`:`<div class="run-field run-field-wide"><label for="gap-excl">Anything that must NOT appear <span class="run-opt">optional</span></label><div class="run-help">Sarah's exclusion question — always optional; not a detected gap.</div><textarea id="gap-excl"></textarea></div>`;
+  panel.innerHTML=`<div class="run-form"><div class="run-unsupported"><div class="run-unsupported-title">Answer these gaps</div><p>The agent found ${gaps.length} missing item${gaps.length===1?"":"s"} in the pasted material. Questions are from its interview bank.</p></div>${gapFields}${excl}<button class="btn btn-sm btn-primary" onclick="continueGapFillUI('${id}')">Draft with answers &#9654;</button></div><div id="run-out" class="run-out"><div class="run-status">Waiting for gap answers. Call 1 is recorded; Call 2 runs after you submit.</div></div>`;
+}
 function toggleRun(id){
   const a=agents.find(x=>x.id===id);const box=document.getElementById("run-panel");if(!a||!box)return;
-  if(box.innerHTML){box.innerHTML="";return}
+  if(box.innerHTML){box.innerHTML="";gapFillState=null;return}
+  gapFillState=null;
   const contract=(runCapabilities[id]||{}).inputContract;
   let fields,unsupported="";
   if(contract&&contract.fields&&contract.fields.length){
@@ -1439,17 +1488,46 @@ async function runAgentUI(id){
   box.innerHTML='<div class="run-status">Running…</div>';
   try{
     const r=await DirectoryAPI.runAgent(id,inputs);
-    const cap=runCapabilities[id]||{};
-    const notesBox=cap.feedbackNotes===false?"":`<label class="run-feedback-notes-label" for="run-feedback-notes">Why this rating — what was wrong or right</label><textarea id="run-feedback-notes" class="run-feedback-notes" maxlength="${Number(cap.feedbackNotesMaxChars)||2000}" placeholder="Specific defects, fabrications, or things it got right."></textarea>`;
-    const feedback=r.tracePersisted&&r.traceId?`<div class="run-feedback" data-trace-id="${escHtml(r.traceId)}"><div class="run-feedback-title">Rate this run</div><div class="run-feedback-stars" role="radiogroup" aria-label="Rate this run">${[1,2,3,4,5].map(n=>`<label title="${n} star${n===1?"":"s"}"><input type="radio" name="run-rating" value="${n}"><span>&#9733;</span></label>`).join("")}</div>${notesBox}<button class="btn btn-sm" onclick="submitRunFeedback('${id}',this)">Submit feedback</button><div class="run-feedback-status"></div></div>`:"";
-    // A run that missed a mechanical check must not read as a clean run. The
-    // whole result card changes colour and gains a banner, not just a line of
-    // text above identical output.
-    const failed=r.status==="checks_failed"&&(r.checkFailures||[]).length;
-    // A check reports what its detectors saw, never a verdict on the draft.
-    // "No CTA detected" is a reason to look, not proof the model omitted one.
-    const banner=failed?`<div class="run-checks-failed"><div class="run-checks-title">&#9888; ${r.checkFailures.length} mechanical check${r.checkFailures.length===1?"":"s"} did not pass — review before shipping</div><ul>${r.checkFailures.map(c=>`<li><code>${escHtml(c.checkId)}</code> — ${escHtml(c.message)}</li>`).join("")}</ul><div class="run-checks-note">The output below was still generated and billed. A check can be wrong about a correct draft — if that is what happened, say so in the notes.</div></div>`:"";
-    box.innerHTML=`<div class="run-result${failed?" run-result-failed":""}">${banner}<div class="run-result-head">${failed?"Output (failed checks)":"Output"} <span class="run-via">via ${escHtml(r.mode==="single-shot"?"single-shot runtime":r.via)}</span> ${r.tracePersisted&&r.traceId?`<span class="run-trace">&#10003; metadata trace ${escHtml(r.traceId)} recorded</span>`:`<span class="run-via">trace not persisted</span>`}</div><pre>${escHtml(r.output)}</pre>${feedback}</div>`;
+    if(r.status==="needs_input"){
+      gapFillState={
+        fellowName:inputs.fellowName||"",
+        sourceMaterial:inputs.sourceMaterial||"",
+        exclusions:inputs.exclusions||"",
+        gaps:r.gaps||[],
+      };
+      renderGapFillForm(id,gapFillState);
+      return;
+    }
+    gapFillState=null;
+    renderRunResult(id,r);
+  }catch(e){box.innerHTML=`<div class="run-status run-err">Run failed: ${escHtml(String(e.message||e))}${e.tracePersisted&&e.traceId?`<div>Error trace ${escHtml(e.traceId)} recorded.</div>`:`<div>Error trace persistence is disabled.</div>`}</div>`}
+}
+async function continueGapFillUI(id){
+  if(!gapFillState)return;
+  const box=document.getElementById("run-out");if(!box)return;
+  if(runCapabilities[id]?.governedIdentityMatched!==true){box.innerHTML=`<div class="run-status run-err">${escHtml(GOVERNED_RUNTIME_MISMATCH)}</div>`;return}
+  const gapAnswers={};
+  document.querySelectorAll("#run-panel [data-gap-id]").forEach(el=>{
+    const v=el.value.trim();
+    if(v)gapAnswers[el.getAttribute("data-gap-id")]=v;
+  });
+  const exclusionsEl=document.getElementById("gap-excl");
+  const exclusions=exclusionsEl?exclusionsEl.value.trim():gapFillState.exclusions||"";
+  box.innerHTML='<div class="run-status">Drafting…</div>';
+  try{
+    const r=await DirectoryAPI.runAgent(id,{
+      fellowName:gapFillState.fellowName,
+      sourceMaterial:gapFillState.sourceMaterial,
+      ...(exclusions?{exclusions}:{}),
+      gapAnswers,
+    });
+    if(r.status==="needs_input"){
+      gapFillState={...gapFillState,exclusions,gaps:r.gaps||[]};
+      renderGapFillForm(id,gapFillState);
+      return;
+    }
+    gapFillState=null;
+    renderRunResult(id,r);
   }catch(e){box.innerHTML=`<div class="run-status run-err">Run failed: ${escHtml(String(e.message||e))}${e.tracePersisted&&e.traceId?`<div>Error trace ${escHtml(e.traceId)} recorded.</div>`:`<div>Error trace persistence is disabled.</div>`}</div>`}
 }
 

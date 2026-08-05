@@ -139,7 +139,8 @@ export async function getInstallArtifactCapability(agent) {
     resolveRegisteredArtifact(agent.id);
     return {
       available: true,
-      kind: "single-shot",
+      kind: artifact.mode || "single-shot",
+      mode: artifact.mode || null,
       label: artifact.displayName,
       artifactVersion: artifact.artifactVersion,
       artifactDigest: artifact.artifactDigest,
@@ -165,7 +166,8 @@ export async function loadInstallSkill(agent) {
     artifactVersion: artifact.artifactVersion,
     artifactDigest: artifact.artifactDigest,
     artifactDigestAlgorithm: artifact.artifactDigestAlgorithm,
-    kind: "single-shot",
+    kind: artifact.mode || "single-shot",
+    mode: artifact.mode || null,
   };
 }
 

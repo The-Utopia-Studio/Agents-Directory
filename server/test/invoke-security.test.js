@@ -1135,8 +1135,10 @@ test("usability modes remain separate from the scalar invocation adapter", async
   );
   assert.match(appSource, /check the fold on a phone/);
   assert.match(appSource, /refresh the bio in 2–3 months/);
-  assert.match(appSource, /Copy single-shot SKILL\.md/);
-  assert.match(appSource, /Download single-shot \(\.zip\)/);
+  assert.match(appSource, /Copy \$\{escHtml\(modeWord\)\} SKILL\.md/);
+  assert.match(appSource, /Download \$\{escHtml\(modeWord\)\} \(\.zip\)/);
+  assert.match(appSource, /Run single-shot draft/);
+  assert.match(appSource, /Run gap-fill draft/);
   assert.match(appSource, /const install=capability\.installArtifact;/);
   assert.match(appSource, /if\(install&&install\.available\)/);
   // Export affordances must stay split per usability mode. One shared gate is

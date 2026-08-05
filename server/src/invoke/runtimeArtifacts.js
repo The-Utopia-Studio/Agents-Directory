@@ -135,6 +135,31 @@ function frontmatterList(frontmatter, key) {
 
 const BIOCRAFT_DIRECTORY = new URL("../artifacts/biocraft/", import.meta.url);
 const BIOCRAFT_SNAPSHOT = snapshotArtifact(BIOCRAFT_DIRECTORY, "SKILL.md");
+const BIOCRAFT_GAPFILL_DIRECTORY = new URL(
+  "../artifacts/biocraft-gapfill/",
+  import.meta.url,
+);
+const BIOCRAFT_GAPFILL_SNAPSHOT = snapshotArtifact(
+  BIOCRAFT_GAPFILL_DIRECTORY,
+  "SKILL.md",
+);
+
+const PASTE_UNSUPPORTED = Object.freeze([
+  {
+    label: "LinkedIn URL",
+    reason:
+      "no browser tool — paste your current LinkedIn About and headline instead",
+  },
+  {
+    label: "Google Drive folder or pitch deck",
+    reason:
+      "no Drive tool — paste your pitch or venture notes instead",
+  },
+  {
+    label: "Local file path",
+    reason: "no filesystem access — paste the file contents instead",
+  },
+]);
 
 /**
  * The run contract is server-owned. Field keys are stable identifiers, never
@@ -186,20 +211,52 @@ const RUNTIME_ARTIFACTS = Object.freeze({
       ]),
       // Declared so the UI can show why these are absent rather than asking
       // for material this mode has no tool to read.
-      unsupported: Object.freeze([
+      unsupported: PASTE_UNSUPPORTED,
+    }),
+  }),
+  // Gap-fill is a separate agent from A7. Own artifact, own version history.
+  A9: Object.freeze({
+    directory: BIOCRAFT_GAPFILL_DIRECTORY,
+    url: new URL("../artifacts/biocraft-gapfill/SKILL.md", import.meta.url),
+    mode: "gap-fill",
+    slug: "biocraft-gapfill",
+    displayName: "Biocraft gap-fill draft",
+    snapshot: BIOCRAFT_GAPFILL_SNAPSHOT,
+    descriptions: Object.freeze({
+      "SKILL.md":
+        "The exact gap-fill system artifact executed by the hosted runtime.",
+    }),
+    inputContract: Object.freeze({
+      fields: Object.freeze([
         {
-          label: "LinkedIn URL",
-          reason: "no browser tool in single-shot mode — paste the profile text instead",
+          key: "fellowName",
+          label: "Fellow's name",
+          required: true,
+          multiline: false,
+          aliases: ["Fellow name", "Fellow's name", "name"],
         },
         {
-          label: "Google Drive folder or pitch deck",
-          reason: "no Drive tool in single-shot mode — paste the relevant text instead",
+          key: "sourceMaterial",
+          label: "Source material (paste the full text)",
+          help: "Paste your current LinkedIn About and headline, plus pitch or venture notes, CV, or other profile text. The server cannot fetch links.",
+          required: true,
+          multiline: true,
+          aliases: [
+            "pasted text or local file path",
+            "Pasted text",
+            "sourceText",
+          ],
         },
         {
-          label: "Local file path",
-          reason: "no filesystem access in single-shot mode — paste the file contents instead",
+          key: "exclusions",
+          label: "Anything that must NOT appear (optional)",
+          help: "Sarah's exclusion question — always optional. Not detected as a gap from source material.",
+          required: false,
+          multiline: true,
+          aliases: ["must not appear", "exclusions", "do not include"],
         },
       ]),
+      unsupported: PASTE_UNSUPPORTED,
     }),
   }),
 });

@@ -31,7 +31,10 @@ export const KNOWN_CHECK_IDS = Object.freeze([
 ]);
 
 /** Non-check failures. Codes only — never a provider or model message. */
-export const KNOWN_FAILURE_CODES = Object.freeze(["empty_output"]);
+export const KNOWN_FAILURE_CODES = Object.freeze([
+  "empty_output",
+  "gap_response_unparseable",
+]);
 
 const ALLOWED_REASONS = new Set([...KNOWN_CHECK_IDS, ...KNOWN_FAILURE_CODES]);
 const ALLOWED_CHECK_IDS = new Set(KNOWN_CHECK_IDS);

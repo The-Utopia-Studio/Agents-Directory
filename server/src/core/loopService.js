@@ -63,6 +63,12 @@ function metadataOnlyTrace(agentId, trace) {
     ...(trace.metadata?.via ? { via: trace.metadata.via } : {}),
     ...(trace.metadata?.mode ? { mode: trace.metadata.mode } : {}),
     ...(trace.metadata?.failed === true ? { failed: true } : {}),
+    ...(typeof trace.metadata?.callCount === "number"
+      ? { callCount: trace.metadata.callCount }
+      : {}),
+    ...(typeof trace.metadata?.gapsCount === "number"
+      ? { gapsCount: trace.metadata.gapsCount }
+      : {}),
   };
   // The checker's verdict survives the allowlist; free text does not. Both are
   // filtered through closed vocabularies/field allowlists, so an Anthropic
@@ -377,6 +383,78 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         throw error;
       }
 
+      // Gap-fill Call 1 may stop for answers. That is a completed first turn,
+      // not a draft, so mechanical checks and Convex hosted-run evidence wait.
+      if (result.status === "needs_input") {
+        let trace = null;
+        try {
+          trace = await obs.recordTrace(metadataOnlyTrace(agentId, {
+            agentId,
+            status: "needs_input",
+            latencyMs:
+              typeof result.latencyMs === "number"
+                ? result.latencyMs
+                : Date.now() - started,
+            source: invoker.name === "mock" ? "mock" : "real",
+            ...(typeof result.costUsd === "number"
+              ? { costUsd: result.costUsd }
+              : {}),
+            ...(result.provider ? { provider: result.provider } : {}),
+            ...(result.modelId ? { modelId: result.modelId } : {}),
+            ...(typeof result.inputTokens === "number"
+              ? { inputTokens: result.inputTokens }
+              : {}),
+            ...(typeof result.outputTokens === "number"
+              ? { outputTokens: result.outputTokens }
+              : {}),
+            ...(typeof result.totalTokens === "number"
+              ? { totalTokens: result.totalTokens }
+              : {}),
+            agentVersion: agent.version,
+            ...(result.artifactDigest || artifactDigest
+              ? {
+                  artifactDigest: result.artifactDigest || artifactDigest,
+                  artifactDigestAlgorithm:
+                    result.artifactDigestAlgorithm || artifactDigestAlgorithm,
+                  artifactVersion: result.artifactVersion || artifactVersion,
+                }
+              : {}),
+            metadata: {
+              via: invoker.name,
+              mode: invoker.mode,
+              ...(typeof result.callCount === "number"
+                ? { callCount: result.callCount }
+                : {}),
+              ...(typeof result.gapsCount === "number"
+                ? { gapsCount: result.gapsCount }
+                : {}),
+            },
+          }), { persistRuntime: invoker.name === "runtime" });
+        } catch (persistError) {
+          console.error(
+            `[loop] needs_input run for ${agentId} could not be traced; persistence error: ${String(persistError?.message || persistError)}`,
+          );
+        }
+
+        return {
+          status: "needs_input",
+          gaps: Array.isArray(result.gaps) ? result.gaps : [],
+          output: "",
+          via: invoker.name,
+          mode: invoker.mode || null,
+          callCount: result.callCount || 1,
+          gapsCount: result.gapsCount || 0,
+          agentVersion: agent.version,
+          artifactVersion: result.artifactVersion || artifactVersion || null,
+          artifactDigest: result.artifactDigest || artifactDigest || null,
+          artifactDigestAlgorithm:
+            result.artifactDigestAlgorithm || artifactDigestAlgorithm || null,
+          traceId: trace?.id || null,
+          tracePersisted:
+            Boolean(trace) && trace.persisted !== false && Boolean(trace.id),
+        };
+      }
+
       // The invocation returned. A failed mechanical check means it ran and
       // missed the bar — status "fail", distinct from "error", which means the
       // run did not happen. Both are visible to getFailingTraces, and "fail"
@@ -425,7 +503,16 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
               }
             : {}),
           outputDigest: outputDigest(result.output),
-          metadata: { via: invoker.name, mode: invoker.mode },
+          metadata: {
+            via: invoker.name,
+            mode: invoker.mode,
+            ...(typeof result.callCount === "number"
+              ? { callCount: result.callCount }
+              : {}),
+            ...(typeof result.gapsCount === "number"
+              ? { gapsCount: result.gapsCount }
+              : {}),
+          },
         }), { persistRuntime: invoker.name === "runtime" });
       } catch (persistError) {
         console.error(
@@ -458,6 +545,12 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
           : {}),
         via: invoker.name,
         mode: invoker.mode || null,
+        ...(typeof result.callCount === "number"
+          ? { callCount: result.callCount }
+          : {}),
+        ...(typeof result.gapsCount === "number"
+          ? { gapsCount: result.gapsCount }
+          : {}),
         agentVersion: agent.version,
         artifactVersion: result.artifactVersion || artifactVersion || null,
         artifactDigest: liveDigest,
