@@ -34,8 +34,10 @@ function appConfig() {
     apiToken: "",
     clerk: testClerkOptions(),
     runtime: {
-      anthropic: {
-        ...config.runtime.anthropic,
+      ...config.runtime,
+      provider: "openai",
+      openai: {
+        ...config.runtime.openai,
         apiKey: "",
       },
     },

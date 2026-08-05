@@ -117,7 +117,7 @@ export const SEED_AGENTS = [
     when: "When creating or updating a fellow's LinkedIn bio from incomplete pasted material that may still need Sarah's interview answers. After drafting, check the LinkedIn About fold on a phone.",
     sop: "1. Paste the fellow's name and whatever source material you have (LinkedIn About/headline, pitch or venture notes)\n2. Optionally note anything that must NOT appear\n3. Run gap detection; answer only the returned questions\n4. Review every claim before using the output\n5. Paste the About into LinkedIn and check the fold on a phone",
     skills: ["biocraft", "personal-branding", "copywriting"], tools: [], context: ["Pasted fellow source material", "Gap answers when needed"],
-    evalHistory: [], changelog: [{ version: "1.0", date: "2026-08-05", note: "Gap-fill hosted mode v1 adapted from Sarah's /biocraft; tools stripped; hook 200; keyword line banned." }], proposedImprovements: [] },
+    changelog: [{ version: "1.0", date: "2026-08-05", note: "Gap-fill hosted mode; OpenAI Terra pin in artifact frontmatter (biocraft-gapfill-v2)." }], proposedImprovements: [] },
   // A8 is prepared-handoff: the agent lives in Aiden's repo and runs in Codex,
   // so this record is a catalogue entry, not a copy of the instructions. The
   // engagement terms (checklist, prohibited actions, return protocol) live in

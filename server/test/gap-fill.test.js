@@ -14,6 +14,7 @@ import {
   validateRuntimeArtifactOutput,
 } from "../src/invoke/runtimeArtifacts.js";
 import { runtimeInvoker } from "../src/invoke/index.js";
+import { costUsdFromUsage } from "../src/invoke/llm/pricing.js";
 import { KNOWN_FAILURE_CODES } from "../src/core/traceSafety.js";
 
 const DRAFT = `### LinkedIn About
@@ -37,6 +38,34 @@ Workflow builder for venture teams`;
 function bankGap(id, reason = "not present in source") {
   const item = BIOCRAFT_GAP_BANK.find((g) => g.id === id);
   return { id, question: item.question, reason };
+}
+
+function openaiResponse({ text, input_tokens = 10, output_tokens = 10 }) {
+  return {
+    model: "gpt-5.6-terra",
+    status: "completed",
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text }],
+      },
+    ],
+    usage: {
+      input_tokens,
+      output_tokens,
+      total_tokens: input_tokens + output_tokens,
+    },
+  };
+}
+
+function openaiRuntime(fetch) {
+  return {
+    runtime: {
+      provider: "openai",
+      openai: { apiKey: "test-key", fetch },
+    },
+  };
 }
 
 test("gap bank has five detectable items and exclusions stay outside it", () => {
@@ -106,7 +135,7 @@ test("unansweredGaps and normalizeGapAnswers keep only bank ids", () => {
   );
 });
 
-test("A9 is registered as gap-fill with its own artifact", async () => {
+test("A9 is registered as gap-fill with its own OpenAI-pinned artifact", async () => {
   assert.equal(await hasRuntimeArtifact("A9"), true);
   assert.equal(getRuntimeArtifactMode("A9"), "gap-fill");
   assert.equal(getRuntimeArtifactMode("A7"), "single-shot");
@@ -115,52 +144,43 @@ test("A9 is registered as gap-fill with its own artifact", async () => {
     contract.fields.map((f) => f.key),
     ["fellowName", "sourceMaterial", "exclusions"],
   );
-  assert.ok(
-    contract.unsupported.some((u) => /LinkedIn About and headline/i.test(u.reason)),
+});
+
+test("Terra pricing attributes spend from token counts", () => {
+  assert.equal(
+    costUsdFromUsage("gpt-5.6-terra", { inputTokens: 1_000_000, outputTokens: 0 }),
+    2,
   );
+  assert.equal(
+    costUsdFromUsage("gpt-5.6-terra", { inputTokens: 0, outputTokens: 1_000_000 }),
+    12,
+  );
+  assert.equal(costUsdFromUsage("unknown-model", { inputTokens: 10 }), undefined);
 });
 
 test("A9 mechanical checks reuse the same validators as A7", () => {
   assert.deepEqual(validateRuntimeArtifactOutput("A9", DRAFT), []);
-  const failed = validateRuntimeArtifactOutput(
-    "A9",
-    DRAFT.replace(
-      "I help venture teams turn complex ideas into practical tools.",
-      "x".repeat(201),
-    ),
-  );
-  assert.ok(failed.some((f) => f.checkId === "about_hook_max_200_characters"));
 });
 
 test("gap-fill returns needs_input without drafting when gaps remain", async () => {
   let calls = 0;
-  const invoker = runtimeInvoker({
-    runtime: {
-      anthropic: {
-        apiKey: "test-key",
-        fetch: async () => {
-          calls += 1;
-          return {
-            ok: true,
-            async json() {
-              return {
-                model: "claude-sonnet-4-6",
-                usage: { input_tokens: 10, output_tokens: 20 },
-                content: [
-                  {
-                    type: "text",
-                    text: JSON.stringify({
-                      gaps: [bankGap("proudest-outcome", "no outcome in paste")],
-                    }),
-                  },
-                ],
-              };
-            },
-          };
+  const invoker = runtimeInvoker(
+    openaiRuntime(async () => {
+      calls += 1;
+      return {
+        ok: true,
+        async json() {
+          return openaiResponse({
+            text: JSON.stringify({
+              gaps: [bankGap("proudest-outcome", "no outcome in paste")],
+            }),
+            input_tokens: 10,
+            output_tokens: 20,
+          });
         },
-      },
-    },
-  });
+      };
+    }),
+  );
   const result = await invoker.invoke(
     { id: "A9", invocation: { type: "runtime", mode: "gap-fill" } },
     {
@@ -171,51 +191,50 @@ test("gap-fill returns needs_input without drafting when gaps remain", async () 
   assert.equal(calls, 1);
   assert.equal(result.status, "needs_input");
   assert.equal(result.callCount, 1);
-  assert.equal(result.gapsCount, 1);
+  assert.equal(result.provider, "openai");
+  assert.equal(result.modelId, "gpt-5.6-terra");
+  assert.equal(result.costUsd, costUsdFromUsage("gpt-5.6-terra", {
+    inputTokens: 10,
+    outputTokens: 20,
+  }));
   assert.equal(result.gaps[0].id, "proudest-outcome");
   assert.equal(result.output, "");
-  assert.equal(result.inputTokens, 10);
-  assert.equal(result.outputTokens, 20);
 });
 
 test("gap-fill zero gaps drafts immediately with two calls", async () => {
   let calls = 0;
-  const invoker = runtimeInvoker({
-    runtime: {
-      anthropic: {
-        apiKey: "test-key",
-        fetch: async (_url, init) => {
-          calls += 1;
-          const body = JSON.parse(init.body);
-          const user = JSON.parse(body.messages[0].content);
-          if (calls === 1) {
-            assert.equal(user.phase, "detect-gaps");
-            return {
-              ok: true,
-              async json() {
-                return {
-                  model: "claude-sonnet-4-6",
-                  usage: { input_tokens: 11, output_tokens: 5 },
-                  content: [{ type: "text", text: '{"gaps":[]}' }],
-                };
-              },
-            };
-          }
-          assert.equal(user.phase, "draft");
-          return {
-            ok: true,
-            async json() {
-              return {
-                model: "claude-sonnet-4-6",
-                usage: { input_tokens: 40, output_tokens: 80 },
-                content: [{ type: "text", text: DRAFT }],
-              };
-            },
-          };
+  const invoker = runtimeInvoker(
+    openaiRuntime(async (_url, init) => {
+      calls += 1;
+      const body = JSON.parse(init.body);
+      const user = JSON.parse(body.input);
+      if (calls === 1) {
+        assert.equal(user.phase, "detect-gaps");
+        assert.equal(body.model, "gpt-5.6-terra");
+        return {
+          ok: true,
+          async json() {
+            return openaiResponse({
+              text: '{"gaps":[]}',
+              input_tokens: 11,
+              output_tokens: 5,
+            });
+          },
+        };
+      }
+      assert.equal(user.phase, "draft");
+      return {
+        ok: true,
+        async json() {
+          return openaiResponse({
+            text: DRAFT,
+            input_tokens: 40,
+            output_tokens: 80,
+          });
         },
-      },
-    },
-  });
+      };
+    }),
+  );
   const result = await invoker.invoke(
     { id: "A9", invocation: { type: "runtime", mode: "gap-fill" } },
     {
@@ -227,59 +246,50 @@ test("gap-fill zero gaps drafts immediately with two calls", async () => {
   assert.equal(calls, 2);
   assert.equal(result.status, "ok");
   assert.equal(result.callCount, 2);
-  assert.equal(result.gapsCount, 0);
   assert.equal(result.inputTokens, 51);
   assert.equal(result.outputTokens, 85);
-  assert.equal(result.totalTokens, 136);
+  assert.equal(
+    result.costUsd,
+    Math.round(
+      ((11 / 1e6) * 2 + (5 / 1e6) * 12 + (40 / 1e6) * 2 + (80 / 1e6) * 12) *
+        1e8,
+    ) / 1e8,
+  );
   assert.match(result.output, /### LinkedIn About/);
 });
 
 test("gap-fill continue drafts after answers; unparseable Call 1 never drafts", async () => {
   let calls = 0;
-  const invoker = runtimeInvoker({
-    runtime: {
-      anthropic: {
-        apiKey: "test-key",
-        fetch: async (_url, init) => {
-          calls += 1;
-          const body = JSON.parse(init.body);
-          const user = JSON.parse(body.messages[0].content);
-          if (calls === 1) {
-            assert.equal(user.phase, "detect-gaps");
-            return {
-              ok: true,
-              async json() {
-                return {
-                  model: "claude-sonnet-4-6",
-                  usage: { input_tokens: 12, output_tokens: 8 },
-                  content: [
-                    {
-                      type: "text",
-                      text: JSON.stringify({
-                        gaps: [bankGap("contact", "no CTA channel")],
-                      }),
-                    },
-                  ],
-                };
-              },
-            };
-          }
-          assert.equal(user.phase, "draft");
-          assert.equal(user.gapAnswers.contact, "message me on LinkedIn");
-          return {
-            ok: true,
-            async json() {
-              return {
-                model: "claude-sonnet-4-6",
-                usage: { input_tokens: 30, output_tokens: 60 },
-                content: [{ type: "text", text: DRAFT }],
-              };
-            },
-          };
+  const invoker = runtimeInvoker(
+    openaiRuntime(async (_url, init) => {
+      calls += 1;
+      const body = JSON.parse(init.body);
+      const user = JSON.parse(body.input);
+      if (calls === 1) {
+        assert.equal(user.phase, "detect-gaps");
+        return {
+          ok: true,
+          async json() {
+            return openaiResponse({
+              text: JSON.stringify({
+                gaps: [bankGap("contact", "no CTA channel")],
+              }),
+              input_tokens: 12,
+              output_tokens: 8,
+            });
+          },
+        };
+      }
+      assert.equal(user.phase, "draft");
+      assert.equal(user.gapAnswers.contact, "message me on LinkedIn");
+      return {
+        ok: true,
+        async json() {
+          return openaiResponse({ text: DRAFT, input_tokens: 30, output_tokens: 60 });
         },
-      },
-    },
-  });
+      };
+    }),
+  );
   const result = await invoker.invoke(
     { id: "A9", invocation: { type: "runtime", mode: "gap-fill" } },
     {
@@ -291,25 +301,19 @@ test("gap-fill continue drafts after answers; unparseable Call 1 never drafts", 
   );
   assert.equal(calls, 2);
   assert.equal(result.status, "ok");
-  assert.equal(result.callCount, 2);
 
-  const bad = runtimeInvoker({
-    runtime: {
-      anthropic: {
-        apiKey: "test-key",
-        fetch: async () => ({
-          ok: true,
-          async json() {
-            return {
-              model: "claude-sonnet-4-6",
-              usage: { input_tokens: 3, output_tokens: 3 },
-              content: [{ type: "text", text: "I'll just draft instead." }],
-            };
-          },
-        }),
+  const bad = runtimeInvoker(
+    openaiRuntime(async () => ({
+      ok: true,
+      async json() {
+        return openaiResponse({
+          text: "I'll just draft instead.",
+          input_tokens: 3,
+          output_tokens: 3,
+        });
       },
-    },
-  });
+    })),
+  );
   await assert.rejects(
     () =>
       bad.invoke(

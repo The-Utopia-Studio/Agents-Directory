@@ -90,6 +90,20 @@ export function snapshotArtifact(directoryUrl, primaryName) {
       "Artifact loaded without a valid artifact_version frontmatter field",
     );
   }
+  // Generator pin lives in the digestable bytes so a model/provider change
+  // moves the digest and forces a new released version — same gate as a prompt
+  // edit. Absence is a defect: every hosted artifact must declare what runs it.
+  const runtimeProvider = frontmatter.match(
+    /^runtime_provider:\s*(openai|anthropic)\s*$/m,
+  )?.[1];
+  const runtimeModel = frontmatter.match(
+    /^runtime_model:\s*([a-zA-Z0-9._/-]+)\s*$/m,
+  )?.[1];
+  if (!runtimeProvider || !runtimeModel) {
+    throw new Error(
+      "Artifact loaded without runtime_provider and runtime_model frontmatter",
+    );
+  }
   const guardrails = frontmatterList(frontmatter, "guardrails");
   const successCriteria = frontmatterList(frontmatter, "success_criteria");
   const checks = frontmatterList(frontmatter, "checks");
@@ -113,6 +127,8 @@ export function snapshotArtifact(directoryUrl, primaryName) {
     content,
     files,
     artifactVersion,
+    runtimeProvider,
+    runtimeModel,
     guardrails,
     successCriteria,
     checks,
@@ -309,6 +325,8 @@ export function getRuntimeArtifactDescriptor(agentId) {
     slug: artifact.slug,
     displayName: artifact.displayName,
     artifactVersion: artifact.snapshot.artifactVersion,
+    runtimeProvider: artifact.snapshot.runtimeProvider,
+    runtimeModel: artifact.snapshot.runtimeModel,
     guardrails: [...artifact.snapshot.guardrails],
     successCriteria: [...artifact.snapshot.successCriteria],
     checks: [...artifact.snapshot.checks],

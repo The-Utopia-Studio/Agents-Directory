@@ -72,6 +72,8 @@ function buildManifest(agent, artifact, files) {
 - Directory display ID: ${agent.id}
 - Directory record name: ${agent.name}
 - Artifact mode: ${artifact.mode}
+- Runtime provider: \`${artifact.runtimeProvider || "undeclared"}\`
+- Runtime model: \`${artifact.runtimeModel || "undeclared"}\`
 - Artifact digest: \`${artifact.artifactDigest}\`
 - Artifact digest algorithm: \`${artifact.artifactDigestAlgorithm}\`
 
@@ -92,10 +94,11 @@ Keep these files together as one \`${artifact.slug}\` folder.
 - Other harnesses: use that harness's skills directory without flattening or
   renaming the folder.
 
-This is the **single-shot artifact**, not the full Chrome/Google Drive
+This is the **${artifact.mode} artifact**, not the full Chrome/Google Drive
 \`/biocraft\` agent. The hosted runtime executes this same server-owned
 \`SKILL.md\` verbatim. It has no browser, Drive, filesystem, HTML-rendering, or
-follow-up conversation tools.
+follow-up conversation tools. The generator pin above is part of the digest:
+changing provider or model requires a new artifact version.
 
 The filename and this manifest use the stable version label declared inside
 \`SKILL.md\`. Runtime, evaluation, copy, and download all resolve through that

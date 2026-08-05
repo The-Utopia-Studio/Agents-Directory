@@ -16,6 +16,7 @@ import {
   RUNTIME_TIMEOUT_MS,
   runtimeInvoker,
 } from "../src/invoke/index.js";
+import { costUsdFromUsage } from "../src/invoke/llm/pricing.js";
 import {
   getRuntimeInputContract,
   resolveRuntimeInputs,
@@ -197,17 +198,44 @@ test("failed HTTP run returns non-2xx while file trace writes are disabled", asy
   assert.equal(body.tracePersisted, false);
 });
 
+function openaiResponse({
+  text,
+  model = "gpt-5.6-terra",
+  input_tokens = 10,
+  output_tokens = 10,
+}) {
+  return {
+    model,
+    status: "completed",
+    output: [
+      {
+        type: "message",
+        role: "assistant",
+        content: [{ type: "output_text", text }],
+      },
+    ],
+    usage: {
+      input_tokens,
+      output_tokens,
+      total_tokens: input_tokens + output_tokens,
+    },
+  };
+}
+
 function runtimeConfig(overrides = {}) {
-  const { clerk: clerkOverride, ...anthropicOverrides } = overrides;
+  const { clerk: clerkOverride, provider = "openai", ...providerOverrides } =
+    overrides;
   return {
     ...config,
     apiToken: "",
     clerk: clerkOverride || testClerkOptions(),
     runtime: {
-      anthropic: {
-        ...config.runtime.anthropic,
+      ...config.runtime,
+      provider,
+      [provider]: {
+        ...(config.runtime[provider] || {}),
         apiKey: "test-runtime-key",
-        ...anthropicOverrides,
+        ...providerOverrides,
       },
     },
   };
@@ -222,11 +250,11 @@ async function listen(app, t) {
 
 test("runtime uses a dedicated 120 second generation timeout", () => {
   assert.equal(RUNTIME_TIMEOUT_MS, 120_000);
-  assert.equal(config.runtime.anthropic.timeoutMs, 120_000);
-  assert.ok(60_000 < config.runtime.anthropic.timeoutMs);
+  assert.equal(config.runtime.openai.timeoutMs, 120_000);
+  assert.ok(60_000 < config.runtime.openai.timeoutMs);
 });
 
-test("runtime timeout aborts the Anthropic request with a visible 504", async () => {
+test("runtime timeout aborts the OpenAI request with a visible 504", async () => {
   const invoker = runtimeInvoker(
     runtimeConfig({
       timeoutMs: 10,
@@ -249,11 +277,11 @@ test("runtime timeout aborts the Anthropic request with a visible 504", async ()
       ),
     (error) =>
       error.status === 504 &&
-      error.message === "Anthropic generation timed out",
+      error.message === "OpenAI generation timed out",
   );
 });
 
-test("single-shot mode rejects incomplete source material before calling Anthropic", async () => {
+test("single-shot mode rejects incomplete source material before calling the model", async () => {
   let called = false;
   const invoker = runtimeInvoker(
     runtimeConfig({
@@ -548,11 +576,12 @@ test("a failed check returns the output it was billed for, marked", async () => 
     runtimeConfig({
       fetch: async () => ({
         ok: true,
-        json: async () => ({
-          model: "claude-sonnet-4-6",
-          usage: { input_tokens: 900, output_tokens: 400 },
-          content: [{ type: "text", text: failing }],
-        }),
+        json: async () =>
+          openaiResponse({
+            text: failing,
+            input_tokens: 900,
+            output_tokens: 400,
+          }),
       }),
     }),
   );
@@ -566,11 +595,15 @@ test("a failed check returns the output it was billed for, marked", async () => 
   // output is what made a check failure impossible to diagnose or attribute.
   assert.equal(result.output, failing);
   assert.equal(result.totalTokens, 1300);
+  assert.equal(result.costUsd, costUsdFromUsage("gpt-5.6-terra", {
+    inputTokens: 900,
+    outputTokens: 400,
+  }));
   assert.equal(result.checkResults.length, 1);
   assert.equal(result.checkResults[0].checkId, "about_closing_has_cta");
 });
 
-test("single-shot run forwards only contract fields to Anthropic", async () => {
+test("single-shot run forwards only contract fields to OpenAI Responses", async () => {
   let request;
   const invoker = runtimeInvoker(
     runtimeConfig({
@@ -578,10 +611,7 @@ test("single-shot run forwards only contract fields to Anthropic", async () => {
         request = JSON.parse(init.body);
         return {
           ok: true,
-          json: async () => ({
-            model: "claude-sonnet-4-6",
-            content: [{ type: "text", text: VALID_BIOCRAFT_OUTPUT }],
-          }),
+          json: async () => openaiResponse({ text: VALID_BIOCRAFT_OUTPUT }),
         };
       },
     }),
@@ -595,18 +625,21 @@ test("single-shot run forwards only contract fields to Anthropic", async () => {
       "Google Drive folder or pitch deck": "https://drive.google.com/x",
     },
   );
-  assert.deepEqual(JSON.parse(request.messages[0].content), {
+  assert.deepEqual(JSON.parse(request.input), {
     fellowName: "Haniyah Umair",
     sourceMaterial: "Profile text.",
   });
+  assert.equal(request.model, "gpt-5.6-terra");
+  assert.equal(typeof request.instructions, "string");
+  assert.equal(request.store, false);
 });
 
 test(
   "live Biocraft single-shot runtime returns generated bio text",
   {
     skip:
-      process.env.RUN_LIVE_ANTHROPIC_TESTS !== "true" ||
-      !config.runtime.anthropic.apiKey,
+      process.env.RUN_LIVE_OPENAI_TESTS !== "true" ||
+      !config.runtime.openai.apiKey,
   },
   async () => {
     const invoker = runtimeInvoker(config);
@@ -633,14 +666,15 @@ test(
     );
     assert.match(result.output, /Alex Morgan/i);
     assert.ok(result.output.length > 100);
-    assert.equal(result.provider, "anthropic");
-    assert.equal(result.modelId, "claude-sonnet-4-6");
+    assert.equal(result.provider, "openai");
+    assert.equal(result.modelId, "gpt-5.6-terra");
     assert.equal(typeof result.inputTokens, "number");
     assert.equal(typeof result.outputTokens, "number");
+    assert.equal(typeof result.costUsd, "number");
   },
 );
 
-test("missing Anthropic key is a visible non-2xx failure without a key leak", async (t) => {
+test("missing OpenAI key is a visible non-2xx failure without a key leak", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "adir-runtime-key-"));
   const store = createStore(dir);
   const app = await buildApp({
@@ -680,18 +714,17 @@ test("missing Anthropic key is a visible non-2xx failure without a key leak", as
   assert.equal(response.status, 503);
   const body = await response.json();
   assert.equal(body.error, "Runtime is not configured on the server");
-  assert.doesNotMatch(body.error, /test-runtime-key|sk-ant/i);
+  assert.doesNotMatch(body.error, /test-runtime-key|sk-/i);
 });
 
-test("Anthropic API failures stay non-2xx and do not expose the key", async (t) => {
+test("OpenAI API failures stay non-2xx and do not expose the key", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "adir-runtime-model-"));
   const store = createStore(dir);
   const app = await buildApp({
     store,
     config: runtimeConfig({
-      model: "broken-model",
       fetch: async (_url, init) => {
-        assert.equal(JSON.parse(init.body).model, "broken-model");
+        assert.equal(JSON.parse(init.body).model, "gpt-5.6-terra");
         return new Response(JSON.stringify({ error: { message: "bad model" } }), {
           status: 400,
           headers: { "content-type": "application/json" },
@@ -713,12 +746,11 @@ test("Anthropic API failures stay non-2xx and do not expose the key", async (t) 
   });
   assert.equal(response.status, 502);
   const body = await response.json();
-  assert.equal(body.error, "Anthropic Messages API returned 400");
-  assert.doesNotMatch(body.error, /test-runtime-key|sk-ant/i);
+  assert.equal(body.error, "OpenAI Responses API returned 400");
+  assert.doesNotMatch(body.error, /test-runtime-key|sk-/i);
   const [trace] = await store.all("traces");
   assert.equal(trace.status, "error");
-  assert.equal(trace.provider, "anthropic");
-  assert.equal(trace.modelId, "broken-model");
+  assert.equal(trace.provider, "openai");
   assert.equal(trace.agentVersion, "1.0");
   assert.equal("input" in trace, false);
   assert.equal("output" in trace, false);
@@ -740,17 +772,13 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
         };
         await new Promise((resolve) => setTimeout(resolve, 20));
         return new Response(
-          JSON.stringify({
-            model: "claude-sonnet-4-6",
-            stop_reason: "end_turn",
-            content: [
-              {
-                type: "text",
-                text: VALID_BIOCRAFT_OUTPUT,
-              },
-            ],
-            usage: { input_tokens: 2345, output_tokens: 17 },
-          }),
+          JSON.stringify(
+            openaiResponse({
+              text: VALID_BIOCRAFT_OUTPUT,
+              input_tokens: 2345,
+              output_tokens: 17,
+            }),
+          ),
           { status: 200, headers: { "content-type": "application/json" } },
         );
       },
@@ -782,7 +810,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     ["LinkedIn URL", "Google Drive folder or pitch deck", "Local file path"],
   );
   assert.equal(installArtifact.available, true);
-  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v7");
+  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v8");
   assert.match(installArtifact.artifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(installArtifact.artifactDigestAlgorithm, "sha256");
 
@@ -832,38 +860,44 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(run.via, "runtime");
   assert.equal(run.mode, "single-shot");
   assert.equal(run.agentVersion, "1.0");
-  assert.equal(run.artifactVersion, "biocraft-singleshot-v7");
+  assert.equal(run.artifactVersion, "biocraft-singleshot-v8");
   assert.equal(
     run.artifactDigest,
-    createHash("sha256").update(request.body.system).digest("hex"),
+    createHash("sha256").update(request.body.instructions).digest("hex"),
   );
   assert.equal(run.artifactDigestAlgorithm, "sha256");
   assert.equal(run.tracePersisted, true);
   assert.ok(run.traceId);
-  assert.match(request.body.system, /# Biocraft — Single-Shot Fellow Bio Draft/);
-  assert.match(request.body.system, /## Mode boundary/);
+  assert.match(request.body.instructions, /# Biocraft — Single-Shot Fellow Bio Draft/);
+  assert.match(request.body.instructions, /## Mode boundary/);
   assert.match(
-    request.body.system,
+    request.body.instructions,
     /This is not the full interactive `\/biocraft` workflow/,
   );
-  assert.doesNotMatch(request.body.system, /MALICIOUS CLIENT PROMPT/);
-  assert.equal(request.body.model, "claude-sonnet-4-6");
-  assert.equal(request.body.max_tokens, 4096);
-  assert.equal(request.headers["x-api-key"], "test-runtime-key");
+  assert.doesNotMatch(request.body.instructions, /MALICIOUS CLIENT PROMPT/);
+  assert.equal(request.body.model, "gpt-5.6-terra");
+  assert.equal(request.body.store, false);
+  assert.equal(request.headers.authorization, "Bearer test-runtime-key");
 
   const trace = await store.get("traces", run.traceId);
   assert.equal(trace.source, "real");
-  assert.equal(trace.provider, "anthropic");
-  assert.equal(trace.modelId, "claude-sonnet-4-6");
+  assert.equal(trace.provider, "openai");
+  assert.equal(trace.modelId, "gpt-5.6-terra");
   assert.equal(trace.inputTokens, 2345);
   assert.equal(trace.outputTokens, 17);
   assert.equal(trace.totalTokens, 2362);
-  assert.equal("costUsd" in trace, false);
+  assert.equal(
+    trace.costUsd,
+    costUsdFromUsage("gpt-5.6-terra", {
+      inputTokens: 2345,
+      outputTokens: 17,
+    }),
+  );
   assert.equal(typeof trace.latencyMs, "number");
   assert.equal(trace.metadata.via, "runtime");
   assert.equal(trace.metadata.mode, "single-shot");
   assert.equal(trace.agentVersion, "1.0");
-  assert.equal(trace.artifactVersion, "biocraft-singleshot-v7");
+  assert.equal(trace.artifactVersion, "biocraft-singleshot-v8");
   assert.equal(trace.artifactDigest, run.artifactDigest);
   assert.equal(trace.artifactDigestAlgorithm, "sha256");
   assert.equal("agentVersionId" in trace, false);
@@ -945,10 +979,7 @@ test("feedback notes gate off rejects notes but still accepts the rating", async
   const gated = runtimeConfig({
     fetch: async () => ({
       ok: true,
-      json: async () => ({
-        model: "claude-sonnet-4-6",
-        content: [{ type: "text", text: VALID_BIOCRAFT_OUTPUT }],
-      }),
+      json: async () => openaiResponse({ text: VALID_BIOCRAFT_OUTPUT }),
     }),
   });
   const app = await buildApp({
@@ -1014,11 +1045,7 @@ test("a failed-check run reaches the caller and the store as fail, not error", a
     config: runtimeConfig({
       fetch: async () => ({
         ok: true,
-        json: async () => ({
-          model: "claude-sonnet-4-6",
-          usage: { input_tokens: 900, output_tokens: 400 },
-          content: [{ type: "text", text: failing }],
-        }),
+        json: async () => openaiResponse({ text: failing, input_tokens: 900, output_tokens: 400 }),
       }),
     }),
   });

@@ -3,7 +3,9 @@ name: biocraft-single-shot
 description: Stateless text-only Biocraft draft from complete source material supplied in one request.
 user-invocable: true
 artifact-mode: single-shot
-artifact_version: biocraft-singleshot-v7
+artifact_version: biocraft-singleshot-v8
+runtime_provider: openai
+runtime_model: gpt-5.6-terra
 success_criteria:
   - LinkedIn About hook is 200 characters or fewer
   - Full LinkedIn About text is 2,600 characters or fewer
@@ -35,6 +37,10 @@ checks:
 You are Biocraft's hosted single-shot drafting mode. Produce a professional
 LinkedIn bio package for a Utopia Studio fellow from the complete source
 material and optional interview answers supplied in this request.
+
+Generator identity is declared in frontmatter (`runtime_provider` /
+`runtime_model`) and is part of this file's digest. Changing the model is a
+new artifact version.
 
 ## Mode boundary
 

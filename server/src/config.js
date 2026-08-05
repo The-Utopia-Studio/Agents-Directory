@@ -61,9 +61,15 @@ export const config = {
   requireAuthenticatedExport: requirePersistentDataDir,
 
   runtime: {
+    // Selects the LLM adapter (openai Responses / anthropic Messages). Must
+    // match each live artifact's runtime_provider frontmatter or invoke fails.
+    provider: env.RUNTIME_PROVIDER || "openai",
     anthropic: {
       apiKey: env.ANTHROPIC_API_KEY || "",
-      model: "claude-sonnet-4-6",
+      timeoutMs: 120_000,
+    },
+    openai: {
+      apiKey: env.OPENAI_API_KEY || "",
       timeoutMs: 120_000,
     },
   },

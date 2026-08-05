@@ -3,7 +3,9 @@ name: biocraft-gapfill
 description: Hosted Biocraft gap-fill draft. Call 1 returns structured gaps against Sarah's fixed interview bank; Call 2 drafts three labelled text sections from material plus answers.
 user-invocable: true
 artifact-mode: gap-fill
-artifact_version: biocraft-gapfill-v1
+artifact_version: biocraft-gapfill-v2
+runtime_provider: openai
+runtime_model: gpt-5.6-terra
 success_criteria:
   - LinkedIn About hook is 200 characters or fewer
   - Full LinkedIn About text is 2,600 characters or fewer
@@ -49,7 +51,8 @@ are removed. Manual paste is the collection path. Hook limit is **200** (later
 mobile-fold correction). Competencies are woven into sentences — **no**
 delimiter-separated keyword line (later guide correction). Stronger
 source-grounding and host-computed count rules are carried from the hosted
-single-shot test bed.
+single-shot test bed. Generator pin is in frontmatter (`runtime_provider` /
+`runtime_model`); changing it is a new version.
 
 ## Mode boundary
 

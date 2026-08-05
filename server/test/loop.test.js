@@ -53,10 +53,10 @@ async function serviceWithA7Feedback(feedback) {
   return svc;
 }
 
-test("loads eight agents and historical A2 trace fixtures", async () => {
+test("loads nine agents and historical A2 trace fixtures", async () => {
   const svc = await freshService();
   const agents = await svc.listAgents();
-  assert.equal(agents.length, 8);
+  assert.equal(agents.length, 9);
   const failing = await svc.listTraces("A2");
   assert.ok(failing.length >= 5);
 });
@@ -247,7 +247,7 @@ test("a proposal records the artifact it was derived against", async () => {
     metadata: { via: "runtime" },
   });
   const [proposal] = await svc.runImprovement("A7");
-  assert.equal(proposal.targetArtifactVersion, "biocraft-singleshot-v7");
+  assert.equal(proposal.targetArtifactVersion, "biocraft-singleshot-v8");
   assert.match(proposal.targetArtifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(proposal.targetArtifactDigestAlgorithm, "sha256");
   assert.equal(proposal.targetAgentVersion, (await svc.getAgent("A7")).version);
@@ -279,7 +279,7 @@ test("approval is refused when the targeted artifact has moved", async () => {
     () => svc.approveImprovement("A7", proposal.id, TEST_APPROVER),
     (e) => {
       assert.equal(e.status, 409);
-      assert.match(e.message, /but the live artifact is biocraft-singleshot-v7/);
+      assert.match(e.message, /but the live artifact is biocraft-singleshot-v8/);
       return true;
     },
   );
@@ -419,7 +419,7 @@ test("logEval appends to history and moves fleet health", async () => {
   const a4 = await svc.getAgent("A4");
   assert.equal(a4.evalHistory.at(-1).score, 90);
   const health = await svc.fleetHealth();
-  assert.equal(health.total, 8);
+  assert.equal(health.total, 9);
   assert.ok(health.coverage > 0);
 });
 

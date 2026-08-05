@@ -114,14 +114,14 @@ test("A7 copy export is byte-for-byte the system artifact runtime executes", asy
   assert.equal(exported.kind, "single-shot");
   assert.equal(exported.artifactDigest, expectedDigest);
   assert.equal(exported.artifactDigestAlgorithm, "sha256");
-  assert.equal(exported.artifactVersion, "biocraft-singleshot-v7");
+  assert.equal(exported.artifactVersion, "biocraft-singleshot-v8");
   assert.equal(
     exported.filename,
-    `A7-biocraft-singleshot-v7-${expectedDigest.slice(0, 7)}-SKILL.md`,
+    `A7-biocraft-singleshot-v8-${expectedDigest.slice(0, 7)}-SKILL.md`,
   );
   assert.match(
     exported.content,
-    /^artifact_version: biocraft-singleshot-v7$/m,
+    /^artifact_version: biocraft-singleshot-v8$/m,
   );
   assert.doesNotMatch(exported.content, /artifact-(?:commit|digest):/);
   assert.match(exported.content, /## Mode boundary/);
@@ -133,16 +133,26 @@ test("A7 copy export is byte-for-byte the system artifact runtime executes", asy
   const invoker = runtimeInvoker({
     ...config,
     runtime: {
-      anthropic: {
-        ...config.runtime.anthropic,
+      ...config.runtime,
+      provider: "openai",
+      openai: {
+        ...config.runtime.openai,
         apiKey: "test-runtime-key",
         fetch: async (_url, init) => {
-          runtimeSystem = JSON.parse(init.body).system;
+          runtimeSystem = JSON.parse(init.body).instructions;
           return {
             ok: true,
             json: async () => ({
-              model: "claude-sonnet-4-6",
-              content: [{ type: "text", text: VALID_OUTPUT }],
+              model: "gpt-5.6-terra",
+              status: "completed",
+              output: [
+                {
+                  type: "message",
+                  role: "assistant",
+                  content: [{ type: "output_text", text: VALID_OUTPUT }],
+                },
+              ],
+              usage: { input_tokens: 10, output_tokens: 10 },
             }),
           };
         },
@@ -191,7 +201,7 @@ test("A7 ZIP contains the runtime folder and follows the evaluated version", asy
   assert.equal(response.headers.get("x-artifact-digest"), expectedDigest);
   assert.equal(
     response.headers.get("content-disposition"),
-    `attachment; filename="A7-biocraft-singleshot-v7-${expectedDigest.slice(0, 7)}.zip"`,
+    `attachment; filename="A7-biocraft-singleshot-v8-${expectedDigest.slice(0, 7)}.zip"`,
   );
   const manifest = files.get("MANIFEST.md").toString();
   assert.match(manifest, /Agent name: Biocraft single-shot draft/);
@@ -202,7 +212,7 @@ test("A7 ZIP contains the runtime folder and follows the evaluated version", asy
   // appears only as a cross-reference, in prose that says so.
   assert.match(
     manifest,
-    /\*\*Artifact version — quote this when returning a result:\*\*\n`biocraft-singleshot-v7`/,
+    /\*\*Artifact version — quote this when returning a result:\*\*\n`biocraft-singleshot-v8`/,
   );
   assert.match(
     manifest,
@@ -270,6 +280,8 @@ name: boot-fail-fixture
 description: Fixture for asserting import-time abort.
 artifact-mode: single-shot
 artifact_version: boot-fail-v0
+runtime_provider: openai
+runtime_model: gpt-5.6-terra
 `;
 
   const cases = [
@@ -331,6 +343,8 @@ name: boot-fail-check-fixture
 description: Fixture for check validation.
 artifact-mode: single-shot
 artifact_version: boot-fail-check-v0
+runtime_provider: openai
+runtime_model: gpt-5.6-terra
 guardrails:
   - Never fabricate a metric
 success_criteria:

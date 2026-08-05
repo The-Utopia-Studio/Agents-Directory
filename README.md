@@ -208,9 +208,18 @@ npm start --prefix server   # :8790
 | Vercel | `CONVEX_URL` | Non-secret deployment URL |
 | Vercel | `CLERK_PUBLISHABLE_KEY` | `pk_…`, public by design |
 | Railway | `DATA_DIR` | **Must be `/data`** — a mounted volume |
-| Railway | `ANTHROPIC_API_KEY` | Hosted runs |
+| Railway | `RUNTIME_PROVIDER` | `openai` (default) or `anthropic` — must match artifact frontmatter |
+| Railway | `OPENAI_API_KEY` | Hosted runs when provider is openai (A7 v8 / A9 v2 use `gpt-5.6-terra`) |
+| Railway | `ANTHROPIC_API_KEY` | Only if `RUNTIME_PROVIDER=anthropic` and the artifact declares it |
 | Railway | `CLERK_JWT_ISSUER_DOMAIN` | Or gated routes fail closed |
 | Railway | `CONVEX_DEPLOY_KEY` | Evidence writes. See limitations — this is god-mode |
+
+> ⚠️ **v7-on-Sonnet vs v8-on-Terra are not comparable.** Traces, star ratings, and
+> mechanical scores recorded against `biocraft-singleshot-v7` (Anthropic Claude
+> Sonnet) must not be used as a baseline for `biocraft-singleshot-v8` (OpenAI
+> Responses / `gpt-5.6-terra`). Same class of non-comparability as every prior
+> version bump: the digest moved because the generator pin is now part of the
+> artifact bytes (`runtime_provider` / `runtime_model` in frontmatter).
 
 > ⚠️ Never put a Clerk **secret** key, a JWT, or a token in `deployment-config.js`.
 > The frontend build writes that file into the browser bundle.
