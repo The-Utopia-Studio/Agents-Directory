@@ -141,7 +141,7 @@ const SEED_AGENTS=[
     changelog:[{version:"1.0",date:"2026-08-01",note:"Stateless single-shot draft mode using a server-owned SKILL.md."}],
     proposedImprovements:[]},
 
-  {id:"A9",name:"Biocraft gap-fill draft",tagline:"Sarah's interview bank as batched gaps, then a text draft. Paste material; answer only what is still missing.",description:"Hosted gap-fill mode adapted from /biocraft. Call 1 returns structured gaps against a fixed question bank; Call 2 drafts three labelled text sections. No Chrome, Drive, or HTML file write.",platform:"OpenAI",status:"Experimental",category:"Personal Branding",owner:"Sarah",initials:"SA",model:"gpt-5.6-terra",version:"1.0",
+  {id:"A10",name:"Biocraft gap-fill",tagline:"Sarah's interview bank as batched gaps, then a text draft. Paste material; answer only what is still missing.",description:"Hosted gap-fill mode adapted from /biocraft. Call 1 returns structured gaps against a fixed question bank; Call 2 drafts three labelled text sections. No Chrome, Drive, or HTML file write.",platform:"OpenAI",status:"Experimental",category:"Personal Branding",owner:"Sarah",initials:"SA",model:"gpt-5.6-terra",version:"biocraft-gapfill-v2",
     objective:"Detect structured gaps against Sarah's fixed interview bank, then draft a LinkedIn About, spoken event introduction, and headline from pasted material plus answers.",
     successCriteria:["LinkedIn About hook is 200 characters or fewer","Full LinkedIn About text is 2,600 characters or fewer","Suggested LinkedIn headline is 220 characters or fewer","Spoken event introduction reads aloud in 20 to 30 seconds"],
     guardrails:["Never fabricate or alter a metric, achievement, employer relationship, credential, quote, role, or job title.","Distinguish work done for a company from founding or owning that company.","Preserve qualifiers such as Intern, Participant, and Apprenticeship.","Do not use an em dash or a double hyphen as an em-dash substitute.","Do not use emoji, exclamation points, hedging, or unnecessary passive voice.","Remove AI cliche and these terms on sight: utilize, leverage, facilitate, innovative, robust, seamless, cutting-edge, unlock, elevate, passionate, synergy, game-changer, revolutionize, revolutionary.","Do not use \"it is not X, it is Y\" contrast framing.","Do not report or annotate character counts. The host validates limits; a model-generated count is not evidence.","If a supplied quote is not grounded clearly enough to attribute, omit it.","Do not add a CTA to the third-person event introduction. The required CTA belongs only in the LinkedIn About.","Honour exclusions when supplied; never invent exclusions or treat them as gaps."],
@@ -153,7 +153,7 @@ const SEED_AGENTS=[
     inputs:["Fellow name","Source material (paste)","Optional exclusions","Gap answers when requested"],outputs:["Structured gaps or draft LinkedIn About","Draft spoken event introduction","Draft suggested headline"],
     skills:["biocraft","personal-branding","copywriting"],tools:[],context:["Pasted fellow source material","Gap answers when needed"],
     accessUrl:"",repoUrl:"",evalHistory:[],
-    changelog:[{version:"1.0",date:"2026-08-05",note:"Gap-fill hosted mode v1 adapted from Sarah's /biocraft; tools stripped; hook 200; keyword line banned."}],
+    changelog:[{version:"biocraft-gapfill-v2",date:"2026-08-05",note:"Gap-fill hosted mode; OpenAI Terra pin in artifact frontmatter (biocraft-gapfill-v2)."}],
     proposedImprovements:[]},
 
   // A8 is prepared-handoff: the agent lives in Aiden's repo and runs in Codex.
@@ -405,7 +405,7 @@ function retryGovernedDirectory(){
 }
 
 const CATEGORIES=["Personal Branding","Marketing & Content","Design & Product","Research & Analysis","Operations & Workflow","Investment & DD","Other"];
-const PLATFORMS=["Claude","Codex","Cursor","Manus","ChatGPT","n8n","Custom","Other"];
+const PLATFORMS=["Claude","Codex","Cursor","Manus","ChatGPT","OpenAI","n8n","Custom","Other"];
 const STATUS_OPTIONS=["Experimental","Active","Under Review","Deprecated"];
 const EVAL_OPTIONS=["Not evaluated","Performing well","Needs improvement","Under review"];
 const REQ_STATUSES=["Requested","Approved","In Progress","Shipped","Declined"];
@@ -416,7 +416,7 @@ let state={view:"list",subTab:"agents",agent:null,catFilter:"All",statusFilter:"
 // ── HELPERS ──
 function statusClass(s){return{Active:"pill-active",Experimental:"pill-experimental",Deprecated:"pill-deprecated","Under Review":"pill-amber"}[s]||"pill-neutral"}
 function evalClass(s){return{"Performing well":"pill-green","Needs improvement":"pill-amber","Under review":"pill-blue"}[s]||"pill-grey"}
-function platformIcon(p){return{Claude:"◈",Cursor:"▣",Manus:"◉",ChatGPT:"◎"}[p]||"◇"}
+function platformIcon(p){return{Claude:"◈",Cursor:"▣",Manus:"◉",ChatGPT:"◎",OpenAI:"◎"}[p]||"◇"}
 function reqStatusClass(s){return{Requested:"pill-neutral",Approved:"pill-blue","In Progress":"pill-purple",Shipped:"pill-green",Declined:"pill-grey"}[s]||"pill-neutral"}
 function priorityClass(p){return{Urgent:"pill-amber",Important:"pill-neutral","Nice to have":"pill-grey"}[p]||"pill-grey"}
 function getInitials(name){return name.split(" ").map(w=>w[0]).join("").toUpperCase().slice(0,2)}

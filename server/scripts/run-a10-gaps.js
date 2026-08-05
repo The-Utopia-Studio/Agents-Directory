@@ -1,8 +1,8 @@
 #!/usr/bin/env node
-// Local A9 gap-fill probe — no HTTP, no Clerk. Spends Anthropic.
+// Local A10 gap-fill probe — no HTTP, no Clerk. Spends the configured LLM.
 //
-//   node scripts/run-a9-gaps.js
-//   FELLOW_NAME='…' SOURCE_MATERIAL='…' node scripts/run-a9-gaps.js
+//   node scripts/run-a10-gaps.js
+//   FELLOW_NAME='…' SOURCE_MATERIAL='…' node scripts/run-a10-gaps.js
 //
 // Optional: EXCLUSIONS='…'
 import { config } from "../src/config.js";
@@ -31,7 +31,7 @@ const inputs = {
 };
 
 const result = await invoker.invoke(
-  { id: "A9", invocation: { type: "runtime", mode: "gap-fill" } },
+  { id: "A10", invocation: { type: "runtime", mode: "gap-fill" } },
   inputs,
 );
 

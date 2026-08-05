@@ -305,3 +305,191 @@ export const A7_V7_RELEASE_SPEC = {
 // the exact release contract before the approver mutation may create v7.
 export const A7_V7_RELEASE_MANIFEST_DIGEST =
   "5e660d7c33d6786f312297bf34fa9571380005d4ea8ae06d7f171c2e727fdf82";
+
+export const A7_V8_RELEASE_SPEC = {
+  agentDisplayId: "A7",
+  priorVersion: "biocraft-singleshot-v7",
+  priorArtifactSha256:
+    "751912f479d4ca65144e927bb18fe6e6c66c34ab63be557cab24ad28bc77fa26",
+  version: {
+    version: "biocraft-singleshot-v8",
+    state: "candidate",
+    artifact: {
+      scheme: "git",
+      locator: "server/src/artifacts/biocraft/SKILL.md",
+      declaredDigest:
+        "e1e8a7459606ab61c6ee4802e22437fb9fcba5f1a7d74e43d40d9f79df332ab2",
+      declaredDigestAlgorithm: "sha256",
+    },
+  },
+  proposalSummary:
+    "Biocraft v8 switches the hosted generator to OpenAI Responses / gpt-5.6-terra and pins runtime_provider/runtime_model in the artifact frontmatter so the digest moves with the model. Traces, ratings, and mechanical scores against v7-on-Sonnet are not comparable to v8-on-Terra.",
+} as const;
+
+// SHA-256(stableStringify(A7_V8_RELEASE_SPEC)). A test binds this literal to
+// the exact release contract before the approver mutation may create v8.
+export const A7_V8_RELEASE_MANIFEST_DIGEST =
+  "f5d7905dd44304326eaebc4dca97e2f98c9fb1da6483422ff73a1da488553c7f";
+
+// First release of Biocraft gap-fill as A10. Convex A9 ("Con") stays untouched —
+// no priorVersion; the mutation creates the agent + candidate + open proposal.
+export const A10_V1_RELEASE_SPEC = {
+  agentDisplayId: "A10",
+  agent: {
+    name: "Biocraft gap-fill",
+    tagline:
+      "Sarah's interview bank as batched gaps, then a text draft. Paste material; answer only what is still missing.",
+    description:
+      "Hosted gap-fill mode adapted from /biocraft. Call 1 returns structured gaps against a fixed question bank; Call 2 drafts three labelled text sections. No Chrome, Drive, or HTML file write.",
+    platform: "OpenAI",
+    status: "Experimental",
+    category: "Personal Branding",
+    owner: "Sarah",
+    initials: "SA",
+    model: "gpt-5.6-terra",
+    objective:
+      "Detect structured gaps against Sarah's fixed interview bank, then draft a LinkedIn About, spoken event introduction, and headline from pasted material plus answers.",
+    whenToUse:
+      "When creating or updating a fellow's LinkedIn bio from incomplete pasted material that may still need Sarah's interview answers. After drafting, check the LinkedIn About fold on a phone.",
+    sop:
+      "1. Paste the fellow's name and whatever source material you have (LinkedIn About/headline, pitch or venture notes)\n2. Optionally note anything that must NOT appear\n3. Run gap detection; answer only the returned questions\n4. Review every claim before using the output\n5. Paste the About into LinkedIn and check the fold on a phone",
+    outputs: [
+      "Structured gaps or draft LinkedIn About",
+      "Draft spoken event introduction",
+      "Draft suggested headline",
+    ],
+    runner: "native",
+    usabilityModes: ["hosted-run", "download-install"],
+    invocation: {
+      type: "runtime",
+      configRef: "server-owned:biocraft-gapfill-v2",
+    },
+    autonomyLevel: "L1",
+    executionContract: {
+      inputs: [
+        { key: "fellowName", required: true },
+        { key: "sourceMaterial", required: true },
+        { key: "exclusions", required: false },
+      ],
+      runnerConfig: [
+        { key: "mode", value: "gap-fill" },
+        {
+          key: "artifactLocator",
+          value: "server/src/artifacts/biocraft-gapfill/SKILL.md",
+        },
+        { key: "artifactVersion", value: "biocraft-gapfill-v2" },
+        { key: "runtimeProvider", value: "openai" },
+        { key: "runtimeModel", value: "gpt-5.6-terra" },
+      ],
+    },
+    evidenceContract: {
+      acceptedTypes: ["run", "feedback"],
+      requiredReturnArtifact: false,
+    },
+    outcomeContract: {
+      successCriteria: [
+        {
+          id: "linkedin-about-hook-max-200",
+          label: "LinkedIn About hook is 200 characters or fewer",
+        },
+        {
+          id: "linkedin-about-max-2600",
+          label: "Full LinkedIn About text is 2,600 characters or fewer",
+        },
+        {
+          id: "linkedin-headline-max-220",
+          label: "Suggested LinkedIn headline is 220 characters or fewer",
+        },
+        {
+          id: "spoken-intro-20-to-30-seconds",
+          label: "Spoken event introduction reads aloud in 20 to 30 seconds",
+        },
+      ],
+      evalSetId: null,
+    },
+    optimisableUnit: {
+      kind: "artifact",
+      pointer: "server/src/artifacts/biocraft-gapfill/SKILL.md",
+    },
+    guardrails: [
+      {
+        id: "no-fabricated-or-altered-claims",
+        label:
+          "Never fabricate or alter a metric, achievement, employer relationship, credential, quote, role, or job title.",
+      },
+      {
+        id: "preserve-company-relationship",
+        label:
+          "Distinguish work done for a company from founding or owning that company.",
+      },
+      {
+        id: "preserve-role-qualifiers",
+        label:
+          "Preserve qualifiers such as Intern, Participant, and Apprenticeship.",
+      },
+      {
+        id: "no-em-dash",
+        label:
+          "Do not use an em dash or a double hyphen as an em-dash substitute.",
+      },
+      {
+        id: "no-emoji-exclamation-hedging-passive",
+        label:
+          "Do not use emoji, exclamation points, hedging, or unnecessary passive voice.",
+      },
+      {
+        id: "remove-ai-cliches",
+        label:
+          "Remove AI cliche and these terms on sight: utilize, leverage, facilitate, innovative, robust, seamless, cutting-edge, unlock, elevate, passionate, synergy, game-changer, revolutionize, revolutionary.",
+      },
+      {
+        id: "no-not-x-but-y-framing",
+        label: 'Do not use "it is not X, it is Y" contrast framing.',
+      },
+      {
+        id: "no-model-character-count-claims",
+        label:
+          "Do not report or annotate character counts. The host validates limits; a model-generated count is not evidence.",
+      },
+      {
+        id: "omit-ungrounded-quotes",
+        label:
+          "If a supplied quote is not grounded clearly enough to attribute, omit it.",
+      },
+      {
+        id: "cta-about-only",
+        label:
+          "Do not add a CTA to the third-person event introduction. The required CTA belongs only in the LinkedIn About.",
+      },
+      {
+        id: "honour-exclusions",
+        label:
+          "Honour exclusions when supplied; never invent exclusions or treat them as gaps.",
+      },
+    ],
+    skills: ["biocraft", "personal-branding", "copywriting"],
+    tools: [],
+    context: [
+      { label: "Pasted fellow source material" },
+      { label: "Gap answers when needed" },
+    ],
+  },
+  version: {
+    version: "biocraft-gapfill-v2",
+    state: "candidate",
+    artifact: {
+      scheme: "git",
+      locator: "server/src/artifacts/biocraft-gapfill/SKILL.md",
+      declaredDigest:
+        "2aa5470f9daeccb39f83d609c67618c64992ae4a024a0627fd9a9a928b61f1fd",
+      declaredDigestAlgorithm: "sha256",
+    },
+  },
+  proposalSummary:
+    "First governed release of Biocraft gap-fill as A10 (Convex A9 / Con stays untouched). Pins biocraft-gapfill-v2 with OpenAI Responses / gpt-5.6-terra via artifact frontmatter and runnerConfig runtimeProvider/runtimeModel.",
+} as const;
+
+// SHA-256(stableStringify(A10_V1_RELEASE_SPEC)). A test binds this literal to
+// the exact release contract before the approver mutation may create A10.
+export const A10_V1_RELEASE_MANIFEST_DIGEST =
+  "9399061ab61c71a7ac4603eabb173259baba7fb2cea3e36847f66736533b147e";

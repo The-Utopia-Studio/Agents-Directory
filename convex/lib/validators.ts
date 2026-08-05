@@ -7,6 +7,7 @@ export const platform = v.union(
   v.literal("Cursor"),
   v.literal("Manus"),
   v.literal("ChatGPT"),
+  v.literal("OpenAI"),
   v.literal("n8n"),
   v.literal("Custom"),
   v.literal("Other"),

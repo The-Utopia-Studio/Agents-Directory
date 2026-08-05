@@ -6,6 +6,10 @@ import {
   A7_V6_RELEASE_SPEC,
   A7_V7_RELEASE_MANIFEST_DIGEST,
   A7_V7_RELEASE_SPEC,
+  A7_V8_RELEASE_MANIFEST_DIGEST,
+  A7_V8_RELEASE_SPEC,
+  A10_V1_RELEASE_MANIFEST_DIGEST,
+  A10_V1_RELEASE_SPEC,
   MERGED_REIMPORT_MANIFEST_DIGEST,
   MERGED_REIMPORT_SPEC,
 } from "./reimportSpec";
@@ -378,6 +382,274 @@ export const executeApprovedA7V7Release = mutation({
       releaseManifestDigest: A7_V7_RELEASE_MANIFEST_DIGEST,
       artifactDigest: A7_V7_RELEASE_SPEC.version.artifact.declaredDigest,
       nextRequiredAction: "Approve the returned proposal through reviews.approve to release v7.",
+    };
+  },
+});
+
+export const executeApprovedA7V8Release = mutation({
+  args: { releaseManifestDigest: v.string() },
+  handler: async (ctx, args) => {
+    const actor = await requireApprover(ctx);
+    if (args.releaseManifestDigest !== A7_V8_RELEASE_MANIFEST_DIGEST) {
+      throw new ConvexError({
+        code: "RELEASE_MANIFEST_NOT_APPROVED",
+        status: 403,
+        message: "A7 v8 release manifest is altered or not approved",
+      });
+    }
+    const now = Date.now();
+    const agent = await oneAgent(ctx, "A7");
+    const prior = await oneVersion(ctx, agent._id, A7_V8_RELEASE_SPEC.priorVersion);
+    if (!prior || prior.artifact?.declaredDigest !== A7_V8_RELEASE_SPEC.priorArtifactSha256) {
+      throw new Error("A7 v8 release requires the exact governed v7 artifact as its base");
+    }
+    const current = approvedVersionOf(agent as unknown as Record<string, unknown>);
+    let candidate = await oneVersion(ctx, agent._id, A7_V8_RELEASE_SPEC.version.version);
+    if (current !== prior._id && current !== candidate?._id) {
+      throw new Error("A7 v8 release requires v7 or its exact v8 successor to be current");
+    }
+    if (candidate) {
+      assertExact(
+        "A7 v8",
+        { state: candidate.state, artifact: candidate.artifact, basedOnVersionId: candidate.basedOnVersionId },
+        { state: A7_V8_RELEASE_SPEC.version.state, artifact: A7_V8_RELEASE_SPEC.version.artifact, basedOnVersionId: prior._id },
+      );
+    } else {
+      const candidateId = await ctx.db.insert("agentVersions", {
+        agentId: agent._id,
+        version: A7_V8_RELEASE_SPEC.version.version,
+        state: A7_V8_RELEASE_SPEC.version.state,
+        basedOnVersionId: prior._id,
+        artifact: A7_V8_RELEASE_SPEC.version.artifact,
+        createdBy: actor,
+        createdAt: now,
+      } as any);
+      candidate = (await ctx.db.get(candidateId))!;
+    }
+    const existingProposal = await ctx.db
+      .query("proposals")
+      .withIndex("by_candidateVersionId", (q) => q.eq("candidateVersionId", candidate._id))
+      .unique();
+    let proposal = existingProposal;
+    if (proposal) {
+      assertExact(
+        "A7 v8 proposal",
+        { agentId: proposal.agentId, priorApprovedVersionId: proposal.priorApprovedVersionId, summary: proposal.summary },
+        { agentId: agent._id, priorApprovedVersionId: prior._id, summary: A7_V8_RELEASE_SPEC.proposalSummary },
+      );
+    } else {
+      const proposalId = await ctx.db.insert("proposals", {
+        agentId: agent._id,
+        priorApprovedVersionId: prior._id,
+        candidateVersionId: candidate._id,
+        status: "open",
+        summary: A7_V8_RELEASE_SPEC.proposalSummary,
+        createdBy: actor,
+        createdAt: now,
+      });
+      proposal = (await ctx.db.get(proposalId))!;
+    }
+    const runnerConfig = agent.executionContract.runnerConfig
+      .filter((entry) => entry.key !== "artifactVersion")
+      .concat({ key: "artifactVersion", value: A7_V8_RELEASE_SPEC.version.version });
+    await ctx.db.patch(agent._id, {
+      invocation: { type: "runtime", configRef: "server-owned:biocraft-singleshot-v8" },
+      executionContract: { ...agent.executionContract, runnerConfig },
+    });
+    return {
+      agentId: agent._id,
+      versionId: candidate._id,
+      proposalId: proposal._id,
+      proposalStatus: proposal.status,
+      releaseManifestDigest: A7_V8_RELEASE_MANIFEST_DIGEST,
+      artifactDigest: A7_V8_RELEASE_SPEC.version.artifact.declaredDigest,
+      nextRequiredAction: "Approve the returned proposal through reviews.approve to release v8.",
+    };
+  },
+});
+
+function pickA10AgentContract(agent: Record<string, unknown>) {
+  const {
+    name,
+    tagline,
+    description,
+    platform,
+    status,
+    category,
+    owner,
+    initials,
+    model,
+    objective,
+    whenToUse,
+    sop,
+    outputs,
+    runner,
+    usabilityModes,
+    invocation,
+    autonomyLevel,
+    executionContract,
+    evidenceContract,
+    outcomeContract,
+    optimisableUnit,
+    guardrails,
+    skills,
+    tools,
+    context,
+  } = agent;
+  return {
+    name,
+    tagline,
+    description,
+    platform,
+    status,
+    category,
+    owner,
+    initials,
+    model,
+    objective,
+    whenToUse,
+    sop,
+    outputs,
+    runner,
+    usabilityModes,
+    invocation,
+    autonomyLevel,
+    executionContract,
+    evidenceContract,
+    outcomeContract,
+    optimisableUnit,
+    guardrails,
+    skills,
+    tools,
+    context,
+  };
+}
+
+export const executeApprovedA10V1Release = mutation({
+  args: { releaseManifestDigest: v.string() },
+  handler: async (ctx, args) => {
+    const actor = await requireApprover(ctx);
+    if (args.releaseManifestDigest !== A10_V1_RELEASE_MANIFEST_DIGEST) {
+      throw new ConvexError({
+        code: "RELEASE_MANIFEST_NOT_APPROVED",
+        status: 403,
+        message: "A10 v1 release manifest is altered or not approved",
+      });
+    }
+    const now = Date.now();
+    // Convex A9 ("Con") is out of scope — never read or patch it here.
+    const matches = await ctx.db
+      .query("agents")
+      .withIndex("by_displayId", (q) => q.eq("displayId", "A10"))
+      .collect();
+    if (matches.length > 1) {
+      throw new Error("Duplicate A10 agent records");
+    }
+    let agent = matches[0] ?? null;
+    if (agent) {
+      assertExact(
+        "A10 agent",
+        pickA10AgentContract(agent as unknown as Record<string, unknown>),
+        pickA10AgentContract(
+          A10_V1_RELEASE_SPEC.agent as unknown as Record<string, unknown>,
+        ),
+      );
+    } else {
+      const agentId = await ctx.db.insert("agents", {
+        ...(A10_V1_RELEASE_SPEC.agent as any),
+        displayId: A10_V1_RELEASE_SPEC.agentDisplayId,
+        importProvenance: {
+          manifestDigest: A10_V1_RELEASE_MANIFEST_DIGEST,
+          sourceExportDigest: A10_V1_RELEASE_SPEC.version.artifact.declaredDigest,
+          importedAt: now,
+          legacyCreatorClaimed: false as const,
+        },
+        createdBy: actor,
+        createdAt: now,
+      });
+      agent = (await ctx.db.get(agentId))!;
+    }
+
+    const current = approvedVersionOf(agent as unknown as Record<string, unknown>);
+    let candidate = await oneVersion(
+      ctx,
+      agent._id,
+      A10_V1_RELEASE_SPEC.version.version,
+    );
+    if (current && current !== candidate?._id) {
+      throw new Error(
+        "A10 v1 release requires no prior approved version, or the exact v1 candidate to be current",
+      );
+    }
+    if (candidate) {
+      assertExact(
+        "A10 v1",
+        {
+          state: candidate.state,
+          artifact: candidate.artifact,
+          basedOnVersionId: candidate.basedOnVersionId,
+        },
+        {
+          state: A10_V1_RELEASE_SPEC.version.state,
+          artifact: A10_V1_RELEASE_SPEC.version.artifact,
+          basedOnVersionId: undefined,
+        },
+      );
+    } else {
+      const candidateId = await ctx.db.insert("agentVersions", {
+        agentId: agent._id,
+        version: A10_V1_RELEASE_SPEC.version.version,
+        state: A10_V1_RELEASE_SPEC.version.state,
+        artifact: A10_V1_RELEASE_SPEC.version.artifact,
+        createdBy: actor,
+        createdAt: now,
+      } as any);
+      candidate = (await ctx.db.get(candidateId))!;
+    }
+
+    const existingProposal = await ctx.db
+      .query("proposals")
+      .withIndex("by_candidateVersionId", (q) =>
+        q.eq("candidateVersionId", candidate._id),
+      )
+      .unique();
+    let proposal = existingProposal;
+    if (proposal) {
+      assertExact(
+        "A10 v1 proposal",
+        {
+          agentId: proposal.agentId,
+          priorApprovedVersionId: proposal.priorApprovedVersionId,
+          summary: proposal.summary,
+        },
+        {
+          agentId: agent._id,
+          priorApprovedVersionId: undefined,
+          summary: A10_V1_RELEASE_SPEC.proposalSummary,
+        },
+      );
+    } else {
+      const proposalId = await ctx.db.insert("proposals", {
+        agentId: agent._id,
+        candidateVersionId: candidate._id,
+        status: "open",
+        summary: A10_V1_RELEASE_SPEC.proposalSummary,
+        createdBy: actor,
+        createdAt: now,
+      });
+      proposal = (await ctx.db.get(proposalId))!;
+    }
+
+    return {
+      agentId: agent._id,
+      displayId: A10_V1_RELEASE_SPEC.agentDisplayId,
+      versionId: candidate._id,
+      proposalId: proposal._id,
+      proposalStatus: proposal.status,
+      releaseManifestDigest: A10_V1_RELEASE_MANIFEST_DIGEST,
+      artifactDigest: A10_V1_RELEASE_SPEC.version.artifact.declaredDigest,
+      nextRequiredAction:
+        "Approve the returned proposal through reviews.approve to release A10 biocraft-gapfill-v2.",
     };
   },
 });

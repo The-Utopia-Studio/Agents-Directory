@@ -135,11 +135,11 @@ test("unansweredGaps and normalizeGapAnswers keep only bank ids", () => {
   );
 });
 
-test("A9 is registered as gap-fill with its own OpenAI-pinned artifact", async () => {
-  assert.equal(await hasRuntimeArtifact("A9"), true);
-  assert.equal(getRuntimeArtifactMode("A9"), "gap-fill");
+test("A10 is registered as gap-fill with its own OpenAI-pinned artifact", async () => {
+  assert.equal(await hasRuntimeArtifact("A10"), true);
+  assert.equal(getRuntimeArtifactMode("A10"), "gap-fill");
   assert.equal(getRuntimeArtifactMode("A7"), "single-shot");
-  const contract = getRuntimeInputContract("A9");
+  const contract = getRuntimeInputContract("A10");
   assert.deepEqual(
     contract.fields.map((f) => f.key),
     ["fellowName", "sourceMaterial", "exclusions"],
@@ -158,8 +158,8 @@ test("Terra pricing attributes spend from token counts", () => {
   assert.equal(costUsdFromUsage("unknown-model", { inputTokens: 10 }), undefined);
 });
 
-test("A9 mechanical checks reuse the same validators as A7", () => {
-  assert.deepEqual(validateRuntimeArtifactOutput("A9", DRAFT), []);
+test("A10 mechanical checks reuse the same validators as A7", () => {
+  assert.deepEqual(validateRuntimeArtifactOutput("A10", DRAFT), []);
 });
 
 test("gap-fill returns needs_input without drafting when gaps remain", async () => {
@@ -182,7 +182,7 @@ test("gap-fill returns needs_input without drafting when gaps remain", async () 
     }),
   );
   const result = await invoker.invoke(
-    { id: "A9", invocation: { type: "runtime", mode: "gap-fill" } },
+    { id: "A10", invocation: { type: "runtime", mode: "gap-fill" } },
     {
       fellowName: "Mira Okonkwo",
       sourceMaterial: "Mira builds workflow tools.",
@@ -236,7 +236,7 @@ test("gap-fill zero gaps drafts immediately with two calls", async () => {
     }),
   );
   const result = await invoker.invoke(
-    { id: "A9", invocation: { type: "runtime", mode: "gap-fill" } },
+    { id: "A10", invocation: { type: "runtime", mode: "gap-fill" } },
     {
       fellowName: "Mira Okonkwo",
       sourceMaterial:
@@ -291,7 +291,7 @@ test("gap-fill continue drafts after answers; unparseable Call 1 never drafts", 
     }),
   );
   const result = await invoker.invoke(
-    { id: "A9", invocation: { type: "runtime", mode: "gap-fill" } },
+    { id: "A10", invocation: { type: "runtime", mode: "gap-fill" } },
     {
       fellowName: "Mira Okonkwo",
       sourceMaterial: "Mira builds tools for founders.",
@@ -317,7 +317,7 @@ test("gap-fill continue drafts after answers; unparseable Call 1 never drafts", 
   await assert.rejects(
     () =>
       bad.invoke(
-        { id: "A9", invocation: { type: "runtime", mode: "gap-fill" } },
+        { id: "A10", invocation: { type: "runtime", mode: "gap-fill" } },
         { fellowName: "Mira", sourceMaterial: "short" },
       ),
     (err) =>

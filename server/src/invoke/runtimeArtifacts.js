@@ -231,12 +231,13 @@ const RUNTIME_ARTIFACTS = Object.freeze({
     }),
   }),
   // Gap-fill is a separate agent from A7. Own artifact, own version history.
-  A9: Object.freeze({
+  // Display id is A10 — Convex A9 is a different agent ("Con") and stays untouched.
+  A10: Object.freeze({
     directory: BIOCRAFT_GAPFILL_DIRECTORY,
     url: new URL("../artifacts/biocraft-gapfill/SKILL.md", import.meta.url),
     mode: "gap-fill",
     slug: "biocraft-gapfill",
-    displayName: "Biocraft gap-fill draft",
+    displayName: "Biocraft gap-fill",
     snapshot: BIOCRAFT_GAPFILL_SNAPSHOT,
     descriptions: Object.freeze({
       "SKILL.md":

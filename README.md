@@ -209,7 +209,7 @@ npm start --prefix server   # :8790
 | Vercel | `CLERK_PUBLISHABLE_KEY` | `pk_…`, public by design |
 | Railway | `DATA_DIR` | **Must be `/data`** — a mounted volume |
 | Railway | `RUNTIME_PROVIDER` | `openai` (default) or `anthropic` — must match artifact frontmatter |
-| Railway | `OPENAI_API_KEY` | Hosted runs when provider is openai (A7 v8 / A9 v2 use `gpt-5.6-terra`) |
+| Railway | `OPENAI_API_KEY` | Hosted runs when provider is openai (A7 v8 / A10 gapfill-v2 use `gpt-5.6-terra`) |
 | Railway | `ANTHROPIC_API_KEY` | Only if `RUNTIME_PROVIDER=anthropic` and the artifact declares it |
 | Railway | `CLERK_JWT_ISSUER_DOMAIN` | Or gated routes fail closed |
 | Railway | `CONVEX_DEPLOY_KEY` | Evidence writes. See limitations — this is god-mode |
