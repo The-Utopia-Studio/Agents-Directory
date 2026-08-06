@@ -7,6 +7,7 @@ import {
 } from "node:fs";
 import { relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+import { liveMarkedNonEmployerFrameFailures } from "../eval/sourceGrounding.js";
 
 const ARTIFACTS_ROOT = new URL("../artifacts/", import.meta.url);
 // Declarable in artifact frontmatter. Must stay in step with KNOWN_CHECK_IDS
@@ -455,27 +456,40 @@ function pushHeadlineLengthFailure(failures, checks, output) {
  * system prompt. This prevents a `checks:` block from being documentation
  * that the runtime silently ignores.
  *
+ * When `sourceText` is supplied, also run host-raised source-grounding that
+ * discovers non-employer entities from local source markers (not a golden-case
+ * entity list). require-near relationship rules stay eval-only — they need
+ * declared anchors and would fail every non-Mira live run.
+ *
  * Returns one structured result per FAILED check: a closed-vocabulary id, a
  * human-readable message for the caller, and numeric/boolean facts about the
  * structure inspected. Facts exist so a parsing miss can be told apart from a
  * genuine omission; they never include matched text.
  */
-export function validateRuntimeArtifactOutput(agentId, output) {
+export function validateRuntimeArtifactOutput(agentId, output, options = {}) {
   const artifact = RUNTIME_ARTIFACTS[agentId];
   const checks = artifact?.snapshot?.checks || [];
-  if (!checks.length) return [];
+  const sourceText =
+    typeof options.sourceText === "string" ? options.sourceText : "";
+
+  if (!checks.length && !sourceText) return [];
 
   const about = markdownSection(output, "LinkedIn About");
   if (!about) {
-    const failures = [
-      {
-        checkId: "about_section_present",
-        message: "LinkedIn About section is missing or not labelled exactly",
-        sectionFound: false,
-        paragraphCount: 0,
-      },
-    ];
-    pushHeadlineLengthFailure(failures, checks, output);
+    const failures = checks.length
+      ? [
+          {
+            checkId: "about_section_present",
+            message: "LinkedIn About section is missing or not labelled exactly",
+            sectionFound: false,
+            paragraphCount: 0,
+          },
+        ]
+      : [];
+    if (checks.length) pushHeadlineLengthFailure(failures, checks, output);
+    if (sourceText) {
+      failures.push(...liveMarkedNonEmployerFrameFailures(output, sourceText));
+    }
     return failures;
   }
 
@@ -569,6 +583,10 @@ export function validateRuntimeArtifactOutput(agentId, output) {
         sectionFound: true,
       });
     }
+  }
+
+  if (sourceText) {
+    failures.push(...liveMarkedNonEmployerFrameFailures(output, sourceText));
   }
 
   return failures;

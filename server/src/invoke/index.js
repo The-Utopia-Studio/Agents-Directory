@@ -244,7 +244,9 @@ async function invokeGapFill(agent, inputs, llm, timeoutMs) {
     timeoutMs,
   );
 
-  const checkResults = validateRuntimeArtifactOutput(agent.id, call2.output);
+  const checkResults = validateRuntimeArtifactOutput(agent.id, call2.output, {
+    sourceText: values.sourceMaterial,
+  });
   const usage = sumUsage([call1.usage, call2.usage]);
   const costParts = [call1.costUsd, call2.costUsd].filter(
     (n) => typeof n === "number",
@@ -330,7 +332,9 @@ export function runtimeInvoker(config = {}) {
         timeoutMs,
       );
 
-      const checkResults = validateRuntimeArtifactOutput(agent.id, call.output);
+      const checkResults = validateRuntimeArtifactOutput(agent.id, call.output, {
+        sourceText: values.sourceMaterial || "",
+      });
 
       return {
         status: "ok",

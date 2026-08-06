@@ -62,7 +62,7 @@ export const SEED_AGENTS = [
     ],
     guardrails: [
       "Never fabricate or alter a metric, achievement, employer relationship, credential, quote, role, or job title.",
-      "Distinguish work done for a company from founding or owning that company.",
+      "Distinguish employers from tools, platforms, and events. Name an entity as an employer only when the source describes it as one. Distinguish work done for a company from founding or owning that company.",
       "Preserve qualifiers such as Intern, Participant, and Apprenticeship.",
       "Do not use an em dash or a double hyphen as an em-dash substitute.",
       "Do not use emoji, exclamation points, hedging, or unnecessary passive voice.",
@@ -93,7 +93,7 @@ export const SEED_AGENTS = [
   // A10 is gap-fill Biocraft: Sarah's fixed bank batched into structured gaps,
   // then a draft. Separate from A7 — own artifact and version history.
   // Convex A9 ("Con") is unrelated and must not be overwritten here.
-  { id: "A10", name: "Biocraft gap-fill", objective: "Detect structured gaps against Sarah's fixed interview bank, then draft a LinkedIn About, spoken event introduction, and headline from pasted material plus answers.", version: "biocraft-gapfill-v2",
+  { id: "A10", name: "Biocraft gap-fill", objective: "Detect structured gaps against Sarah's fixed interview bank, then draft a LinkedIn About, spoken event introduction, and headline from pasted material plus answers.", version: "biocraft-gapfill-v3",
     successCriteria: [
       "LinkedIn About hook is 200 characters or fewer",
       "Full LinkedIn About text is 2,600 characters or fewer",
@@ -102,7 +102,7 @@ export const SEED_AGENTS = [
     ],
     guardrails: [
       "Never fabricate or alter a metric, achievement, employer relationship, credential, quote, role, or job title.",
-      "Distinguish work done for a company from founding or owning that company.",
+      "Distinguish employers from tools, platforms, and events. Name an entity as an employer only when the source describes it as one. Distinguish work done for a company from founding or owning that company.",
       "Preserve qualifiers such as Intern, Participant, and Apprenticeship.",
       "Do not use an em dash or a double hyphen as an em-dash substitute.",
       "Do not use emoji, exclamation points, hedging, or unnecessary passive voice.",
@@ -118,7 +118,17 @@ export const SEED_AGENTS = [
     when: "When creating or updating a fellow's LinkedIn bio from incomplete pasted material that may still need Sarah's interview answers. After drafting, check the LinkedIn About fold on a phone.",
     sop: "1. Paste the fellow's name and whatever source material you have (LinkedIn About/headline, pitch or venture notes)\n2. Optionally note anything that must NOT appear\n3. Run gap detection; answer only the returned questions\n4. Review every claim before using the output\n5. Paste the About into LinkedIn and check the fold on a phone",
     skills: ["biocraft", "personal-branding", "copywriting"], tools: [], context: ["Pasted fellow source material", "Gap answers when needed"],
-    changelog: [{ version: "biocraft-gapfill-v2", date: "2026-08-05", note: "Gap-fill hosted mode; OpenAI Terra pin in artifact frontmatter (biocraft-gapfill-v2)." }], proposedImprovements: [] },
+    goldenCases: [
+      {
+        input:
+          "Mira Okonkwo (partial) — Intern Helix; contracted Dextrum; founded Northline; Factory=tool; Snoonu=event; omits proudest/skills/contact/mission",
+        expected:
+          "Preserve relationships; Factory ≠ employer; Snoonu ≠ workplace; Call-1 gaps for omitted bank items; see a10-mira-okonkwo-v1",
+        rule: "mechanical + source-grounding (forbid-employer-frame); see eval/goldenCases.js a10-mira-okonkwo-v1",
+        source: "synthetic/golden-a10-v1",
+      },
+    ],
+    changelog: [{ version: "biocraft-gapfill-v3", date: "2026-08-05", note: "Employer-frame guardrail + source-grounding; mechanical checks retained from A7." }], proposedImprovements: [] },
   // A8 is prepared-handoff: the agent lives in Aiden's repo and runs in Codex,
   // so this record is a catalogue entry, not a copy of the instructions. The
   // engagement terms (checklist, prohibited actions, return protocol) live in

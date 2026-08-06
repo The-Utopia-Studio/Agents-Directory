@@ -241,8 +241,17 @@ The headline ones:
   Sarah's real `/biocraft`, which interviews you question by question and uses
   Chrome and Drive. Conversation state plus tool use is the next real capability.
 - **Governed evaluation doesn't exist yet.** Mechanical checks run on every hosted
-  run, but they are explicitly *not* eval scores. A governed `evalResult` needs a
-  human judging against a rubric, and that rubric isn't authored.
+  run, but they are **style and length only** (hook/about/headline caps, keyword
+  run, CTA detector, em dash, registered AI cliché). They cannot catch a
+  fabrication. Across nine truth-failure runs, every failure was caught by a
+  human reading the output — not by a check. A governed `evalResult` still needs
+  a human judging against a rubric, and that rubric isn't authored.
+- **Live source-grounding covers marked non-employers only.** When source material
+  marks an entity as a tool/platform/event (`Uses X`, `X Hackathon`,
+  `X (… tool)`, `not an employer`), the host fails the draft if that entity is
+  framed as a workplace. Relationship rules that need a declared entity list
+  (Intern near Helix, founding near Northline) stay on the golden-case eval path
+  — unstructured prose does not supply those anchors.
 - **Handoff results have no return path.** A completed engagement produces a report
   with a rating and there's nowhere in the product to put it.
 - **Automation targets the legacy fixture fleet**, not the governed directory.

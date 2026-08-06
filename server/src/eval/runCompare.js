@@ -25,6 +25,7 @@ function scoreWith({
   output,
   scoringArtifact,
   sourceGroundingRules,
+  sourceText,
   scoreLabelVersion,
 }) {
   // scoreLabelVersion is what we stamp on the result for provenance when the
@@ -35,6 +36,7 @@ function scoreWith({
     artifactDigest: scoringArtifact.artifactDigest,
     declaredChecks: scoringArtifact.checks,
     sourceGroundingRules,
+    sourceText,
   });
 }
 
@@ -89,6 +91,7 @@ export async function runMechanicalScore({
     output,
     scoringArtifact: artifact,
     sourceGroundingRules: golden.sourceGroundingRules,
+    sourceText: golden.input,
   });
 
   const result = {
@@ -179,11 +182,13 @@ export function runCheckCoverageCompare({
     output,
     scoringArtifact: leftArtifact,
     sourceGroundingRules: golden.sourceGroundingRules,
+    sourceText: golden.input,
   });
   const right = scoreWith({
     output,
     scoringArtifact: rightArtifact,
     sourceGroundingRules: golden.sourceGroundingRules,
+    sourceText: golden.input,
   });
 
   return buildCheckCoverageResult({
@@ -281,6 +286,7 @@ export async function runOutputQualityCompare({
     output: leftOutput,
     scoringArtifact: ruler,
     sourceGroundingRules: golden.sourceGroundingRules,
+    sourceText: golden.input,
     scoreLabelVersion: ruler.artifactVersion,
   });
   // Stamp generating artifact digests separately from scoring provenance.
@@ -291,6 +297,7 @@ export async function runOutputQualityCompare({
     output: rightOutput,
     scoringArtifact: ruler,
     sourceGroundingRules: golden.sourceGroundingRules,
+    sourceText: golden.input,
     scoreLabelVersion: ruler.artifactVersion,
   });
   right.generatingArtifactVersion = rightArtifact.artifactVersion;

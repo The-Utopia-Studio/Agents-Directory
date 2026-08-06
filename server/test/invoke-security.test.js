@@ -810,7 +810,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     ["LinkedIn URL", "Google Drive folder or pitch deck", "Local file path"],
   );
   assert.equal(installArtifact.available, true);
-  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v8");
+  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v9");
   assert.match(installArtifact.artifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(installArtifact.artifactDigestAlgorithm, "sha256");
 
@@ -860,7 +860,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(run.via, "runtime");
   assert.equal(run.mode, "single-shot");
   assert.equal(run.agentVersion, "1.0");
-  assert.equal(run.artifactVersion, "biocraft-singleshot-v8");
+  assert.equal(run.artifactVersion, "biocraft-singleshot-v9");
   assert.equal(
     run.artifactDigest,
     createHash("sha256").update(request.body.instructions).digest("hex"),
@@ -897,7 +897,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(trace.metadata.via, "runtime");
   assert.equal(trace.metadata.mode, "single-shot");
   assert.equal(trace.agentVersion, "1.0");
-  assert.equal(trace.artifactVersion, "biocraft-singleshot-v8");
+  assert.equal(trace.artifactVersion, "biocraft-singleshot-v9");
   assert.equal(trace.artifactDigest, run.artifactDigest);
   assert.equal(trace.artifactDigestAlgorithm, "sha256");
   assert.equal("agentVersionId" in trace, false);

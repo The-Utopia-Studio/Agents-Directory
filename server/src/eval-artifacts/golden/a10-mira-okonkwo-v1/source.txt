@@ -1,0 +1,27 @@
+Name: Mira Okonkwo
+
+Partial material on purpose — gap-fill Call 1 must still ask for missing bank
+items (proudest numeric outcome, skills list, contact preference, mission).
+
+Role material (must preserve qualifiers and relationships exactly):
+- Intern, Product Design, Helix Labs (2022)
+- Worked for Dextrum Health as a contractor building intake workflows
+  (she did not found Dextrum; she was paid by them)
+- Later: founding designer at Northline Studio (her own studio)
+- Uses Factory (a prototyping tool / platform — not an employer) to ship
+  intake prototypes for client work
+- Participated in the Snoonu Hackathon (event — not employment) on the
+  product-strategy track as a participant
+
+Quote she actually said (usable):
+- "Most tools assume the clinic already has a clean data room. Ours don't."
+
+Optional interview notes:
+- Audience: health-tech hiring managers and clinic operators
+- Tone: direct, no hype
+
+Omitted from this paste (expected Call-1 gaps):
+- Single proudest outcome with a real number
+- Skills / tools she wants to be found for
+- How she wants people to reach her
+- The problem or mission that got her building

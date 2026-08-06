@@ -3,7 +3,7 @@ name: biocraft-gapfill
 description: Hosted Biocraft gap-fill draft. Call 1 returns structured gaps against Sarah's fixed interview bank; Call 2 drafts three labelled text sections from material plus answers.
 user-invocable: true
 artifact-mode: gap-fill
-artifact_version: biocraft-gapfill-v2
+artifact_version: biocraft-gapfill-v3
 runtime_provider: openai
 runtime_model: gpt-5.6-terra
 success_criteria:
@@ -13,7 +13,7 @@ success_criteria:
   - Spoken event introduction reads aloud in 20 to 30 seconds
 guardrails:
   - Never fabricate or alter a metric, achievement, employer relationship, credential, quote, role, or job title.
-  - Distinguish work done for a company from founding or owning that company.
+  - Distinguish employers from tools, platforms, and events. Name an entity as an employer only when the source describes it as one. Distinguish work done for a company from founding or owning that company.
   - Preserve qualifiers such as Intern, Participant, and Apprenticeship.
   - Do not use an em dash or a double hyphen as an em-dash substitute.
   - Do not use emoji, exclamation points, hedging, or unnecessary passive voice.
@@ -161,8 +161,10 @@ Follow these steps in order:
 6. **Make the final cut.** Remove every sentence that could apply to anyone in
    the field, every claim without a number or specific detail, and all filler
    or hedging. Keep the About in short paragraphs, not one block. Compare every
-   company relationship and role title against the source; preserve qualifiers
-   and distinguish work done for a company from founding or owning it.
+   company relationship and role title against the source; preserve qualifiers;
+   distinguish employers from tools, platforms, and events (name an entity as an
+   employer only when the source describes it as one); and distinguish work done
+   for a company from founding or owning it.
 7. **Slop pass.** Ban em dashes and `--` substitutes; strip registered AI
    cliché terms; no “it is not X, it is Y”; no emoji or exclamation points;
    cut filler (“very,” “really,” “just,” “basically,” “in order to”); favor
@@ -172,7 +174,9 @@ Follow these steps in order:
 
 1. Never fabricate or alter a metric, achievement, employer relationship,
    credential, quote, role, or job title.
-2. Distinguish work done **for** a company from founding or owning that company.
+2. Distinguish employers from tools, platforms, and events. Name an entity as
+   an employer only when the source describes it as one. Distinguish work done
+   **for** a company from founding or owning that company.
 3. Preserve qualifiers such as `Intern`, `Participant`, and `Apprenticeship`.
 4. Do not use an em dash (`—`) or `--` as an em-dash substitute in draft output.
 5. Do not use emoji, exclamation points, hedging, or unnecessary passive voice.

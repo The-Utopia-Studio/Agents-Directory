@@ -14,8 +14,12 @@ import {
   A7_V7_RELEASE_SPEC,
   A7_V8_RELEASE_MANIFEST_DIGEST,
   A7_V8_RELEASE_SPEC,
+  A7_V9_RELEASE_MANIFEST_DIGEST,
+  A7_V9_RELEASE_SPEC,
   A10_V1_RELEASE_MANIFEST_DIGEST,
   A10_V1_RELEASE_SPEC,
+  A10_V3_RELEASE_MANIFEST_DIGEST,
+  A10_V3_RELEASE_SPEC,
   MERGED_REIMPORT_MANIFEST_DIGEST,
   MERGED_REIMPORT_SPEC,
 } from "./reimportSpec";
@@ -83,7 +87,7 @@ describe("approved A7/A8 merged re-import", () => {
     );
   });
 
-  test("the sealed v8 release spec binds the live artifact and rating boundary", () => {
+  test("the sealed v8 release spec binds the Terra artifact and rating boundary", () => {
     expect(
       createHash("sha256")
         .update(stableStringify(A7_V8_RELEASE_SPEC))
@@ -97,6 +101,20 @@ describe("approved A7/A8 merged re-import", () => {
     expect(A7_V8_RELEASE_SPEC.proposalSummary).toMatch(
       /not comparable to v8-on-Terra/,
     );
+  });
+
+  test("the sealed v9 release spec binds the employer-frame artifact and rating boundary", () => {
+    expect(
+      createHash("sha256")
+        .update(stableStringify(A7_V9_RELEASE_SPEC))
+        .digest("hex"),
+    ).toBe(A7_V9_RELEASE_MANIFEST_DIGEST);
+    expect(A7_V9_RELEASE_SPEC.priorVersion).toBe("biocraft-singleshot-v8");
+    expect(A7_V9_RELEASE_SPEC.version.version).toBe("biocraft-singleshot-v9");
+    expect(A7_V9_RELEASE_SPEC.version.artifact.declaredDigest).toBe(
+      "e229c64f44bcf3b6e8f57ea7dc74c868b7987ddfc7f92379ad4723761fa4314e",
+    );
+    expect(A7_V9_RELEASE_SPEC.proposalSummary).toMatch(/not comparable to v9/);
   });
 
   test("updates authorised A7/A8 metadata, creates v5, then releases only through reviews", async () => {
@@ -348,6 +366,20 @@ describe("approved A7/A8 merged re-import", () => {
     );
     expect(A10_V1_RELEASE_SPEC.proposalSummary).toMatch(/A9 \/ Con stays untouched/);
     expect(A10_V1_RELEASE_SPEC).not.toHaveProperty("priorVersion");
+  });
+
+  test("the sealed A10 v3 release spec binds employer-frame gap-fill and leaves A9 out of scope", () => {
+    expect(
+      createHash("sha256")
+        .update(stableStringify(A10_V3_RELEASE_SPEC))
+        .digest("hex"),
+    ).toBe(A10_V3_RELEASE_MANIFEST_DIGEST);
+    expect(A10_V3_RELEASE_SPEC.priorVersion).toBe("biocraft-gapfill-v2");
+    expect(A10_V3_RELEASE_SPEC.version.version).toBe("biocraft-gapfill-v3");
+    expect(A10_V3_RELEASE_SPEC.version.artifact.declaredDigest).toBe(
+      "8ccee5f24ac47dc16643954020309b85602109ca824a34cb54655bfaabd40fb4",
+    );
+    expect(A10_V3_RELEASE_SPEC.proposalSummary).toMatch(/stays untouched/);
   });
 
   test("creates A10 agent + candidate with no prior, releases only through reviews", async () => {

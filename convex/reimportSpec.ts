@@ -331,6 +331,31 @@ export const A7_V8_RELEASE_SPEC = {
 export const A7_V8_RELEASE_MANIFEST_DIGEST =
   "f5d7905dd44304326eaebc4dca97e2f98c9fb1da6483422ff73a1da488553c7f";
 
+export const A7_V9_RELEASE_SPEC = {
+  agentDisplayId: "A7",
+  priorVersion: "biocraft-singleshot-v8",
+  priorArtifactSha256:
+    "e1e8a7459606ab61c6ee4802e22437fb9fcba5f1a7d74e43d40d9f79df332ab2",
+  version: {
+    version: "biocraft-singleshot-v9",
+    state: "candidate",
+    artifact: {
+      scheme: "git",
+      locator: "server/src/artifacts/biocraft/SKILL.md",
+      declaredDigest:
+        "e229c64f44bcf3b6e8f57ea7dc74c868b7987ddfc7f92379ad4723761fa4314e",
+      declaredDigestAlgorithm: "sha256",
+    },
+  },
+  proposalSummary:
+    "Biocraft v9 generalises the employer-relationship guardrail: tools, platforms, and events must not be framed as workplaces, and an entity may be named as an employer only when the source describes it as one. Ratings against v8 are not comparable to v9.",
+} as const;
+
+// SHA-256(stableStringify(A7_V9_RELEASE_SPEC)). A test binds this literal to
+// the exact release contract before the approver mutation may create v9.
+export const A7_V9_RELEASE_MANIFEST_DIGEST =
+  "ecc2e1b3e6febf0a80d28c9d427f55cb50b9c88bf4847aa8b08c0e29e80b2cc1";
+
 // First release of Biocraft gap-fill as A10. Convex A9 ("Con") stays untouched —
 // no priorVersion; the mutation creates the agent + candidate + open proposal.
 export const A10_V1_RELEASE_SPEC = {
@@ -493,3 +518,28 @@ export const A10_V1_RELEASE_SPEC = {
 // the exact release contract before the approver mutation may create A10.
 export const A10_V1_RELEASE_MANIFEST_DIGEST =
   "9399061ab61c71a7ac4603eabb173259baba7fb2cea3e36847f66736533b147e";
+
+export const A10_V3_RELEASE_SPEC = {
+  agentDisplayId: "A10",
+  priorVersion: "biocraft-gapfill-v2",
+  priorArtifactSha256:
+    "2aa5470f9daeccb39f83d609c67618c64992ae4a024a0627fd9a9a928b61f1fd",
+  version: {
+    version: "biocraft-gapfill-v3",
+    state: "candidate",
+    artifact: {
+      scheme: "git",
+      locator: "server/src/artifacts/biocraft-gapfill/SKILL.md",
+      declaredDigest:
+        "8ccee5f24ac47dc16643954020309b85602109ca824a34cb54655bfaabd40fb4",
+      declaredDigestAlgorithm: "sha256",
+    },
+  },
+  proposalSummary:
+    "Biocraft gap-fill v3 generalises the employer-relationship guardrail (tools/platforms/events are not workplaces; employer framing must be source-grounded) and keeps the mechanical checks block. Convex A9 (Con) stays untouched. Ratings against gapfill-v2 are not comparable to v3.",
+} as const;
+
+// SHA-256(stableStringify(A10_V3_RELEASE_SPEC)). A test binds this literal to
+// the exact release contract before the approver mutation may create v3.
+export const A10_V3_RELEASE_MANIFEST_DIGEST =
+  "81db0f635550d3dd94aae5c536121b31fe1c32dc0a7321566b508cdda5613b81";

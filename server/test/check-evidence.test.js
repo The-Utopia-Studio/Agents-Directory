@@ -200,4 +200,7 @@ test("the trace vocabulary does not drift from the declarable checks", async () 
   }
   // Every id the runtime can emit, declarable or not, must be recordable.
   assert.ok(KNOWN_CHECK_IDS.includes("about_section_present"));
+  assert.ok(
+    KNOWN_CHECK_IDS.includes("source_no_employer_frame_for_marked_non_employer"),
+  );
 });

@@ -9,6 +9,7 @@ import {
   buildMechanicalResultRecord,
   recordMechanicalResult,
 } from "./mechanicalResults.js";
+import { getRuntimeArtifactDescriptor } from "../invoke/runtimeArtifacts.js";
 
 export function scoreGoldenCannedAgainstVersion(caseId, artifactVersion) {
   const golden = getGoldenCase(caseId);
@@ -24,6 +25,35 @@ export function scoreGoldenCannedAgainstVersion(caseId, artifactVersion) {
     artifactDigest: artifact.artifactDigest,
     declaredChecks: artifact.checks,
     sourceGroundingRules: golden.sourceGroundingRules,
+    sourceText: golden.input,
+  });
+}
+
+/**
+ * Score canned bad output against the live server-owned artifact for the
+ * case's agent (A10 gap-fill has no historical fixture registry yet).
+ */
+export function scoreGoldenCannedAgainstLive(caseId) {
+  const golden = getGoldenCase(caseId);
+  if (!golden) {
+    throw Object.assign(new Error(`Unknown golden case: ${caseId}`), {
+      status: 404,
+    });
+  }
+  const live = getRuntimeArtifactDescriptor(golden.agentId);
+  if (!live) {
+    throw Object.assign(
+      new Error(`No live runtime artifact for ${golden.agentId}`),
+      { status: 503 },
+    );
+  }
+  return scoreMechanicalOutput({
+    output: golden.getCannedBadOutput(),
+    artifactVersion: live.artifactVersion,
+    artifactDigest: live.artifactDigest,
+    declaredChecks: live.checks,
+    sourceGroundingRules: golden.sourceGroundingRules,
+    sourceText: golden.input,
   });
 }
 

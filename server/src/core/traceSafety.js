@@ -28,6 +28,9 @@ export const KNOWN_CHECK_IDS = Object.freeze([
   "about_closing_has_cta",
   "draft_has_no_em_dash",
   "draft_has_no_ai_cliche_phrase",
+  // Host-raised from source markers (Uses X / X Hackathon / "(tool)"), not
+  // frontmatter-declared. Same class as about_section_present.
+  "source_no_employer_frame_for_marked_non_employer",
 ]);
 
 /** Non-check failures. Codes only — never a provider or model message. */
@@ -50,6 +53,8 @@ const NUMERIC_FACTS = new Set([
   "finalParagraphChars",
   "segmentCount",
   "limit",
+  "markedNonEmployerCount",
+  "framedNonEmployerCount",
 ]);
 
 /** Did a detector fire? Enough to separate a parse miss from a real omission. */
@@ -58,6 +63,8 @@ const BOOLEAN_FACTS = new Set([
   "hasContactChannel",
   "hasImperativeOpener",
   "hasInvitationFrame",
+  "sourceAllowsEmployer",
+  "employerFramed",
 ]);
 
 /** Punctuation only. A delimiter character is not content about anyone. */

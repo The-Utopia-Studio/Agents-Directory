@@ -399,11 +399,13 @@ export function scoreMechanicalOutput({
   artifactDigest,
   declaredChecks = [],
   sourceGroundingRules = [],
+  sourceText = "",
 }) {
   const { results: styleResults } = scoreStyleChecks(output, declaredChecks);
   const groundingResults = runSourceGroundingChecks(
     output,
     sourceGroundingRules,
+    { sourceText },
   ).map((row) => ({
     ...row,
     family: row.family || SOURCE_GROUNDING_FAMILY,
