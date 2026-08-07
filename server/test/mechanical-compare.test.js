@@ -37,7 +37,7 @@ test("preview refuses bare quality comparability when check sets differ", () => 
   const preview = previewVersionComparability(V5, V6);
   assert.equal(preview.checkSetsDiffer, true);
   assert.equal(preview.comparableAsOutputQualityWithoutRuler, false);
-  assert.match(preview.note, /Not comparable — check set changed/);
+  assert.match(preview.note, /check set changed: \d+ checks → \d+ checks/);
   assert.equal(preview.experiments.output_quality.requiresRuler, true);
 });
 
@@ -57,11 +57,20 @@ test("single-version canned score returns table fields and never evalHistory", a
   assert.equal(result.label, "mechanical_check_score");
   assert.equal(result.writesEvalHistory, false);
   assert.ok(result.artifactDigest);
-  assert.ok(result.checkResults.some((r) => r.status === "fail"));
+  assert.ok(result.checkSetVersion);
+  assert.equal(result.byCategory.grounding.category, "grounding");
+  assert.equal(result.byCategory.style.category, "style");
+  assert.ok(result.checkResults.every((r) => r.id && "passed" in r && r.category));
+  assert.ok(result.checkResults.some((r) => r.passed === false && r.why));
+  // Headline is grounding-only, not a cross-category average.
+  assert.equal(result.mechanicalCheckScore, result.byCategory.grounding.passRate);
   const after = await store.get("agents", "A7");
   assert.equal((after.evalHistory || []).length, evalLen);
   const mech = await store.all("mechanicalResults");
   assert.ok(mech.length >= 1);
+  assert.equal(mech[0].outputSource, "canned");
+  assert.ok(mech[0].checkSetVersion);
+  assert.ok(mech[0].timestamp);
 });
 
 test("check_coverage never exposes a quality score delta", () => {
@@ -72,11 +81,15 @@ test("check_coverage never exposes a quality score delta", () => {
   });
   assert.equal(result.experiment, "check_coverage");
   assert.equal(result.outputQualityComparable, false);
-  assert.equal(result.mechanicalCheckScoreDelta, null);
+  assert.equal(result.scoreDelta.comparable, false);
+  assert.match(result.scoreDelta.reason, /check set changed: 6 checks → 8 checks/);
+  assert.equal(typeof result.mechanicalCheckScoreDelta, "object");
+  assert.equal(result.mechanicalCheckScoreDelta.comparable, false);
   assert.equal(result.measures, "check_coverage");
-  assert.match(result.interpretation, /better detection/);
-  // v6 detects more on the same bad output
+  assert.match(result.interpretation, /Category pass rates/);
   assert.equal(result.coverageReading.direction, "right_detects_more");
+  assert.equal(result.left.byCategory.style.failed.length, 1);
+  assert.equal(result.right.byCategory.style.failed.length, 3);
 });
 
 test("canned output_quality is plumbing verification, not a prompt finding", async () => {
@@ -95,8 +108,9 @@ test("canned output_quality is plumbing verification, not a prompt finding", asy
   assert.match(result.interpretation, /verifies the scoring path, not the prompts/);
   assert.equal(result.left.outputSource, "canned");
   assert.equal(result.right.outputSource, "canned");
-  // Delta may exist as a number — it must not be framed as a finding.
-  assert.ok(result.mechanicalCheckScoreDelta > 0);
+  assert.equal(result.scoreDelta.comparable, true);
+  assert.ok(result.scoreDelta.value > 0);
+  assert.equal(result.mechanicalCheckScoreDelta.comparable, true);
 });
 
 test("output_quality without ruler refuses", async () => {
@@ -148,7 +162,8 @@ test("service refuses bare compare without experiment", async () => {
     rightVersion: V6,
     outputSource: "canned",
   });
-  assert.equal(coverage.mechanicalCheckScoreDelta, null);
+  assert.equal(coverage.scoreDelta.comparable, false);
+  assert.match(coverage.scoreDelta.reason, /check set changed/);
 
   const quality = await runMechanicalCompare(store, {
     experiment: "output_quality",
@@ -160,7 +175,8 @@ test("service refuses bare compare without experiment", async () => {
     agentId: "A7",
   });
   assert.ok(quality.recorded?.leftId);
-  assert.ok(quality.mechanicalCheckScoreDelta > 0);
+  assert.equal(quality.scoreDelta.comparable, true);
+  assert.ok(quality.scoreDelta.value > 0);
   assert.equal(quality.answersDidImprovementHelp, false);
   assert.equal(quality.findingKind, "plumbing_verification");
 });
@@ -224,7 +240,8 @@ Designer` }],
   assert.equal(result.answersDidImprovementHelp, true);
   assert.equal(result.findingKind, "prompt_comparison");
   assert.match(result.interpretation, /live pair answers whether the prompt change helped/);
-  assert.ok(result.mechanicalCheckScoreDelta > 0);
+  assert.equal(result.scoreDelta.comparable, true);
+  assert.ok(result.scoreDelta.value > 0);
   // Response must not include draft text
   assert.equal("output" in result.left, false);
   assert.equal(result.left.generation.output, undefined);

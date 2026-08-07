@@ -775,6 +775,45 @@ input[type="date"] { color-scheme: dark; }
 .mech-row-changed td { background: color-mix(in srgb, var(--warning-text) 6%, transparent); }
 .mech-status-pass { color: #2f6a3a; }
 .mech-status-fail { color: var(--warning-text); }
+.mech-status-fail-style { color: var(--warning-text); }
+.mech-status-fail-grounding {
+  color: #8b1e1e;
+  font-weight: 600;
+}
+.mech-score-grounding-fail { color: #8b1e1e; }
+.mech-cat-strip { line-height: 1.45; }
+.mech-cat-grounding { color: #8b1e1e; font-weight: 600; }
+.mech-cat-style { color: var(--foreground-subtle); }
+.mech-cat-tag {
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-left: 4px;
+}
+.mech-cat-tag.mech-cat-grounding { color: #8b1e1e; }
+.mech-cat-tag.mech-cat-style { color: var(--foreground-subtle); }
+.mech-why {
+  margin-top: 4px;
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--foreground-subtle);
+  line-height: 1.35;
+}
+.mech-delta-refused {
+  max-width: 14rem;
+  border-color: var(--border-subtle);
+}
+.mech-delta-chip-reason {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--foreground-subtle);
+  line-height: 1.35;
+}
+.mech-card-score-missing {
+  font-size: clamp(18px, 3vw, 24px);
+  letter-spacing: 0;
+  color: var(--foreground-subtle);
+}
 .mech-fam { color: var(--foreground-subtle); font-size: 11px; }
 .mech-fails, .mech-changed ul { margin: 6px 0 0; padding-left: 18px; font-size: 12.5px; }
 .mech-note { font-size: 12.5px; color: var(--foreground-subtle); margin: 6px 0; }

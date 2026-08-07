@@ -1572,23 +1572,115 @@ function loadMechLastResultLocal(agentId){
   }catch(_){return null}
 }
 
+function mechRecordIsModern(rec){
+  if(!rec||typeof rec!=="object")return false;
+  if(!rec.checkSetVersion)return false;
+  if(rec.outputSource!=="live"&&rec.outputSource!=="canned")return false;
+  const rows=rec.checkResults;
+  if(!Array.isArray(rows)||!rows.length)return false;
+  return rows.every((row)=>
+    row&&(row.id||row.checkId)
+    &&(row.category==="grounding"||row.category==="style")
+    &&("passed" in row)
+  );
+}
+
+function mechParseStoredProvenance(rec){
+  const raw=String(rec.outputSource||"");
+  const compound=raw.match(/^(canned|live):(check_coverage|output_quality)$/);
+  if(compound)return{outputSource:compound[1],experiment:compound[2]};
+  if(raw==="canned"||raw==="live"){
+    return{outputSource:raw,experiment:rec.experiment||null};
+  }
+  return{outputSource:null,experiment:rec.experiment||null};
+}
+
 function mechSideFromStoredRecord(rec,outputSource){
+  if(!mechRecordIsModern(rec)){
+    return{
+      legacyIncomplete:true,
+      artifactVersion:rec.artifactVersion||null,
+      artifactDigest:rec.artifactDigest||null,
+      outputSource,
+    };
+  }
   return{
     artifactVersion:rec.artifactVersion,
     artifactDigest:rec.artifactDigest,
+    checkSetVersion:rec.checkSetVersion,
     mechanicalCheckScore:rec.mechanicalCheckScore,
     scoreableCount:rec.scoreableCount,
-    passed:[...(rec.passed||[])],
-    failed:[...(rec.failed||[])],
-    notScoreable:[...(rec.notScoreable||[])],
-    checkResults:(rec.checkResults||[]).map((row)=>({...row})),
+    stylePassRate:rec.stylePassRate,
+    styleScoreableCount:rec.styleScoreableCount,
+    byCategory:rec.byCategory
+      ?{
+          grounding:rec.byCategory.grounding?{...rec.byCategory.grounding}:null,
+          style:rec.byCategory.style?{...rec.byCategory.style}:null,
+        }
+      :null,
+    passed:[...rec.passed],
+    failed:[...rec.failed],
+    notScoreable:[...rec.notScoreable],
+    checkResults:rec.checkResults.map((row)=>({...row})),
     outputSource,
+    timestamp:rec.timestamp||rec.ts||null,
   };
 }
 
+function mechCategoryCounts(side,category){
+  if(!side||side.legacyIncomplete)return null;
+  const cat=side.byCategory&&side.byCategory[category];
+  if(cat&&typeof cat.scoreableCount==="number"&&Array.isArray(cat.passed)&&Array.isArray(cat.failed)){
+    return{
+      passed:cat.passed.length,
+      failed:cat.failed.length,
+      scoreable:cat.scoreableCount,
+      passRate:typeof cat.passRate==="number"?cat.passRate:null,
+    };
+  }
+  const rows=(side.checkResults||[]).filter((r)=>
+    r.category===category&&(r.passed===true||r.passed===false)
+  );
+  if(!rows.length)return null;
+  const passed=rows.filter((r)=>r.passed===true).length;
+  return{
+    passed,
+    failed:rows.length-passed,
+    scoreable:rows.length,
+    passRate:Math.round((passed/rows.length)*1000)/10,
+  };
+}
+
+function mechFormatPassRate(passRate,passed,scoreable){
+  if(typeof passRate!=="number"||typeof passed!=="number"||typeof scoreable!=="number"){
+    return"not yet checked";
+  }
+  return`${passRate}% · ${passed} of ${scoreable} checks passed`;
+}
+
+function mechFormatCategoryStrip(side){
+  if(!side||side.legacyIncomplete){
+    return`<div class="mech-card-meta">not yet checked</div>`;
+  }
+  const g=mechCategoryCounts(side,"grounding");
+  const s=mechCategoryCounts(side,"style");
+  const gText=g?`Grounding ${g.passed} of ${g.scoreable}`:"Grounding not yet checked";
+  const sText=s?`Style ${s.passed} of ${s.scoreable}`:"Style not yet checked";
+  return`<div class="mech-card-meta mech-cat-strip"><span class="mech-cat-grounding">${escHtml(gText)}</span> · <span class="mech-cat-style">${escHtml(sText)}</span></div>`;
+}
+
+function mechStyleFailCount(side){
+  const s=mechCategoryCounts(side,"style");
+  if(s&&typeof s.failed==="number")return s.failed;
+  return null;
+}
+
 function mechCoverageReadingFromSides(left,right){
-  const leftFails=(left.failed||[]).filter((id)=>!String(id).startsWith("source_")).length;
-  const rightFails=(right.failed||[]).filter((id)=>!String(id).startsWith("source_")).length;
+  const leftFails=mechStyleFailCount(left);
+  const rightFails=mechStyleFailCount(right);
+  if(leftFails==null||rightFails==null){
+    return{direction:"unknown",detail:"Style detection counts not yet checked on one or both sides."};
+  }
   if(rightFails>leftFails){
     return{
       direction:"right_detects_more",
@@ -1609,19 +1701,27 @@ function mechCoverageReadingFromSides(left,right){
 
 function mechChangedFromSides(left,right){
   const ids=new Set([
-    ...(left.checkResults||[]).map((r)=>r.checkId),
-    ...(right.checkResults||[]).map((r)=>r.checkId),
+    ...(left.checkResults||[]).map((r)=>r.id||r.checkId),
+    ...(right.checkResults||[]).map((r)=>r.id||r.checkId),
   ]);
-  const map=(side)=>Object.fromEntries((side.checkResults||[]).map((r)=>[r.checkId,r.status]));
+  const map=(side)=>Object.fromEntries((side.checkResults||[]).map((r)=>[r.id||r.checkId,r.status]));
   const leftMap=map(left);
   const rightMap=map(right);
   const changed=[];
   for(const id of[...ids].sort()){
-    const from=leftMap[id]||"absent";
-    const to=rightMap[id]||"absent";
+    const from=Object.prototype.hasOwnProperty.call(leftMap,id)?leftMap[id]:"absent";
+    const to=Object.prototype.hasOwnProperty.call(rightMap,id)?rightMap[id]:"absent";
     if(from!==to)changed.push({checkId:id,from,to});
   }
   return changed;
+}
+
+function mechNormalizeScoreDelta(delta){
+  if(delta&&typeof delta==="object"&&typeof delta.comparable==="boolean")return delta;
+  if(typeof delta==="number"){
+    return{comparable:true,value:delta};
+  }
+  return{comparable:false,reason:"not comparable"};
 }
 
 /** Rebuild a renderable score/compare payload from append-only mechanicalResults. */
@@ -1629,26 +1729,60 @@ function reconstructMechPayloadFromStored(rows){
   const list=Array.isArray(rows)?rows:[];
   for(let i=0;i<list.length;i++){
     const a=list[i];
-    const src=String(a.outputSource||"");
-    const m=src.match(/^(canned|live):(check_coverage|output_quality)$/);
-    if(!m||!a.comparedTo)continue;
-    const partner=list.find((b,j)=>
-      j!==i
-      &&b.outputSource===a.outputSource
-      &&b.artifactVersion===a.comparedTo
-      &&b.comparedTo===a.artifactVersion
-    );
+    const aProv=mechParseStoredProvenance(a);
+    if(!aProv.experiment||!a.comparedTo)continue;
+    if(!mechRecordIsModern(a)&&!String(a.outputSource||"").includes(":")){
+      // Incomplete modern schema without legacy compound tag — skip rather than invent.
+      continue;
+    }
+    const partner=list.find((b,j)=>{
+      if(j===i||!b.comparedTo)return false;
+      const bProv=mechParseStoredProvenance(b);
+      return bProv.outputSource===aProv.outputSource
+        &&bProv.experiment===aProv.experiment
+        &&b.artifactVersion===a.comparedTo
+        &&b.comparedTo===a.artifactVersion;
+    });
     if(!partner)continue;
-    const[leftRec,rightRec]=[a,partner].sort((x,y)=>String(x.ts||"").localeCompare(String(y.ts||"")));
-    const outputSource=m[1];
-    const experiment=m[2];
+    // Prefer modern pairs only; legacy pairs surface as not-yet-checked sides.
+    const[leftRec,rightRec]=[a,partner].sort((x,y)=>
+      String(x.timestamp||x.ts||"").localeCompare(String(y.timestamp||y.ts||""))
+    );
+    const outputSource=aProv.outputSource;
+    const experiment=aProv.experiment;
     const left=mechSideFromStoredRecord(leftRec,outputSource);
     const right=mechSideFromStoredRecord(rightRec,outputSource);
+    const restoredAt=rightRec.timestamp||rightRec.ts||leftRec.timestamp||leftRec.ts||null;
     if(experiment==="check_coverage"){
-      const leftIds=[...(left.checkResults||[]).map((r)=>r.checkId)].sort();
-      const rightIds=[...(right.checkResults||[]).map((r)=>r.checkId)].sort();
+      const leftIds=[...(left.checkResults||[]).map((r)=>r.id||r.checkId)].sort();
+      const rightIds=[...(right.checkResults||[]).map((r)=>r.id||r.checkId)].sort();
       const checkSetsDiffer=
-        leftIds.length!==rightIds.length||leftIds.some((id,i)=>id!==rightIds[i]);
+        left.legacyIncomplete||right.legacyIncomplete
+        ||leftIds.length!==rightIds.length
+        ||leftIds.some((id,idx)=>id!==rightIds[idx]);
+      const leftCount=leftIds.length;
+      const rightCount=rightIds.length;
+      const scoreDelta=checkSetsDiffer||left.legacyIncomplete||right.legacyIncomplete
+        ?{
+            comparable:false,
+            reason:left.legacyIncomplete||right.legacyIncomplete
+              ?"not yet checked"
+              :`check set changed: ${leftCount} checks → ${rightCount} checks`,
+            leftCheckCount:leftCount,
+            rightCheckCount:rightCount,
+          }
+        :{
+            comparable:true,
+            value:
+              typeof left.mechanicalCheckScore==="number"&&typeof right.mechanicalCheckScore==="number"
+                ?Math.round((right.mechanicalCheckScore-left.mechanicalCheckScore)*10)/10
+                :null,
+          };
+      if(scoreDelta.comparable&&typeof scoreDelta.value!=="number"){
+        scoreDelta.comparable=false;
+        scoreDelta.reason="grounding pass rate missing on one or both sides";
+        delete scoreDelta.value;
+      }
       return{
         kind:"compare",
         source:"server",
@@ -1657,7 +1791,7 @@ function reconstructMechPayloadFromStored(rows){
           label:"check_coverage",
           measures:"check_coverage",
           interpretation:
-            "Same output, different check sets. A lower mechanical check score means better detection, not worse output. Do not read this as output-quality progress.",
+            "Same output, different check sets. Category pass rates are side by side; more style failures mean stronger coverage, not worse output.",
           caseId:leftRec.goldenCaseId||rightRec.goldenCaseId||null,
           outputSource,
           outputProvenance:outputSource==="canned"?"canned_fixtures":"live_generation",
@@ -1665,18 +1799,39 @@ function reconstructMechPayloadFromStored(rows){
           findingKind:"check_coverage",
           checkSetsDiffer,
           ...(checkSetsDiffer
-            ?{checkSetNote:"Not comparable — check set changed between these versions"}
+            ?{checkSetNote:scoreDelta.reason}
             :{}),
           outputQualityComparable:false,
-          mechanicalCheckScoreDelta:null,
+          scoreDelta,
+          mechanicalCheckScoreDelta:scoreDelta,
           left,
           right,
-          changed:mechChangedFromSides(left,right),
+          changed:left.legacyIncomplete||right.legacyIncomplete?[]:mechChangedFromSides(left,right),
           coverageReading:mechCoverageReadingFromSides(left,right),
           restoredFromStore:true,
-          restoredAt:rightRec.ts||leftRec.ts||null,
+          restoredAt,
         },
       };
+    }
+    const scoreDelta=
+      left.legacyIncomplete||right.legacyIncomplete
+        ?{comparable:false,reason:"not yet checked"}
+        :left.checkSetVersion&&right.checkSetVersion&&left.checkSetVersion===right.checkSetVersion
+          ?{
+              comparable:true,
+              value:
+                typeof left.mechanicalCheckScore==="number"&&typeof right.mechanicalCheckScore==="number"
+                  ?Math.round((right.mechanicalCheckScore-left.mechanicalCheckScore)*10)/10
+                  :null,
+            }
+          :{
+              comparable:false,
+              reason:`check set changed: ${(left.checkResults||[]).length} checks → ${(right.checkResults||[]).length} checks`,
+            };
+    if(scoreDelta.comparable&&typeof scoreDelta.value!=="number"){
+      scoreDelta.comparable=false;
+      scoreDelta.reason="grounding pass rate missing on one or both sides";
+      delete scoreDelta.value;
     }
     return{
       kind:"compare",
@@ -1689,23 +1844,38 @@ function reconstructMechPayloadFromStored(rows){
         outputProvenance:outputSource==="canned"?"canned_fixtures":"live_generation",
         answersDidImprovementHelp:outputSource==="live",
         findingKind:outputSource==="live"?"prompt_comparison":"plumbing_verification",
-        mechanicalCheckScoreDelta:
-          typeof left.mechanicalCheckScore==="number"&&typeof right.mechanicalCheckScore==="number"
-            ?Math.round((right.mechanicalCheckScore-left.mechanicalCheckScore)*10)/10
-            :null,
+        scoreDelta,
+        mechanicalCheckScoreDelta:scoreDelta,
         left,
         right,
-        changed:mechChangedFromSides(left,right),
+        changed:left.legacyIncomplete||right.legacyIncomplete?[]:mechChangedFromSides(left,right),
         restoredFromStore:true,
-        restoredAt:leftRec.ts||rightRec.ts||null,
+        restoredAt,
       },
     };
   }
   const single=list.find((r)=>{
-    const src=String(r.outputSource||"");
-    return src==="canned"||src==="live";
+    const prov=mechParseStoredProvenance(r);
+    return (prov.outputSource==="canned"||prov.outputSource==="live")&&!prov.experiment;
   });
   if(!single)return null;
+  if(!mechRecordIsModern(single)){
+    return{
+      kind:"score",
+      source:"server",
+      result:{
+        ok:true,
+        verification:"ok",
+        label:"mechanical_check_score",
+        legacyIncomplete:true,
+        caseId:single.goldenCaseId||null,
+        outputSource:mechParseStoredProvenance(single).outputSource,
+        restoredFromStore:true,
+        restoredAt:single.timestamp||single.ts||null,
+      },
+    };
+  }
+  const singleSide=mechSideFromStoredRecord(single,mechParseStoredProvenance(single).outputSource);
   return{
     kind:"score",
     source:"server",
@@ -1714,20 +1884,24 @@ function reconstructMechPayloadFromStored(rows){
       verification:"ok",
       label:"mechanical_check_score",
       caseId:single.goldenCaseId||null,
-      outputSource:single.outputSource,
-      outputProvenance:single.outputSource==="live"?"live_generation":"canned_fixtures",
+      outputSource:singleSide.outputSource,
+      outputProvenance:singleSide.outputSource==="live"?"live_generation":"canned_fixtures",
       findingKind:
-        single.outputSource==="live"?"single_version_live_score":"plumbing_verification",
-      artifactVersion:single.artifactVersion,
-      artifactDigest:single.artifactDigest,
-      mechanicalCheckScore:single.mechanicalCheckScore,
-      scoreableCount:single.scoreableCount,
-      passed:[...(single.passed||[])],
-      failed:[...(single.failed||[])],
-      notScoreable:[...(single.notScoreable||[])],
-      checkResults:(single.checkResults||[]).map((row)=>({...row})),
+        singleSide.outputSource==="live"?"single_version_live_score":"plumbing_verification",
+      artifactVersion:singleSide.artifactVersion,
+      artifactDigest:singleSide.artifactDigest,
+      checkSetVersion:singleSide.checkSetVersion,
+      mechanicalCheckScore:singleSide.mechanicalCheckScore,
+      scoreableCount:singleSide.scoreableCount,
+      stylePassRate:singleSide.stylePassRate,
+      styleScoreableCount:singleSide.styleScoreableCount,
+      byCategory:singleSide.byCategory,
+      passed:singleSide.passed,
+      failed:singleSide.failed,
+      notScoreable:singleSide.notScoreable,
+      checkResults:singleSide.checkResults,
       restoredFromStore:true,
-      restoredAt:single.ts||null,
+      restoredAt:single.timestamp||single.ts||null,
     },
   };
 }
@@ -1863,49 +2037,71 @@ function renderMechHeadlineCard(side,outputSource,{semantic="quality"}={}){
     return`<div class="mech-card mech-card-fail"><div class="mech-card-eyebrow">Verification failed</div>
       <div class="mech-refuse">Not a score. ${escHtml(side.error||side.verificationError||"digest mismatch")}</div></div>`;
   }
+  if(side.legacyIncomplete){
+    return`<div class="mech-card mech-card-incomplete">
+      <div class="mech-card-eyebrow">${escHtml(shortVersionLabel(side.artifactVersion)||"—")}</div>
+      <div class="mech-card-score mech-card-score-missing">not yet checked</div>
+      <div class="mech-card-unit">stored run predates category-split scores</div>
+    </div>`;
+  }
   const ver=side.artifactVersion||"";
   const short=shortVersionLabel(ver)||"—";
   const src=outputSource||side.outputSource||"";
+  const g=mechCategoryCounts(side,"grounding");
+  const headline=g
+    ?mechFormatPassRate(g.passRate,g.passed,g.scoreable)
+    :"not yet checked";
   return`<div class="mech-card mech-card-quality">
     <div class="mech-card-eyebrow"><span class="mech-card-ver">${escHtml(short)}</span> · <span class="mech-card-artifact">${escHtml(ver)}</span></div>
-    <div class="mech-card-score">${side.mechanicalCheckScore==null?"—":side.mechanicalCheckScore}</div>
-    <div class="mech-card-unit">mechanical check score</div>
-    <div class="mech-card-meta">passed ${side.passed?.length||0} · failed ${side.failed?.length||0}</div>
-    ${src?`<div class="mech-card-meta">output source: ${escHtml(src)}</div>`:""}
+    <div class="mech-card-score${g&&g.failed>0?" mech-score-grounding-fail":""}">${escHtml(headline)}</div>
+    <div class="mech-card-unit">grounding pass rate</div>
+    ${mechFormatCategoryStrip(side)}
+    ${src?`<div class="mech-card-meta">output source: ${escHtml(src)}</div>`:`<div class="mech-card-meta">output source: not yet checked</div>`}
     ${side.scoredWith?`<div class="mech-card-meta">scored with ruler <code>${escHtml(side.scoredWith)}</code></div>`:""}
   </div>`;
 }
 
-/** Coverage side strip: version + demoted score — never the headline number. */
+/** Coverage side strip: version + demoted grounding/style rates. */
 function renderMechCoverageSideMeta(side,outputSource){
   if(!side)return"";
   if(side.verification==="failed"){
     return`<div class="mech-coverage-side"><div class="mech-card-eyebrow">Verification failed</div>
       <div class="mech-refuse">Not a score. ${escHtml(side.error||side.verificationError||"digest mismatch")}</div></div>`;
   }
+  if(side.legacyIncomplete){
+    return`<div class="mech-coverage-side">
+      <div class="mech-card-eyebrow">${escHtml(shortVersionLabel(side.artifactVersion)||"—")}</div>
+      <div class="mech-coverage-score-meta">not yet checked</div>
+    </div>`;
+  }
   const ver=side.artifactVersion||"";
   const short=shortVersionLabel(ver)||"—";
   const src=outputSource||side.outputSource||"";
-  const score=side.mechanicalCheckScore==null?"—":side.mechanicalCheckScore;
+  const g=mechCategoryCounts(side,"grounding");
+  const headline=g
+    ?mechFormatPassRate(g.passRate,g.passed,g.scoreable)
+    :"not yet checked";
   return`<div class="mech-coverage-side">
     <div class="mech-card-eyebrow"><span class="mech-card-ver">${escHtml(short)}</span> · <span class="mech-card-artifact">${escHtml(ver)}</span></div>
-    <div class="mech-coverage-score-meta">score ${escHtml(String(score))} · passed ${side.passed?.length||0} · failed ${side.failed?.length||0}</div>
-    ${src?`<div class="mech-card-meta">output source: ${escHtml(src)}</div>`:""}
+    <div class="mech-coverage-score-meta${g&&g.failed>0?" mech-score-grounding-fail":""}">${escHtml(headline)}</div>
+    ${mechFormatCategoryStrip(side)}
+    ${src?`<div class="mech-card-meta">output source: ${escHtml(src)}</div>`:`<div class="mech-card-meta">output source: not yet checked</div>`}
   </div>`;
 }
 
 /**
- * Coverage headline is detections — scores are not a quality signal in either
- * direction (adding checks a fixture passes raises the number without catching
- * more issues). Lead with caught N → M; demote raw scores to secondary meta.
+ * Coverage headline is style detections — grounding is the labelled quality bar.
  */
 function renderMechCoverageHeadline(left,right,outputSource){
-  const L=(left?.failed||[]).length;
-  const R=(right?.failed||[]).length;
-  return`<div class="mech-coverage-headline" title="Detections on the same output. More failed checks means stronger coverage, not worse quality. The mechanical check score is not a quality signal in either direction.">
+  const L=mechStyleFailCount(left);
+  const R=mechStyleFailCount(right);
+  const caught=L==null||R==null
+    ?"detections not yet checked"
+    :`caught ${L} → ${R} style issues`;
+  return`<div class="mech-coverage-headline" title="Style detections on the same output. More style failures mean stronger coverage, not worse quality. Grounding is reported separately and is never averaged with style.">
     <div class="mech-coverage-lead">
-      <div class="mech-coverage-lead-label">detections</div>
-      <div class="mech-coverage-lead-value">caught ${L} → ${R} issues</div>
+      <div class="mech-coverage-lead-label">style detections</div>
+      <div class="mech-coverage-lead-value">${escHtml(caught)}</div>
     </div>
     <div class="mech-coverage-sides">
       ${renderMechCoverageSideMeta(left,outputSource)}
@@ -1915,20 +2111,28 @@ function renderMechCoverageHeadline(left,right,outputSource){
 }
 
 function renderMechQualityDeltaChip(delta,{allowDirection=true}={}){
-  const label=delta==null?"—":(delta>0?`+${delta}`:String(delta));
-  const dirClass=allowDirection&&typeof delta==="number"
-    ?(delta>0?"mech-delta-up":delta<0?"mech-delta-down":"")
+  const d=mechNormalizeScoreDelta(delta);
+  if(!d.comparable){
+    return`<div class="mech-delta-chip mech-delta-refused">
+      <div class="mech-delta-chip-label">grounding Δ</div>
+      <div class="mech-delta-chip-value">—</div>
+      <div class="mech-delta-chip-reason">${escHtml(d.reason||"not comparable")}</div>
+    </div>`;
+  }
+  const value=d.value;
+  const label=value>0?`+${value}`:String(value);
+  const dirClass=allowDirection
+    ?(value>0?"mech-delta-up":value<0?"mech-delta-down":"")
     :"";
   return`<div class="mech-delta-chip mech-delta-quality ${dirClass}">
-    <div class="mech-delta-chip-label">ruler score Δ</div>
+    <div class="mech-delta-chip-label">grounding Δ</div>
     <div class="mech-delta-chip-value">${escHtml(label)}</div>
   </div>`;
 }
 
 function renderMechQualityRefusedTile(r){
-  const reason=r.checkSetsDiffer||r.mechanicalCheckScoreDelta===null
-    ?"not comparable (check set changed)"
-    :"not comparable";
+  const d=mechNormalizeScoreDelta(r.scoreDelta||r.mechanicalCheckScoreDelta);
+  const reason=d.reason||r.checkSetNote||"not comparable";
   return`<div class="mech-quality-tile" title="${escAttr(r.checkSetNote||r.interpretation||"Coverage experiment — no output-quality delta.")}">
     <div class="mech-quality-tile-label">Quality delta</div>
     <div class="mech-quality-tile-value">—</div>
@@ -1948,27 +2152,34 @@ function renderMechExperimentCaption(r,{experimentLabel,tooltip}){
 
 function renderMechCheckTable(left,right,leftLabel,rightLabel){
   const ids=[...new Set([
-    ...(left?.checkResults||[]).map(r=>r.checkId),
-    ...(right?.checkResults||[]).map(r=>r.checkId),
-  ])].sort();
+    ...(left?.checkResults||[]).map(r=>r.id||r.checkId),
+    ...(right?.checkResults||[]).map(r=>r.id||r.checkId),
+  ])].filter(Boolean).sort();
   if(!ids.length)return"";
   const statusOf=(side,id)=>{
-    const row=(side?.checkResults||[]).find(r=>r.checkId===id);
-    if(!row)return{text:"absent",passFail:null,historical:false};
+    const row=(side?.checkResults||[]).find(r=>(r.id||r.checkId)===id);
+    if(!row)return{text:"absent",passFail:null,historical:false,category:null,why:null};
     const hist=row.historicalImplementation;
+    const cat=row.category||null;
     return{
       text:hist?`${row.status} · historical`:row.status,
       passFail:row.status,
       historical:!!hist,
+      category:cat,
+      why:row.why||null,
     };
   };
   const cell=(side,id)=>{
     const s=statusOf(side,id);
-    const tip=s.historical
-      ?` title="historicalImplementation: scored with the check logic that existed on this artifact version, not today's code."`
-      :"";
-    const cls=s.passFail==="pass"?"mech-status-pass":s.passFail==="fail"?"mech-status-fail":"";
-    return`<td class="${cls}"${tip}>${escHtml(s.text)}</td>`;
+    const tips=[];
+    if(s.historical)tips.push("historicalImplementation: scored with the check logic that existed on this artifact version, not today's code.");
+    if(s.why)tips.push(s.why);
+    const tip=tips.length?` title="${escAttr(tips.join(" "))}"`:"";
+    let cls="";
+    if(s.passFail==="pass")cls="mech-status-pass";
+    else if(s.passFail==="fail"&&s.category==="grounding")cls="mech-status-fail-grounding";
+    else if(s.passFail==="fail")cls="mech-status-fail-style";
+    return`<td class="${cls}"${tip}>${escHtml(s.text)}${s.category?` <span class="mech-cat-tag mech-cat-${escHtml(s.category)}">${escHtml(s.category)}</span>`:""}</td>`;
   };
   return`<div class="mech-table-wrap"><table class="mech-table">
     <thead><tr><th>Check id</th><th>${escHtml(leftLabel||"Left")}</th><th>${escHtml(rightLabel||"Right")}</th></tr></thead>
@@ -1982,8 +2193,8 @@ function renderMechCheckTable(left,right,leftLabel,rightLabel){
 
 function renderMechChecksDisclosure(left,right,leftLabel,rightLabel){
   const ids=new Set([
-    ...(left?.checkResults||[]).map(r=>r.checkId),
-    ...(right?.checkResults||[]).map(r=>r.checkId),
+    ...(left?.checkResults||[]).map(r=>r.id||r.checkId),
+    ...(right?.checkResults||[]).map(r=>r.id||r.checkId),
   ]);
   const n=ids.size;
   if(!n)return"";
@@ -2019,15 +2230,26 @@ function renderMechanicalScoreResult(r){
   if(r.verification==="failed"||r.ok===false){
     return `<div class="mech-refuse">Verification failed — not a score. ${escHtml(r.error||"Fixture digest does not match declared digest.")}</div>`;
   }
+  if(r.legacyIncomplete){
+    return`<div class="mech-refuse">not yet checked — stored run predates category-split scores. Re-run below.</div>`;
+  }
   const src=mechOutputSourceLabel(r);
   const rows=(r.checkResults||[]).map(row=>{
     const hist=row.historicalImplementation;
-    const tip=hist?` title="historicalImplementation: scored with the check logic that existed on this artifact version, not today's code."`:"";
+    const tips=[];
+    if(hist)tips.push("historicalImplementation: scored with the check logic that existed on this artifact version, not today's code.");
+    if(row.why)tips.push(row.why);
+    const tip=tips.length?` title="${escAttr(tips.join(" "))}"`:"";
     const histLabel=hist?" · historical":"";
-    return `<tr><td><code>${escHtml(row.checkId)}</code>${row.family?` <span class="mech-fam">${escHtml(row.family)}</span>`:""}</td><td${tip}>${escHtml(row.status)}${escHtml(histLabel)}</td></tr>`;
+    const cat=row.category||"";
+    let cls="";
+    if(row.status==="pass"||row.passed===true)cls="mech-status-pass";
+    else if((row.status==="fail"||row.passed===false)&&cat==="grounding")cls="mech-status-fail-grounding";
+    else if(row.status==="fail"||row.passed===false)cls="mech-status-fail-style";
+    return `<tr><td><code>${escHtml(row.id||row.checkId)}</code>${cat?` <span class="mech-cat-tag mech-cat-${escHtml(cat)}">${escHtml(cat)}</span>`:""}${row.family?` <span class="mech-fam">${escHtml(row.family)}</span>`:""}</td><td class="${cls}"${tip}>${escHtml(row.status||"")}${escHtml(histLabel)}${row.why?`<div class="mech-why">${escHtml(row.why)}</div>`:""}</td></tr>`;
   }).join("");
   return `${renderMechHeadlineCard(r,src)}
-    <div class="mech-caption">Single-version score · ${escHtml(src)} outputs · not an eval score</div>
+    <div class="mech-caption">Single-version score · ${escHtml(src==="unknown"?"output source not yet checked":src+" outputs")} · grounding headline · style separate</div>
     <div class="mech-meta">${escHtml(r.findingKind||"")} · does not feed fleet health · not written to evalHistory</div>
     <details class="mech-checks-details"><summary>Show all ${(r.checkResults||[]).length} checks</summary>
       <div class="mech-table-wrap"><table class="mech-table"><thead><tr><th>Check id</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -2038,10 +2260,11 @@ function renderMechanicalCompareResult(r){
   if(r.experiment==="check_coverage"){
     const left={...r.left,outputSource:r.outputSource};
     const right={...r.right,outputSource:r.outputSource};
+    const delta=mechNormalizeScoreDelta(r.scoreDelta||r.mechanicalCheckScoreDelta);
     const tooltip=[
       r.interpretation,
-      r.checkSetNote,
-      "Lower mechanical check score means better detection on the same output — not worse quality.",
+      delta.comparable===false?delta.reason:r.checkSetNote,
+      "Grounding and style are never averaged. Coverage compares detection, not quality.",
       "This is not an eval score, does not feed fleet health, and is not written to evalHistory.",
     ].filter(Boolean).join(" ");
     const subtitle=r.coverageReading?.detail
@@ -2054,10 +2277,10 @@ function renderMechanicalCompareResult(r){
       ${renderMechChecksDisclosure(left,right,left.artifactVersion,right.artifactVersion)}`;
   }
   if(r.experiment==="output_quality"){
-    const delta=r.mechanicalCheckScoreDelta;
+    const delta=r.scoreDelta||r.mechanicalCheckScoreDelta;
     const isFinding=r.answersDidImprovementHelp===true&&r.findingKind==="prompt_comparison";
     const tooltip=isFinding
-      ?`Experiment B live · ruler ${r.rulerVersion||""}. Same check set scores two prompt runs. Higher ruler score is better. May answer whether the prompt change helped.`
+      ?`Experiment B live · ruler ${r.rulerVersion||""}. Same check set scores two prompt runs. Higher grounding rate is better. May answer whether the prompt change helped.`
       :`Experiment B plumbing · ruler ${r.rulerVersion||""}. Fixture comparison verifies the scoring path, not the prompts. Delta is not a finding that an improvement helped.`;
     const note=isFinding
       ?""

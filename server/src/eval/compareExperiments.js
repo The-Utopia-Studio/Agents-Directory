@@ -15,7 +15,6 @@
 // never a number that pretends to be a quality change.
 
 import { loadHistoricalArtifact } from "./historicalArtifacts.js";
-import { CATEGORY_GROUNDING, CATEGORY_STYLE } from "./scoreMechanicalOutput.js";
 
 export const EXPERIMENT_CHECK_COVERAGE = "check_coverage";
 export const EXPERIMENT_OUTPUT_QUALITY = "output_quality";
@@ -375,5 +374,3 @@ function coverageReading(left, right) {
     detail: "Style failure counts match on this output.",
   };
 }
-
-export { CATEGORY_GROUNDING, CATEGORY_STYLE };
