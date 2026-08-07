@@ -37,6 +37,7 @@ function scoreWith({
     declaredChecks: scoringArtifact.checks,
     sourceGroundingRules,
     sourceText,
+    checkSetVersion: scoringArtifact.artifactVersion,
   });
 }
 
@@ -110,16 +111,25 @@ export async function runMechanicalScore({
     artifactVersion: artifact.artifactVersion,
     artifactDigest: artifact.artifactDigest,
     artifactDigestAlgorithm: "sha256",
+    checkSetVersion: score.checkSetVersion,
     declaredChecks: [...artifact.checks],
     mechanicalCheckScore: score.mechanicalCheckScore,
     scoreableCount: score.scoreableCount,
+    stylePassRate: score.stylePassRate,
+    styleScoreableCount: score.styleScoreableCount,
+    byCategory: score.byCategory,
     passed: [...score.passed],
     failed: [...score.failed],
     notScoreable: [...score.notScoreable],
     checkResults: score.checkResults.map((row) => ({
-      checkId: row.checkId,
-      family: row.family,
+      id: row.id,
+      checkId: row.id,
+      passed: row.passed,
+      why: row.why,
+      severity: row.severity,
+      category: row.category,
       status: row.status,
+      family: row.family,
       ...(row.historicalImplementation
         ? { historicalImplementation: true }
         : {}),
@@ -336,26 +346,46 @@ export async function runMechanicalCompare(store, opts) {
   }
 
   if (store) {
+    const leftScore = {
+      artifactVersion:
+        result.left.generatingArtifactVersion || result.left.artifactVersion,
+      artifactDigest:
+        result.left.generatingArtifactDigest || result.left.artifactDigest,
+      checkSetVersion: result.left.checkSetVersion,
+      passed: result.left.passed,
+      failed: result.left.failed,
+      notScoreable: result.left.notScoreable,
+      mechanicalCheckScore: result.left.mechanicalCheckScore,
+      scoreableCount: result.left.scoreableCount,
+      stylePassRate: result.left.stylePassRate,
+      styleScoreableCount: result.left.styleScoreableCount,
+      byCategory: result.left.byCategory,
+      checkResults: result.left.checkResults,
+    };
+    const rightScore = {
+      artifactVersion:
+        result.right.generatingArtifactVersion || result.right.artifactVersion,
+      artifactDigest:
+        result.right.generatingArtifactDigest || result.right.artifactDigest,
+      checkSetVersion: result.right.checkSetVersion,
+      passed: result.right.passed,
+      failed: result.right.failed,
+      notScoreable: result.right.notScoreable,
+      mechanicalCheckScore: result.right.mechanicalCheckScore,
+      scoreableCount: result.right.scoreableCount,
+      stylePassRate: result.right.stylePassRate,
+      styleScoreableCount: result.right.styleScoreableCount,
+      byCategory: result.right.byCategory,
+      checkResults: result.right.checkResults,
+    };
     const leftRec = await recordMechanicalResult(
       store,
       buildMechanicalResultRecord({
         agentId: opts.agentId || "A7",
         goldenCaseId: opts.caseId,
-        score: {
-          artifactVersion:
-            result.left.generatingArtifactVersion ||
-            result.left.artifactVersion,
-          artifactDigest:
-            result.left.generatingArtifactDigest ||
-            result.left.artifactDigest,
-          passed: result.left.passed,
-          failed: result.left.failed,
-          notScoreable: result.left.notScoreable,
-          mechanicalCheckScore: result.left.mechanicalCheckScore,
-          scoreableCount: result.left.scoreableCount,
-          checkResults: result.left.checkResults,
-        },
-        outputSource: `${opts.outputSource || "canned"}:${experiment}`,
+        score: leftScore,
+        outputSource: opts.outputSource || "canned",
+        experiment,
         comparedTo: opts.rightVersion,
       }),
     );
@@ -364,21 +394,9 @@ export async function runMechanicalCompare(store, opts) {
       buildMechanicalResultRecord({
         agentId: opts.agentId || "A7",
         goldenCaseId: opts.caseId,
-        score: {
-          artifactVersion:
-            result.right.generatingArtifactVersion ||
-            result.right.artifactVersion,
-          artifactDigest:
-            result.right.generatingArtifactDigest ||
-            result.right.artifactDigest,
-          passed: result.right.passed,
-          failed: result.right.failed,
-          notScoreable: result.right.notScoreable,
-          mechanicalCheckScore: result.right.mechanicalCheckScore,
-          scoreableCount: result.right.scoreableCount,
-          checkResults: result.right.checkResults,
-        },
-        outputSource: `${opts.outputSource || "canned"}:${experiment}`,
+        score: rightScore,
+        outputSource: opts.outputSource || "canned",
+        experiment,
         comparedTo: opts.leftVersion,
       }),
     );

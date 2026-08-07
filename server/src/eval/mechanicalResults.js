@@ -1,6 +1,6 @@
 // Immutable metadata-only mechanical-result records.
-// Per run: artifact version, digest, which checks passed/failed, normalised
-// mechanical check score. Never output text. Does not feed fleet health.
+// Per run: artifact version, digest, check-set version, category-separated
+// results with stored why text. Never output text. Does not feed fleet health.
 
 import { IMMUTABLE_COLLECTIONS } from "../core/store.js";
 
@@ -15,15 +15,97 @@ export function assertMechanicalResultsImmutable() {
   }
 }
 
+const CHECK_RESULT_FACT_KEYS = Object.freeze([
+  "sectionFound",
+  "paragraphCount",
+  "hookChars",
+  "aboutChars",
+  "headlineChars",
+  "limit",
+  "windowParagraphs",
+  "windowChars",
+  "hasContactChannel",
+  "hasImperativeOpener",
+  "hasInvitationFrame",
+  "delimiter",
+  "segmentCount",
+  "section",
+  "windowWords",
+  "anchorPresent",
+  "partnerPresent",
+  "near",
+  "directed",
+  "historicalImplementation",
+  "reason",
+  "sourceAllowsEmployer",
+  "employerFramed",
+  "markedNonEmployerCount",
+  "framedNonEmployerCount",
+]);
+
+function cleanCheckResult(row) {
+  const id = row.id || row.checkId;
+  if (!id) return null;
+  const clean = {
+    id,
+    checkId: id,
+    passed:
+      typeof row.passed === "boolean"
+        ? row.passed
+        : row.status === "pass"
+          ? true
+          : row.status === "fail"
+            ? false
+            : null,
+    why: row.why == null ? null : String(row.why),
+    severity: row.severity == null ? null : String(row.severity),
+    category:
+      row.category === "grounding" || row.category === "style"
+        ? row.category
+        : row.family === "source-grounding"
+          ? "grounding"
+          : "style",
+    status:
+      row.status ||
+      (row.passed === true
+        ? "pass"
+        : row.passed === false
+          ? "fail"
+          : "not_scoreable"),
+    family: row.family || undefined,
+  };
+  for (const key of CHECK_RESULT_FACT_KEYS) {
+    if (row[key] !== undefined) clean[key] = row[key];
+  }
+  return clean;
+}
+
+function cloneCategorySummary(summary) {
+  if (!summary || typeof summary !== "object") return null;
+  return {
+    category: summary.category,
+    passed: Array.isArray(summary.passed) ? [...summary.passed] : [],
+    failed: Array.isArray(summary.failed) ? [...summary.failed] : [],
+    notScoreable: Array.isArray(summary.notScoreable)
+      ? [...summary.notScoreable]
+      : [],
+    scoreableCount:
+      typeof summary.scoreableCount === "number" ? summary.scoreableCount : null,
+    passRate:
+      typeof summary.passRate === "number" ? summary.passRate : null,
+  };
+}
+
 /**
  * Build a persistable record from a scoreMechanicalOutput result.
- * Strips anything that could carry draft text — status + structural facts only.
+ * Strips anything that could carry draft text — status + structural facts + why.
  */
 export function buildMechanicalResultRecord({
   agentId,
   goldenCaseId,
   score,
   outputSource = "canned",
+  experiment = null,
   comparedTo = null,
 }) {
   if (!score?.artifactVersion || !score?.artifactDigest) {
@@ -32,60 +114,65 @@ export function buildMechanicalResultRecord({
       { status: 500 },
     );
   }
+  const canonicalSource =
+    outputSource === "live" || String(outputSource).startsWith("live")
+      ? "live"
+      : outputSource === "canned" || String(outputSource).startsWith("canned")
+        ? "canned"
+        : null;
+  if (canonicalSource !== "live" && canonicalSource !== "canned") {
+    throw Object.assign(
+      new Error('outputSource must be "live" or "canned"'),
+      { status: 500 },
+    );
+  }
+
+  // Preserve experiment tag for reconstruct-from-store without stuffing it into
+  // outputSource (which must stay live|canned).
+  let resolvedExperiment = experiment;
+  if (!resolvedExperiment && String(outputSource).includes(":")) {
+    resolvedExperiment = String(outputSource).split(":")[1] || null;
+  }
+
+  const checkResults = (score.checkResults || [])
+    .map(cleanCheckResult)
+    .filter(Boolean);
+
   return {
     agentId,
     goldenCaseId: goldenCaseId || null,
     artifactVersion: score.artifactVersion,
     artifactDigest: score.artifactDigest,
     artifactDigestAlgorithm: "sha256",
-    outputSource, // canned | live — never the text
+    checkSetVersion: score.checkSetVersion || score.artifactVersion || null,
+    outputSource: canonicalSource,
+    ...(resolvedExperiment ? { experiment: resolvedExperiment } : {}),
     passed: [...(score.passed || [])],
     failed: [...(score.failed || [])],
     notScoreable: [...(score.notScoreable || [])],
+    byCategory: {
+      grounding: cloneCategorySummary(score.byCategory?.grounding),
+      style: cloneCategorySummary(score.byCategory?.style),
+    },
+    // Headline = grounding pass rate only.
     mechanicalCheckScore: score.mechanicalCheckScore,
     scoreableCount: score.scoreableCount,
-    checkResults: (score.checkResults || []).map((row) => {
-      const clean = {
-        checkId: row.checkId,
-        family: row.family,
-        status: row.status,
-      };
-      for (const key of [
-        "sectionFound",
-        "paragraphCount",
-        "hookChars",
-        "aboutChars",
-        "headlineChars",
-        "limit",
-        "windowParagraphs",
-        "windowChars",
-        "hasContactChannel",
-        "hasImperativeOpener",
-        "hasInvitationFrame",
-        "delimiter",
-        "segmentCount",
-        "section",
-        "windowWords",
-        "anchorPresent",
-        "partnerPresent",
-        "near",
-        "directed",
-        "historicalImplementation",
-        "reason",
-      ]) {
-        if (row[key] !== undefined) clean[key] = row[key];
-      }
-      return clean;
-    }),
+    stylePassRate: score.stylePassRate,
+    styleScoreableCount: score.styleScoreableCount,
+    checkResults,
     ...(comparedTo ? { comparedTo } : {}),
     label: "mechanical_check_score",
-    ts: new Date().toISOString(),
+    timestamp: new Date().toISOString(),
   };
 }
 
 export async function recordMechanicalResult(store, record) {
   assertMechanicalResultsImmutable();
-  return store.append(MECHANICAL_RESULTS_COLLECTION, record);
+  const toStore = { ...record };
+  if (!toStore.timestamp) toStore.timestamp = new Date().toISOString();
+  // Prefer timestamp; keep ts as the same value for older readers.
+  toStore.ts = toStore.timestamp;
+  return store.append(MECHANICAL_RESULTS_COLLECTION, toStore);
 }
 
 export async function listMechanicalResults(store, { agentId, goldenCaseId } = {}) {
@@ -102,9 +189,25 @@ export async function listMechanicalResults(store, { agentId, goldenCaseId } = {
  */
 export function mechanicalFailuresAsDefectSignals(score) {
   return (score.checkResults || [])
-    .filter((row) => row.status === "fail")
+    .filter((row) => row.passed === false || row.status === "fail")
     .map((row) => {
-      const family = row.family || "style";
-      return `mechanical:${family}:${row.checkId}`;
+      const family = row.family || row.category || "style";
+      const id = row.id || row.checkId;
+      return `mechanical:${family}:${id}`;
     });
+}
+
+/** True when a stored record has the post-category-split schema. */
+export function isModernMechanicalRecord(rec) {
+  if (!rec || typeof rec !== "object") return false;
+  if (!rec.checkSetVersion) return false;
+  if (rec.outputSource !== "live" && rec.outputSource !== "canned") return false;
+  if (!Array.isArray(rec.checkResults) || !rec.checkResults.length) return false;
+  return rec.checkResults.every(
+    (row) =>
+      row &&
+      (row.id || row.checkId) &&
+      (row.category === "grounding" || row.category === "style") &&
+      ("passed" in row),
+  );
 }
