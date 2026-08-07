@@ -240,6 +240,7 @@ export function liveMarkedNonEmployerFrameFailures(output, sourceText) {
     {
       checkId: "source_no_employer_frame_for_marked_non_employer",
       family: SOURCE_GROUNDING_FAMILY,
+      why: `Output frames ${framedCount} source-marked non-employer entit${framedCount === 1 ? "y" : "ies"} as a workplace.`,
       sectionFound: true,
       sourceAllowsEmployer: false,
       employerFramed: true,
@@ -300,6 +301,9 @@ export function runSourceGroundingChecks(output, rules = [], options = {}) {
       results.push({
         ...base,
         status: fail ? "fail" : "pass",
+        why: fail
+          ? `Output frames "${rule.anchor}" as an employer/workplace, but source does not establish that relationship.`
+          : null,
         sourceAllowsEmployer: sourceAllows,
         employerFramed: framed,
         near: framed,
@@ -313,9 +317,13 @@ export function runSourceGroundingChecks(output, rules = [], options = {}) {
       rule.requiredClass === "founding-verb"
     ) {
       const claim = foundingClaimsCompany(tokens, rule.anchor, windowWords);
+      const fail = !claim.near;
       results.push({
         ...base,
-        status: claim.near ? "pass" : "fail",
+        status: fail ? "fail" : "pass",
+        why: fail
+          ? `Output does not preserve a founding-verb claim near "${rule.anchor}" that the source requires.`
+          : null,
         partnerPresent: claim.partnerPresent,
         near: claim.near,
         directed: true,
@@ -333,6 +341,9 @@ export function runSourceGroundingChecks(output, rules = [], options = {}) {
       results.push({
         ...base,
         status: fail ? "fail" : "pass",
+        why: fail
+          ? `Output invents a founding relationship near "${rule.anchor}" that source does not support.`
+          : null,
         partnerPresent: claim.partnerPresent,
         near: claim.near,
         directed: true,
@@ -347,6 +358,9 @@ export function runSourceGroundingChecks(output, rules = [], options = {}) {
       results.push({
         ...base,
         status: pass ? "pass" : "fail",
+        why: pass
+          ? null
+          : `Output drops required token "${rule.requiredToken}" near "${rule.anchor}" (or omits the anchor).`,
         partnerPresent: partnerHits.length > 0,
         near: Boolean(near),
       });
@@ -356,6 +370,7 @@ export function runSourceGroundingChecks(output, rules = [], options = {}) {
     results.push({
       ...base,
       status: "fail",
+      why: `Unknown source-grounding rule kind "${rule.kind}" for check ${rule.checkId}.`,
       partnerPresent: false,
       near: false,
       unknownKind: true,
