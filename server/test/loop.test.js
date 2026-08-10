@@ -24,7 +24,7 @@ async function freshService() {
   return (await freshServiceWithStore()).svc;
 }
 
-async function freshServiceWithStore() {
+async function freshServiceWithStore(opts = {}) {
   const dir = await mkdtemp(join(tmpdir(), "adir-"));
   const store = createStore(dir);
   await seed(store);
@@ -32,7 +32,25 @@ async function freshServiceWithStore() {
   const obs = getObservability(config, { store });
   const optimizer = getOptimizer(config);
   const memory = getMemory(config, { store });
-  return { svc: createLoopService({ store, obs, optimizer, memory, config }), store };
+  const openLoopPullRequest =
+    opts.openLoopPullRequest ||
+    (async () => ({
+      reused: false,
+      number: 9001,
+      url: "https://github.com/The-Utopia-Studio/utopia-agents/pull/9001",
+      branch: "loop/test-mock",
+    }));
+  return {
+    svc: createLoopService({
+      store,
+      obs,
+      optimizer,
+      memory,
+      config,
+      openLoopPullRequest,
+    }),
+    store,
+  };
 }
 
 async function seedLivePromotionEvidence(store, agentId, {
@@ -52,7 +70,18 @@ async function seedLivePromotionEvidence(store, agentId, {
     mechanicalCheckScore: 40,
     byCategory: { grounding: { passRate: 40 }, style: { passRate: 100 } },
     checkResults: [{ id: "g", checkId: "g", passed: true, category: "grounding" }],
-    guardrailGate: { passed: true, results: [] },
+    guardrailGate: {
+      passed: true,
+      results: [{ id: "guardrail:0", passed: true, why: null, source: "frontmatter" }],
+      coverage: {
+        total: 1,
+        evaluated: 1,
+        skipped: 0,
+        passed: 1,
+        failed: 0,
+        summary: "1 of 1 evaluated, all passed",
+      },
+    },
     passed: ["g"],
     failed: [],
     notScoreable: [],
@@ -70,7 +99,18 @@ async function seedLivePromotionEvidence(store, agentId, {
     mechanicalCheckScore: 90,
     byCategory: { grounding: { passRate: 90 }, style: { passRate: 100 } },
     checkResults: [{ id: "g", checkId: "g", passed: true, category: "grounding" }],
-    guardrailGate: { passed: true, results: [] },
+    guardrailGate: {
+      passed: true,
+      results: [{ id: "guardrail:0", passed: true, why: null, source: "frontmatter" }],
+      coverage: {
+        total: 1,
+        evaluated: 1,
+        skipped: 0,
+        passed: 1,
+        failed: 0,
+        summary: "1 of 1 evaluated, all passed",
+      },
+    },
     passed: ["g"],
     failed: [],
     notScoreable: [],
@@ -334,6 +374,48 @@ test("approval is refused when the targeted artifact has moved", async () => {
   );
 });
 
+test("approval stays proposed when loop PR creation fails", async () => {
+  const { LoopPullRequestError } = await import("../src/github/loopPullRequest.js");
+  const { svc, store } = await freshServiceWithStore({
+    openLoopPullRequest: async () => {
+      throw new LoopPullRequestError("GITHUB_LOOP_TOKEN is missing — cannot open a loop PR. Proposal stays proposed.", {
+        status: 503,
+        code: "loop_token_missing",
+      });
+    },
+  });
+  const proposals = await svc.runImprovement("A2");
+  const { incumbentVersion, challengerVersion } = await seedLivePromotionEvidence(
+    store,
+    "A2",
+  );
+  const agent = await svc.getAgent("A2");
+  agent.proposedImprovements = [
+    {
+      ...proposals[0],
+      targetArtifactVersion: incumbentVersion,
+      challengerArtifactVersion: challengerVersion,
+    },
+  ];
+  await svc.putAgent(agent);
+
+  await assert.rejects(
+    () => svc.approveImprovement("A2", proposals[0].id, TEST_APPROVER),
+    (e) => {
+      assert.equal(e.status, 503);
+      assert.match(e.message, /GITHUB_LOOP_TOKEN is missing/);
+      return true;
+    },
+  );
+  const pending = await svc.getAgent("A2");
+  assert.equal(pending.proposedImprovements[0].status, "proposed");
+  assert.equal(
+    pending.proposedImprovements[0].loopPrError.code,
+    "loop_token_missing",
+  );
+  assert.equal(pending.proposedImprovements[0].loopPr, undefined);
+});
+
 test("approval retains the decided proposal without moving the Railway catalog version", async () => {
   const { svc, store } = await freshServiceWithStore();
   const before = await svc.getAgent("A2");
@@ -365,6 +447,8 @@ test("approval retains the decided proposal without moving the Railway catalog v
   assert.equal(version, before.version);
   assert.equal(approved.status, "approved");
   assert.equal(approved.approvedBy.subject, TEST_APPROVER.subject);
+  assert.equal(approved.loopPr.number, 9001);
+  assert.match(approved.loopPr.url, /utopia-agents\/pull\/9001/);
   assert.match(approved.patch, /--- current[\s\S]*\+\+\+ proposed/);
   const a2 = await svc.getAgent("A2");
   assert.deepEqual(
@@ -373,6 +457,10 @@ test("approval retains the decided proposal without moving the Railway catalog v
     "a decision must retain both its audit record and the pending sibling",
   );
   assert.deepEqual(a2.changelog, before.changelog);
+  assert.equal(
+    a2.latestProposalAttempt.outcome,
+    "human-approved-pull-request-opened",
+  );
 });
 
 test("approval refuses when live promotion evidence is missing", async () => {

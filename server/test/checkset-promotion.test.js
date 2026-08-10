@@ -155,19 +155,27 @@ test("grounding failure fails the guardrail gate without changing how style is c
 
 test("promotion gate requires live + guardrails + non-negative comparable delta", () => {
   const checkSetId = computeCheckSetId([{ id: "g", category: "grounding" }]);
+  const coverage = {
+    total: 1,
+    evaluated: 1,
+    skipped: 0,
+    passed: 1,
+    failed: 0,
+    summary: "1 of 1 evaluated, all passed",
+  };
   const incumbent = {
     checkSetId,
     rulerVersion: "ruler-v1",
     byCategory: { grounding: { passRate: 50 } },
     checkResults: [{ id: "g", passed: true, category: "grounding" }],
-    guardrailGate: { passed: true, results: [] },
+    guardrailGate: { passed: true, results: [], coverage },
   };
   const candidate = {
     checkSetId,
     rulerVersion: "ruler-v1",
     byCategory: { grounding: { passRate: 80 } },
     checkResults: [{ id: "g", passed: true, category: "grounding" }],
-    guardrailGate: { passed: true, results: [] },
+    guardrailGate: { passed: true, results: [], coverage },
   };
   const ok = evaluatePromotionGate({
     incumbentScore: incumbent,
@@ -188,10 +196,34 @@ test("promotion gate requires live + guardrails + non-negative comparable delta"
     incumbentScore: incumbent,
     candidateScore: {
       ...candidate,
-      guardrailGate: { passed: false, results: [{ id: "g", passed: false }] },
+      guardrailGate: { passed: false, results: [{ id: "g", passed: false }], coverage },
     },
     outputSource: "live",
   });
   assert.equal(blocked.eligible, false);
   assert.ok(blocked.failures.some((f) => f.code === "guardrails"));
+
+  const zeroCoverage = evaluatePromotionGate({
+    incumbentScore: incumbent,
+    candidateScore: {
+      ...candidate,
+      guardrailGate: {
+        passed: true,
+        results: [{ id: "guardrail:0:unmapped", passed: null, source: "frontmatter-unmapped" }],
+        coverage: {
+          total: 5,
+          evaluated: 0,
+          skipped: 5,
+          passed: 0,
+          failed: 0,
+          summary: "0 of 5 evaluated, 5 not executable",
+        },
+      },
+    },
+    outputSource: "live",
+  });
+  assert.equal(zeroCoverage.eligible, false);
+  assert.ok(
+    zeroCoverage.failures.some((f) => f.code === "guardrail_coverage"),
+  );
 });

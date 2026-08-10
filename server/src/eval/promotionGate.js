@@ -6,6 +6,7 @@ import { groundingScoreDelta } from "./compareExperiments.js";
 
 export const PROMOTION_FAILURE = Object.freeze({
   GUARDRAILS: "guardrails",
+  GUARDRAIL_COVERAGE: "guardrail_coverage",
   COMPARABLE_DELTA: "comparable_delta",
   GROUNDING_DELTA: "grounding_delta",
   OUTPUT_SOURCE: "output_source",
@@ -56,6 +57,21 @@ export function evaluatePromotionGate({
         ? `Guardrail gate failed: ${failed.join(", ")}`
         : "Guardrail gate did not pass on the candidate score.",
     });
+  } else {
+    // 0 executable guardrails is not a pass — skips must not trivially clear
+    // the gate. Coverage reporting stays on guardrailGate.coverage.
+    const evaluated = Number(
+      candidateScore.guardrailGate?.coverage?.evaluated ?? 0,
+    );
+    if (!Number.isFinite(evaluated) || evaluated <= 0) {
+      const summary =
+        candidateScore.guardrailGate?.coverage?.summary ||
+        "0 of N evaluated (none executable)";
+      failures.push({
+        code: PROMOTION_FAILURE.GUARDRAIL_COVERAGE,
+        message: `Guardrail coverage is zero executable — not promotion-eligible (${summary}).`,
+      });
+    }
   }
 
   if (!incumbentScore || !candidateScore) {
