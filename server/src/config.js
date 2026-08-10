@@ -1,4 +1,4 @@
-// Central, env-driven configuration. Reads a .env file if present (no
+// Central, env-driven configuration. Reads .env files if present (no
 // dependency — a tiny parser), then process.env overrides. Every provider
 // is selected here by name so the rest of the code never hard-codes one.
 import { readFileSync } from "node:fs";
@@ -8,16 +8,25 @@ import {
   resolveDataDir,
 } from "./core/dataDir.js";
 
-function loadDotEnv() {
+function loadDotEnvFile(path) {
   try {
-    const path = fileURLToPath(new URL("../.env", import.meta.url));
     for (const line of readFileSync(path, "utf8").split("\n")) {
       const m = line.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/);
       if (m && process.env[m[1]] === undefined) {
         process.env[m[1]] = m[2].replace(/^["']|["']$/g, "");
       }
     }
-  } catch { /* no .env — defaults apply */ }
+  } catch {
+    /* missing file — defaults apply */
+  }
+}
+
+function loadDotEnv() {
+  // Prefer process.env; fill gaps from server/.env then repo-root .env.local/.env
+  // so local GITHUB_LOOP_TOKEN in .env.local is visible without copying.
+  loadDotEnvFile(fileURLToPath(new URL("../.env", import.meta.url)));
+  loadDotEnvFile(fileURLToPath(new URL("../../.env.local", import.meta.url)));
+  loadDotEnvFile(fileURLToPath(new URL("../../.env", import.meta.url)));
 }
 loadDotEnv();
 
@@ -115,6 +124,13 @@ export const config = {
     budgetUsd: Number(env.LOOP_BUDGET_USD || 1),
     costPerJobUsd: Number(env.LOOP_COST_PER_JOB || 0.05),
     autoApply: false, // hard-disabled; LOOP_AUTOAPPLY=true aborts boot above
+  },
+
+  // Loop PR writer for The-Utopia-Studio/utopia-agents. Contents + PRs write.
+  // Never fall back to GITHUB_SKILLS_TOKEN (fellow downloads; Contents:read).
+  github: {
+    loopToken: String(env.GITHUB_LOOP_TOKEN || "").trim(),
+    loopRepo: "The-Utopia-Studio/utopia-agents",
   },
 
   // The Context pillar — agent memory / knowledge with semantic recall.

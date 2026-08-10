@@ -22,6 +22,10 @@ import { validateProposal } from "../improve/proposalContract.js";
 import { readProposals, writeProposals, selectProposal } from "./proposals.js";
 import { buildServiceMigrationSnapshot } from "../migration/export.js";
 import { createConvexAuthorityClient } from "../convex/authorityClient.js";
+import {
+  LoopPullRequestError,
+  openLoopPullRequest,
+} from "../github/loopPullRequest.js";
 
 function outputDigest(output) {
   return createHash("sha256").update(String(output)).digest("hex");
@@ -114,7 +118,15 @@ function metadataOnlyTrace(agentId, trace) {
   };
 }
 
-export function createLoopService({ store, obs, optimizer, memory, verifier, config }) {
+export function createLoopService({
+  store,
+  obs,
+  optimizer,
+  memory,
+  verifier,
+  config,
+  openLoopPullRequest: openLoopPullRequestFn = openLoopPullRequest,
+}) {
   const ns = (agentId) => `agent:${agentId}`;
   const convexAuthority = createConvexAuthorityClient({
     url: config?.convex?.url || "",
@@ -812,6 +824,50 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         );
       }
 
+      // Approval means "open a PR", not "go live". PR must succeed before
+      // status flips to approved — never claim a PR that does not exist.
+      let loopPr;
+      try {
+        loopPr = await openLoopPullRequestFn({
+          agent,
+          proposal: prop,
+          promotionGate: prop.promotionGate,
+          incumbentScore: pair?.incumbentScore || null,
+          candidateScore: pair?.candidateScore || null,
+          token: config?.github?.loopToken || undefined,
+          env: {
+            GITHUB_LOOP_TOKEN: config?.github?.loopToken || process.env.GITHUB_LOOP_TOKEN,
+            GITHUB_SKILLS_TOKEN: process.env.GITHUB_SKILLS_TOKEN,
+          },
+        });
+      } catch (err) {
+        const message =
+          err instanceof LoopPullRequestError
+            ? err.message
+            : `Loop PR failed: ${err?.message || String(err)}. Proposal stays proposed.`;
+        prop.loopPrError = {
+          code: err?.code || "loop_pr_failed",
+          message,
+          at: new Date().toISOString(),
+        };
+        writeProposals(agent, proposals);
+        await store.put("agents", agent);
+        throw httpError(err?.status || 502, message, {
+          promotionGate: prop.promotionGate,
+          loopPrError: prop.loopPrError,
+          proposal: prop,
+        });
+      }
+
+      prop.loopPr = {
+        number: loopPr.number,
+        url: loopPr.url,
+        branch: loopPr.branch || null,
+        reused: Boolean(loopPr.reused),
+        createdAt: new Date().toISOString(),
+      };
+      delete prop.loopPrError;
+
       const approvedAt = new Date().toISOString();
       prop.status = "approved";
       prop.approvedAt = approvedAt;
@@ -821,13 +877,15 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
         role: actor.role,
         ...(actor.name ? { name: actor.name } : {}),
       };
-      // This is a copyable handoff for a human commit, not an automatic
-      // artifact write. The proposal remains immutable evidence of the review.
+      // Copyable handoff for a human commit remains as a record; the PR is
+      // the primary output. Never merge; never bump the pinned SHA here.
       prop.patch = prop.diff || approvedChangePatch(prop);
       agent.latestProposalAttempt = {
-        outcome: "human-approved-change-ready-to-commit",
+        outcome: "human-approved-pull-request-opened",
         recordedAt: approvedAt,
         proposalId: prop.id,
+        pullRequestNumber: loopPr.number,
+        pullRequestUrl: loopPr.url,
       };
       // Retain the approved proposal and every still-pending sibling. Approval
       // is a review decision, not a deletion and not a Railway version release.
