@@ -83,7 +83,7 @@ test("collectDefects maps check-id failureReasons and keeps unclassified tokens"
   ]);
   const cta = defects.find((d) => d.key === "about_closing_has_cta");
   assert.equal(cta.category, "style");
-  assert.match(cta.description, /CTA/i);
+  assert.match(cta.description, /call to action/i);
   // Em-dash is post-processed in the host — not a maker defect class.
   assert.equal(
     defects.some((d) => d.key === "draft_has_no_em_dash"),

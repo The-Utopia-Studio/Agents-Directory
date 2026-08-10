@@ -28,7 +28,7 @@ const CHECK_DESCRIPTIONS = Object.freeze({
   about_has_no_delimiter_separated_keyword_run:
     "LinkedIn About contains a delimiter-separated keyword run.",
   about_closing_has_cta:
-    "No CTA detected in the closing of the LinkedIn About (trailing two paragraphs).",
+    "LinkedIn About closing has no clear call to action.",
   draft_has_no_em_dash:
     "A generated section contains an em dash or double-hyphen substitute.",
   draft_has_no_ai_cliche_phrase:

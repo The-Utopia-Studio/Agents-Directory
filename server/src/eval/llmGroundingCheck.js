@@ -43,10 +43,32 @@ const CLAIM_KIND_TO_CHECK = Object.freeze({
   other: "source_claim_other",
 });
 
+function normalizeClaimText(text) {
+  let out = String(text || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, " ")
+    .replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+  // Drop lead-in framing the model sometimes includes around the same claim.
+  out = out.replace(
+    /^(?:i\s+have|i'?ve|with|including|claiming|stating)\s+/i,
+    "",
+  );
+  return out.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, "");
+}
+
 function digestSpan(text) {
-  const raw = String(text || "").trim();
-  if (!raw) return null;
-  return createHash("sha256").update(raw, "utf8").digest("hex");
+  const normalized = normalizeClaimText(text);
+  if (!normalized) return null;
+  return createHash("sha256").update(normalized, "utf8").digest("hex");
+}
+
+/**
+ * Gating identity: claimKind + normalised claim text.
+ * Digests are provenance of that normalised claim, not a separate identity key.
+ */
+export function groundingIdentityKey(claimKind, claimSpan) {
+  return `${claimKind}:${normalizeClaimText(claimSpan)}`;
 }
 
 function extractOpenAiText(payload) {
@@ -129,7 +151,9 @@ Examples of contradictions:
 Return ONLY JSON:
 {"findings":[{"claimKind":"tenure_years|role_title|employer_frame|metric|credential|quote|other","claimSpan":"...","sourceSpan":"..."}]}
 If nothing contradicts, return {"findings":[]}.
-Do not invent findings. Prefer precision over recall.`;
+Do not invent findings. Prefer precision over recall.
+For claimSpan and sourceSpan: quote the minimal contradictory phrase only —
+no leading subject ("I have"), no trailing punctuation, no surrounding sentence.`;
 
 /**
  * @returns {Promise<object[]>} trace-safe grounding fail rows (empty if unset/skip)
@@ -201,48 +225,65 @@ export async function runLlmGroundingCheck({
 }
 
 /**
- * Run the checker N times; return unique checkId+digest signatures and spread.
- * claimKindStable can hold while digestStable fails (span boundary jitter).
+ * Run the checker N times.
+ * Stability for gating = claimKind + normalised claim (not raw-span digest jitter).
  */
 export async function measureGroundingVariance(args, runs = 3) {
   const signatures = [];
   for (let i = 0; i < runs; i++) {
     const findings = await runLlmGroundingCheck({
       ...args,
-      includeRawSpans: false,
+      includeRawSpans: true,
     });
-    const sig = findings
-      .map((f) => `${f.checkId}:${f.claimSpanDigest}:${f.sourceSpanDigest}`)
+    const identity = findings
+      .map((f) => groundingIdentityKey(f.claimKind, f.claimSpan))
       .sort()
       .join("|");
     const claimKindSig = findings
       .map((f) => `${f.checkId}:${f.claimKind}`)
       .sort()
       .join("|");
+    // Provenance digests (of normalised text) — informative, not the gate key.
+    const digestSig = findings
+      .map((f) => `${f.checkId}:${f.claimSpanDigest}:${f.sourceSpanDigest}`)
+      .sort()
+      .join("|");
     signatures.push({
       run: i + 1,
       count: findings.length,
-      signature: sig,
+      identity,
       claimKindSignature: claimKindSig,
-      findings,
+      digestSignature: digestSig,
+      // Back-compat alias used by earlier reports.
+      signature: identity,
+      findings: findings.map((f) =>
+        args.includeRawSpans ? f : toTraceSafeGroundingResult(f),
+      ),
     });
   }
-  const unique = new Set(signatures.map((s) => s.signature));
+  const uniqueIdentity = new Set(signatures.map((s) => s.identity));
   const uniqueClaimKinds = new Set(
     signatures.map((s) => s.claimKindSignature),
   );
+  const uniqueDigests = new Set(signatures.map((s) => s.digestSignature));
   return {
     runs,
-    uniqueSignatures: unique.size,
+    uniqueIdentities: uniqueIdentity.size,
     uniqueClaimKindSignatures: uniqueClaimKinds.size,
-    digestStable: unique.size <= 1,
+    uniqueDigestSignatures: uniqueDigests.size,
     claimKindStable: uniqueClaimKinds.size <= 1,
-    // Hard gate requires digest-level stability — span jitter is still noise.
-    stable: unique.size <= 1,
+    identityStable: uniqueIdentity.size <= 1,
+    // Gate-worthy when claimKind + normalised claim hold across runs.
+    stable: uniqueIdentity.size <= 1 && uniqueClaimKinds.size <= 1,
     signatures,
     provider: SCORING_PROVIDER,
     modelId: args?.config?.runtime?.openai?.model || SCORING_DEFAULT_MODEL,
   };
 }
 
-export { SCORING_DEFAULT_MODEL, SCORING_PROVIDER, digestSpan };
+export {
+  SCORING_DEFAULT_MODEL,
+  SCORING_PROVIDER,
+  digestSpan,
+  normalizeClaimText,
+};

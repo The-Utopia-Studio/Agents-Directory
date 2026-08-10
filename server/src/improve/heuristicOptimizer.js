@@ -195,7 +195,10 @@ function descriptionFromCheckResults(checkId, checkResults = []) {
 
 function changeForCheckDefect(agent, checkId, category, description) {
   const grounding = category === CHECK_SET_CATEGORY_GROUNDING;
-  const section = grounding ? "method" : "guardrails";
+  const methodDefect =
+    checkId === "about_closing_has_cta" ||
+    checkId === "about_has_no_delimiter_separated_keyword_run";
+  const section = grounding || methodDefect ? "method" : "guardrails";
   return {
     surface: "prompt",
     target: promptTarget(agent, section),

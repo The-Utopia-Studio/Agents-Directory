@@ -120,7 +120,7 @@ test("a check failure reaches the maker, which refuses an ambiguous edit", async
   assert.equal(proposals.length, 1);
   assert.equal(proposals[0].defectKey, "about_closing_has_cta");
   assert.equal(proposals[0].defectCategory, "style");
-  assert.match(proposals[0].defectDescription, /CTA/i);
+  assert.match(proposals[0].defectDescription, /call to action/i);
   assert.equal(proposals[0].changes[0].surface, "prompt");
 });
 

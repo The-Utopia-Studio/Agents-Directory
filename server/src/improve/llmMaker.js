@@ -35,12 +35,35 @@ function extractMarkdownSection(text, heading) {
   };
 }
 
+/** Writing-behaviour defects belong in Method, not Guardrails process theater. */
+const METHOD_DEFECT_KEYS = new Set([
+  "about_closing_has_cta",
+  "about_has_no_delimiter_separated_keyword_run",
+  "voice",
+]);
+
 function sectionForDefect(defect) {
   if (defect.category === CHECK_SET_CATEGORY_GROUNDING) return "Method";
-  if (defect.key === "voice" || /method/i.test(defect.change?.target || "")) {
-    return "Method";
-  }
+  if (METHOD_DEFECT_KEYS.has(defect.key)) return "Method";
+  if (/method/i.test(defect.change?.target || "")) return "Method";
   return "Guardrails";
+}
+
+/** How the checker detects — never allowed in maker output. */
+const DETECTION_MECHANICS_RE =
+  /\b(?:trailing\s+(?:\d+|two|three|four|few)\s+paragraphs?|last\s+\d+\s+paragraphs?|detection\s+window|window\s*(?:paragraphs?|chars?|size)|windowParagraphs|regex(?:es)?|threshold(?:s)?|section\s+offsets?|paragraph\s+offsets?|check(?:er)?\s+inspects?|detectable\s+cta|contact\s+channel|imperative\s+opener|invitation\s+frame)\b/i;
+
+/** Process / procedure — forbidden in a Guardrails (rules) section. */
+const PROCEDURE_IN_RULES_RE =
+  /\b(?:before\s+returning|final[- ]pass|verify\s+that|then\s+check|re-?run\s+the\s+checklist|rewrite\s+any\s+offending|after\s+drafting|check\s+all\s+three\s+sections)\b/i;
+
+function newlyIntroduced(haystack, needleRe, priorText) {
+  const matches = String(haystack || "").match(
+    new RegExp(needleRe.source, `${needleRe.flags.includes("g") ? needleRe.flags : `${needleRe.flags}g`}`),
+  );
+  if (!matches) return false;
+  const prior = String(priorText || "");
+  return matches.some((m) => !prior.toLowerCase().includes(m.toLowerCase()));
 }
 
 function extractOpenAiText(payload) {
@@ -95,6 +118,16 @@ function validateCandidate(candidate, section, defect, artifactText) {
   if (/strengthen the artifact|stops failing/i.test(rationale)) {
     return "Maker rationale is a defect report, not a behavioural change";
   }
+  const inspected = `${replacement}\n${rationale}`;
+  if (DETECTION_MECHANICS_RE.test(inspected)) {
+    return "Maker references detection mechanics (windows, thresholds, regexes, or checker signals)";
+  }
+  if (
+    section.heading === "Guardrails" &&
+    newlyIntroduced(replacement, PROCEDURE_IN_RULES_RE, section.body)
+  ) {
+    return "Maker added procedure to Guardrails — rules only; process belongs in Method";
+  }
   const currentFull = section.full;
   const nextFull = section.headingLine.endsWith("\n")
     ? `${section.headingLine}${replacement.replace(/^\n+/, "")}`
@@ -132,8 +165,13 @@ Return ONLY JSON with keys: section, replacement, rationale.
 - section: exactly "${section.heading}"
 - replacement: the FULL new body of that section AFTER the heading line (do not repeat the ## heading)
 - rationale: one sentence tying the edit to the defect
-No commentary. No "strengthen". Change behaviour, do not restate an existing rule.`;
 
+Hard constraints:
+- State the rule as a human would. Never mention how a check detects failure (no windows, paragraph counts, thresholds, regexes, offsets, or detector signal names).
+- Guardrails are rules only. Do not add process steps, final-pass checklists, or "before returning" procedure — Method already owns process.
+- No commentary. No "strengthen". Change behaviour; do not restate an existing rule.`;
+
+  // Intent only — never how the check is implemented (no windows / facts).
   const input = JSON.stringify(
     {
       sectionHeading: section.heading,
@@ -141,7 +179,10 @@ No commentary. No "strengthen". Change behaviour, do not restate an existing rul
       defect: {
         key: defect.key,
         category: defect.category,
-        description: defect.description,
+        description: String(defect.description || "")
+          .replace(DETECTION_MECHANICS_RE, "")
+          .replace(/\s+/g, " ")
+          .trim(),
       },
       declaredGuardrails: guardrails,
       successCriteria,
