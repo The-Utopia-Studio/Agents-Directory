@@ -58,7 +58,11 @@ test("approval rejects missing, wrong-role, wrong-audience and tampered tokens",
   );
   await assert.rejects(() => verifyClerkJwt(token({ aud: "other" }), options), (error) => error.status === 401);
   const signed = token();
-  const tampered = `${signed.slice(0, -1)}${signed.endsWith("a") ? "b" : "a"}`;
+  const parts = signed.split(".");
+  const sig = parts[2];
+  const flipAt = Math.max(0, Math.floor(sig.length / 2));
+  const flipped = (sig[flipAt] === "A" ? "B" : "A");
+  const tampered = `${parts[0]}.${parts[1]}.${sig.slice(0, flipAt)}${flipped}${sig.slice(flipAt + 1)}`;
   await assert.rejects(() => verifyClerkJwt(tampered, options), (error) => error.status === 401);
 });
 

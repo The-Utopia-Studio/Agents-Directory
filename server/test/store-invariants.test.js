@@ -33,7 +33,7 @@ test("an already-populated store still gains agents whose artifact the server ow
   ]);
 
   const first = await seed(store);
-  assert.deepEqual(first.serverOwnedAgentsAdded, ["A7", "A8"]);
+  assert.deepEqual(first.serverOwnedAgentsAdded, ["A7", "A10", "A8"]);
 
   const app = await buildApp({ store });
   const capability = await app.svc.getInvocationCapability("A8");
