@@ -4,6 +4,7 @@ import {
   sanitizeCheckResults,
   sanitizeFailureReason,
   ensureFailureCause,
+  sanitizeLlmGroundingStatus,
 } from "../core/traceSafety.js";
 
 export const FILE_TRACE_WRITES_ENABLED = false;
@@ -49,6 +50,7 @@ export function createLocalObservability({ store, lowScoreThreshold = 70 }) {
         output: _output,
         failureReason,
         checkResults,
+        llmGroundingStatus,
         ...metadataOnly
       } = trace;
       const status = metadataOnly.status || "ok";
@@ -58,6 +60,7 @@ export function createLocalObservability({ store, lowScoreThreshold = 70 }) {
         sanitizeFailureReason(failureReason),
         safeChecks,
       );
+      const safeGrounding = sanitizeLlmGroundingStatus(llmGroundingStatus);
       const doc = {
         status: "ok",
         ts: new Date().toISOString(),
@@ -65,6 +68,7 @@ export function createLocalObservability({ store, lowScoreThreshold = 70 }) {
         status,
         ...(safeReason ? { failureReason: safeReason } : {}),
         ...(safeChecks.length ? { checkResults: safeChecks } : {}),
+        ...(safeGrounding ? { llmGroundingStatus: safeGrounding } : {}),
       };
       const saved = await store.append("traces", doc);
       return { ...saved, persisted: true };
@@ -84,14 +88,17 @@ export function createLocalObservability({ store, lowScoreThreshold = 70 }) {
             notes: _notes,
             failureReason,
             checkResults,
+            llmGroundingStatus,
             ...metadataOnly
           } = trace;
           const safeReason = sanitizeFailureReason(failureReason);
           const safeChecks = sanitizeCheckResults(checkResults);
+          const safeGrounding = sanitizeLlmGroundingStatus(llmGroundingStatus);
           return {
             ...metadataOnly,
             ...(safeReason ? { failureReason: safeReason } : {}),
             ...(safeChecks.length ? { checkResults: safeChecks } : {}),
+            ...(safeGrounding ? { llmGroundingStatus: safeGrounding } : {}),
           };
         });
     },

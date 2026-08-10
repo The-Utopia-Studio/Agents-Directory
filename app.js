@@ -1514,13 +1514,16 @@ function renderRunResult(id,r){
   const notesBox=cap.feedbackNotes===false?"":`<label class="run-feedback-notes-label" for="run-feedback-notes">Why this rating — what was wrong or right</label><textarea id="run-feedback-notes" class="run-feedback-notes" maxlength="${Number(cap.feedbackNotesMaxChars)||2000}" placeholder="Specific defects, fabrications, or things it got right."></textarea>`;
   const feedback=r.tracePersisted&&r.traceId?`<div class="run-feedback" data-trace-id="${escHtml(r.traceId)}"><div class="run-feedback-title">Rate this run</div><div class="run-feedback-stars" role="radiogroup" aria-label="Rate this run">${[1,2,3,4,5].map(n=>`<label title="${n} star${n===1?"":"s"}"><input type="radio" name="run-rating" value="${n}"><span>&#9733;</span></label>`).join("")}</div>${notesBox}<button class="btn btn-sm" onclick="submitRunFeedback('${id}',this)">Submit feedback</button><div class="run-feedback-status"></div></div>`:"";
   const failed=r.status==="checks_failed"&&(r.checkFailures||[]).length;
+  const groundingUnavailable=r.status==="grounding_unavailable"||r.llmGroundingStatus==="unavailable";
   const banner=failed?`<div class="run-checks-failed"><div class="run-checks-title">&#9888; ${r.checkFailures.length} check${r.checkFailures.length===1?"":"s"} did not pass — review before shipping</div><ul>${r.checkFailures.map(c=>{
     const msg=c.message||c.why||"";
     const kind=c.claimKind?` · ${escHtml(c.claimKind)}`:"";
     return`<li><code>${escHtml(c.checkId)}</code>${kind}${msg?` — ${escHtml(msg)}`:""}</li>`;
   }).join("")}</ul><div class="run-checks-note">The output below was still generated and billed. A check can be wrong about a correct draft — if that is what happened, say so in the notes.</div></div>`:"";
+  const groundingBanner=groundingUnavailable?`<div class="run-grounding-unavailable"><div class="run-checks-title">&#9888; Grounding check unavailable for this run</div><div class="run-checks-note">${escHtml(r.groundingNotice||"Truthfulness was not verified for this draft. Do not treat this run as grounded.")}</div></div>`:"";
   const callMeta=typeof r.callCount==="number"?` · ${r.callCount} call${r.callCount===1?"":"s"}`:"";
-  box.innerHTML=`<div class="run-result${failed?" run-result-failed":""}">${banner}<div class="run-result-head">${failed?"Output (failed checks)":"Output"} <span class="run-via">via ${escHtml(runModeLabel(r.mode)||r.via)}${callMeta}</span> ${r.tracePersisted&&r.traceId?`<span class="run-trace">&#10003; metadata trace ${escHtml(r.traceId)} recorded</span>`:`<span class="run-via">trace not persisted</span>`}</div><pre>${escHtml(r.output)}</pre>${feedback}</div>`;
+  const headLabel=failed?"Output (failed checks)":groundingUnavailable?"Output (grounding not verified)":"Output";
+  box.innerHTML=`<div class="run-result${failed||groundingUnavailable?" run-result-failed":""}">${banner}${groundingBanner}<div class="run-result-head">${headLabel} <span class="run-via">via ${escHtml(runModeLabel(r.mode)||r.via)}${callMeta}</span> ${r.tracePersisted&&r.traceId?`<span class="run-trace">&#10003; metadata trace ${escHtml(r.traceId)} recorded</span>`:`<span class="run-via">trace not persisted</span>`}</div><pre>${escHtml(r.output)}</pre>${feedback}</div>`;
 }
 function renderGapFillForm(id,state){
   const panel=document.getElementById("run-panel");
@@ -1650,11 +1653,15 @@ async function hydrateTraceSurface(agentId){
         const status=t.status||"unknown";
         const reason=t.failureReason?escHtml(t.failureReason):"";
         const model=[t.provider,t.modelId].filter(Boolean).join(" / ");
+        const grounding=t.llmGroundingStatus
+          ?`<div class="trace-reason"><b>llmGroundingStatus:</b> ${escHtml(t.llmGroundingStatus)}</div>`
+          :"";
         return`<div class="trace-row">
           <div class="trace-row-top">
             <span class="pill pill-xs ${
               status==="ok"?"pill-green"
               :status==="fail"?"pill-amber"
+              :status==="grounding_unavailable"?"pill-amber"
               :status==="error"?"pill-grey"
               :"pill-neutral"
             }">${escHtml(status)}</span>
@@ -1662,6 +1669,7 @@ async function hydrateTraceSurface(agentId){
             ${model?`<span class="trace-model">${escHtml(model)}</span>`:""}
           </div>
           ${reason?`<div class="trace-reason"><b>failureReason:</b> ${reason}</div>`:""}
+          ${grounding}
         </div>`;
       }).join("")}</div>`;
   }catch(e){

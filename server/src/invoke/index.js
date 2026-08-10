@@ -29,38 +29,68 @@ import {
   validateRuntimeArtifactOutput,
 } from "./runtimeArtifacts.js";
 import { postProcessDraft } from "./postProcessDraft.js";
-import { runLlmGroundingCheck } from "../eval/llmGroundingCheck.js";
+import {
+  LLM_GROUNDING_STATUS,
+  runLlmGroundingCheck,
+} from "../eval/llmGroundingCheck.js";
 
 export { RUNTIME_TIMEOUT_MS };
 
 /**
  * Post-process deterministic style rules, then run mechanical + optional LLM
  * grounding checks on the cleaned output.
+ *
+ * Grounding has three outcomes — findings, no findings, or not run. Errors and
+ * missing keys are "not run" (unavailable), never an empty findings list.
  */
 async function finalizeRuntimeOutput(agentId, rawOutput, sourceText, config) {
   const { output, applied } = postProcessDraft(rawOutput);
   const mechanical = validateRuntimeArtifactOutput(agentId, output, {
     sourceText: sourceText || "",
   });
-  let grounding = [];
+  let groundingResult;
   try {
-    grounding = await runLlmGroundingCheck({
+    groundingResult = await runLlmGroundingCheck({
       output,
       sourceText: sourceText || "",
       config,
     });
   } catch (error) {
-    if (error?.status !== 503) {
-      console.warn(
-        `[grounding] check failed for ${agentId}: ${error?.message || error}`,
-      );
-    }
-    grounding = [];
+    console.warn(
+      `[grounding] check threw for ${agentId}: ${error?.message || error}`,
+    );
+    groundingResult = {
+      status: LLM_GROUNDING_STATUS.UNAVAILABLE,
+      findings: [],
+      reason: "unexpected_throw",
+    };
   }
+  if (groundingResult.status === LLM_GROUNDING_STATUS.UNAVAILABLE) {
+    console.warn(
+      `[grounding] unavailable for ${agentId}: ${groundingResult.reason || "unknown"}`,
+    );
+  }
+  const findings = Array.isArray(groundingResult.findings)
+    ? groundingResult.findings
+    : [];
   return {
     output,
-    checkResults: [...mechanical, ...grounding],
+    checkResults: [...mechanical, ...findings],
     postProcessed: applied,
+    llmGroundingStatus: groundingResult.status,
+  };
+}
+
+function withGroundingFields(result, finalized) {
+  return {
+    ...result,
+    ...(finalized.checkResults.length
+      ? { checkResults: finalized.checkResults }
+      : {}),
+    ...(finalized.postProcessed.length
+      ? { postProcessed: finalized.postProcessed }
+      : {}),
+    llmGroundingStatus: finalized.llmGroundingStatus,
   };
 }
 
@@ -291,24 +321,21 @@ async function invokeGapFill(agent, inputs, llm, timeoutMs, config) {
     ? Math.round(costParts.reduce((a, b) => a + b, 0) * 1e8) / 1e8
     : undefined;
 
-  return {
-    status: "ok",
-    output: finalized.output,
-    ...(finalized.checkResults.length
-      ? { checkResults: finalized.checkResults }
-      : {}),
-    ...(finalized.postProcessed.length
-      ? { postProcessed: finalized.postProcessed }
-      : {}),
-    callCount: 2,
-    gapsCount: gaps.length,
-    provider: call2.provider || call1.provider || llm.name,
-    modelId: call2.modelId || call1.modelId,
-    latencyMs: call1.latencyMs + call2.latencyMs,
-    ...(typeof costUsd === "number" ? { costUsd } : {}),
-    ...artifactMeta(agent.id),
-    ...usage,
-  };
+  return withGroundingFields(
+    {
+      status: "ok",
+      output: finalized.output,
+      callCount: 2,
+      gapsCount: gaps.length,
+      provider: call2.provider || call1.provider || llm.name,
+      modelId: call2.modelId || call1.modelId,
+      latencyMs: call1.latencyMs + call2.latencyMs,
+      ...(typeof costUsd === "number" ? { costUsd } : {}),
+      ...artifactMeta(agent.id),
+      ...usage,
+    },
+    finalized,
+  );
 }
 
 export function runtimeInvoker(config = {}) {
@@ -380,23 +407,20 @@ export function runtimeInvoker(config = {}) {
         config,
       );
 
-      return {
-        status: "ok",
-        output: finalized.output,
-        ...(finalized.checkResults.length
-          ? { checkResults: finalized.checkResults }
-          : {}),
-        ...(finalized.postProcessed.length
-          ? { postProcessed: finalized.postProcessed }
-          : {}),
-        callCount: 1,
-        provider: call.provider || llm.name,
-        modelId: call.modelId,
-        latencyMs: call.latencyMs,
-        ...(typeof call.costUsd === "number" ? { costUsd: call.costUsd } : {}),
-        ...artifactMeta(agent.id),
-        ...call.usage,
-      };
+      return withGroundingFields(
+        {
+          status: "ok",
+          output: finalized.output,
+          callCount: 1,
+          provider: call.provider || llm.name,
+          modelId: call.modelId,
+          latencyMs: call.latencyMs,
+          ...(typeof call.costUsd === "number" ? { costUsd: call.costUsd } : {}),
+          ...artifactMeta(agent.id),
+          ...call.usage,
+        },
+        finalized,
+      );
     },
   };
 }

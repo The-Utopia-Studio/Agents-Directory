@@ -100,6 +100,11 @@ export function registerRoutes(router, svc, engine, config = {}) {
       limit: Number(query.limit) || 20,
     }),
   }));
+  router.get("/api/agents/:id/admin-audit", async ({ params, query }) => ({
+    audits: await svc.listAdminAudit(params.id, {
+      limit: Number(query.limit) || 20,
+    }),
+  }));
 
   // ── Identity-gated: paid model calls and/or mutations ──
   router.post("/api/loop/run", async ({ req }) =>
@@ -178,6 +183,11 @@ export function registerRoutes(router, svc, engine, config = {}) {
       reply(201, await svc.mechanicalCompare(params.id, body || {})),
     ),
   );
+  // Approver-only: purge stale mechanical evidence with an audit trail.
+  router.post("/api/agents/:id/mechanical-results/clear", async ({ params, body, req }) => {
+    const actor = await requireClerkApprover(req, config.clerk);
+    return reply(200, await svc.clearMechanicalResults(params.id, body || {}, actor));
+  });
 }
 
 export { publicAgentView };

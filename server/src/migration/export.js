@@ -20,6 +20,7 @@ export const MIGRATION_COLLECTIONS = Object.freeze([
   "learnings",
   "researchQueue",
   "memories",
+  "adminAudit",
 ]);
 
 const EXPORTED_COLLECTIONS = new Set([

@@ -6,9 +6,13 @@
  * @typedef {Object} Trace  A single agent run.
  * @property {string} id
  * @property {string} agentId
- * @property {"ok"|"fail"|"error"} status
+ * @property {"ok"|"fail"|"error"|"grounding_unavailable"} status
  *   "fail" = it ran and missed the bar (e.g. a mechanical check).
  *   "error" = it did not run. Both are returned by getFailingTraces.
+ *   "grounding_unavailable" = draft produced but LLM grounding did not run
+ *   (missing key / API error) — never treat as a grounding pass.
+ * @property {"passed"|"failed"|"skipped"|"unavailable"} [llmGroundingStatus]
+ *   Explicit three-way outcome for LLM grounding. Absent only on older traces.
  * @property {string} [failureReason]  closed vocabulary only — check ids or a
  *   failure code. Free text is rejected by `sanitizeFailureReason`.
  * @property {CheckResult[]} [checkResults]  structural facts per failed check

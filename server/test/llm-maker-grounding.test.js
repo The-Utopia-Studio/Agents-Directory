@@ -207,3 +207,124 @@ test("promotion gate fails closed on LLM grounding findings", () => {
     gate.failures.some((f) => f.code === PROMOTION_FAILURE.LLM_GROUNDING),
   );
 });
+
+test("promotion gate does not treat grounding-not-run as a pass when enabled", () => {
+  const coverage = {
+    total: 1,
+    evaluated: 1,
+    skipped: 0,
+    passed: 1,
+    failed: 0,
+    summary: "1 of 1 evaluated, all passed",
+  };
+  const incumbentScore = {
+    checkSetId: "abc",
+    rulerVersion: "ruler-v1",
+    outputSource: "live",
+    provider: "openai",
+    modelId: "gpt-5.6-terra",
+    byCategory: { grounding: { passRate: 50, scoreableCount: 2 } },
+    checkResults: [{ id: "g", passed: true, category: "grounding" }],
+    guardrailGate: { passed: true, results: [], coverage },
+  };
+  for (const status of [undefined, "skipped", "unavailable"]) {
+    const gate = evaluatePromotionGate({
+      outputSource: "live",
+      llmGroundingEnabled: true,
+      incumbentScore,
+      candidateScore: {
+        ...incumbentScore,
+        byCategory: { grounding: { passRate: 80, scoreableCount: 2 } },
+        ...(status ? { llmGroundingStatus: status } : {}),
+      },
+    });
+    assert.equal(gate.eligible, false, `status=${status}`);
+    assert.ok(
+      gate.failures.some((f) => f.code === PROMOTION_FAILURE.LLM_GROUNDING_NOT_RUN),
+      `status=${status}`,
+    );
+  }
+});
+
+test("promotion gate accepts explicit llmGroundingStatus=passed when enabled", () => {
+  const coverage = {
+    total: 1,
+    evaluated: 1,
+    skipped: 0,
+    passed: 1,
+    failed: 0,
+    summary: "1 of 1 evaluated, all passed",
+  };
+  const base = {
+    checkSetId: "abc",
+    rulerVersion: "ruler-v1",
+    outputSource: "live",
+    provider: "openai",
+    modelId: "gpt-5.6-terra",
+    checkResults: [{ id: "g", passed: true, category: "grounding" }],
+    guardrailGate: { passed: true, results: [], coverage },
+  };
+  const gate = evaluatePromotionGate({
+    outputSource: "live",
+    llmGroundingEnabled: true,
+    incumbentScore: {
+      ...base,
+      byCategory: { grounding: { passRate: 50, scoreableCount: 2 } },
+    },
+    candidateScore: {
+      ...base,
+      byCategory: { grounding: { passRate: 80, scoreableCount: 2 } },
+      llmGroundingStatus: "passed",
+    },
+  });
+  assert.equal(gate.eligible, true);
+});
+
+test("LLM grounding returns unavailable (not empty pass) when key is missing", async () => {
+  const { runLlmGroundingCheck, LLM_GROUNDING_STATUS } = await import(
+    "../src/eval/llmGroundingCheck.js"
+  );
+  const result = await runLlmGroundingCheck({
+    output: "Draft about someone.",
+    sourceText: "Source about someone.",
+    config: { grounding: { llmEnabled: true }, runtime: { openai: { apiKey: "" } } },
+  });
+  assert.equal(result.status, LLM_GROUNDING_STATUS.UNAVAILABLE);
+  assert.equal(result.findings.length, 0);
+  assert.equal(result.reason, "missing_api_key");
+});
+
+test("LLM grounding returns unavailable on API error (not empty pass)", async () => {
+  const { runLlmGroundingCheck, LLM_GROUNDING_STATUS } = await import(
+    "../src/eval/llmGroundingCheck.js"
+  );
+  const result = await runLlmGroundingCheck({
+    output: "Draft about someone.",
+    sourceText: "Source about someone.",
+    config: {
+      grounding: { llmEnabled: true },
+      runtime: {
+        openai: {
+          apiKey: "sk-test",
+          fetch: async () => ({ ok: false, status: 500, async text() { return "boom"; } }),
+        },
+      },
+    },
+  });
+  assert.equal(result.status, LLM_GROUNDING_STATUS.UNAVAILABLE);
+  assert.equal(result.findings.length, 0);
+  assert.match(result.reason, /^http_500/);
+});
+
+test("LLM grounding skipped when disabled is distinct from passed", async () => {
+  const { runLlmGroundingCheck, LLM_GROUNDING_STATUS } = await import(
+    "../src/eval/llmGroundingCheck.js"
+  );
+  const result = await runLlmGroundingCheck({
+    output: "Draft",
+    sourceText: "Source",
+    config: { grounding: { llmEnabled: false } },
+  });
+  assert.equal(result.status, LLM_GROUNDING_STATUS.SKIPPED);
+  assert.notEqual(result.status, LLM_GROUNDING_STATUS.PASSED);
+});

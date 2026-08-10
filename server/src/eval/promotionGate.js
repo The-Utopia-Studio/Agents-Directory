@@ -3,6 +3,7 @@
 // Does not touch Convex release / digest promotion.
 
 import { groundingScoreDelta } from "./compareExperiments.js";
+import { LLM_GROUNDING_STATUS } from "./llmGroundingCheck.js";
 
 export const PROMOTION_FAILURE = Object.freeze({
   GUARDRAILS: "guardrails",
@@ -10,6 +11,7 @@ export const PROMOTION_FAILURE = Object.freeze({
   COMPARABLE_DELTA: "comparable_delta",
   GROUNDING_DELTA: "grounding_delta",
   LLM_GROUNDING: "llm_grounding",
+  LLM_GROUNDING_NOT_RUN: "llm_grounding_not_run",
   OUTPUT_SOURCE: "output_source",
   MISSING_EVIDENCE: "missing_evidence",
 });
@@ -20,6 +22,7 @@ export const PROMOTION_FAILURE = Object.freeze({
  *   candidateScore: object|null,
  *   outputSource?: string|null,
  *   scoreDelta?: object|null,
+ *   llmGroundingEnabled?: boolean,
  * }} args
  */
 export function evaluatePromotionGate({
@@ -27,6 +30,7 @@ export function evaluatePromotionGate({
   candidateScore,
   outputSource = null,
   scoreDelta = null,
+  llmGroundingEnabled = false,
 }) {
   const failures = [];
 
@@ -75,7 +79,8 @@ export function evaluatePromotionGate({
     }
   }
 
-  // LLM grounding findings are a hard gate (never averaged into a score).
+  // LLM grounding: findings are a hard gate; "not run" is never evidence of pass.
+  const llmStatus = candidateScore?.llmGroundingStatus || null;
   const llmFindings = [
     ...(candidateScore?.llmGroundingFindings || []),
     ...(candidateScore?.checkResults || []).filter(
@@ -85,7 +90,7 @@ export function evaluatePromotionGate({
         row?.status === "fail",
     ),
   ];
-  if (llmFindings.length) {
+  if (llmFindings.length || llmStatus === LLM_GROUNDING_STATUS.FAILED) {
     const ids = [
       ...new Set(llmFindings.map((row) => row.checkId || row.claimKind).filter(Boolean)),
     ];
@@ -94,6 +99,32 @@ export function evaluatePromotionGate({
       message: ids.length
         ? `LLM grounding checker found contradictions: ${ids.join(", ")}`
         : "LLM grounding checker found contradictions on the candidate.",
+    });
+  } else if (
+    llmGroundingEnabled &&
+    llmStatus !== LLM_GROUNDING_STATUS.PASSED
+  ) {
+    // When LLM grounding is on, only an explicit pass counts. Missing,
+    // skipped, or unavailable must not be treated as passed.
+    const detail =
+      llmStatus === LLM_GROUNDING_STATUS.UNAVAILABLE
+        ? "LLM grounding did not run (unavailable)"
+        : llmStatus === LLM_GROUNDING_STATUS.SKIPPED
+          ? "LLM grounding did not run (skipped)"
+          : llmStatus
+            ? `LLM grounding status is "${llmStatus}"`
+            : "LLM grounding did not run (no status recorded)";
+    failures.push({
+      code: PROMOTION_FAILURE.LLM_GROUNDING_NOT_RUN,
+      message: `${detail}; cannot treat as evidence that grounding passed.`,
+    });
+  } else if (llmStatus === LLM_GROUNDING_STATUS.UNAVAILABLE) {
+    // Feature may be off at approval time, but a score that recorded
+    // unavailable still is not a grounding pass.
+    failures.push({
+      code: PROMOTION_FAILURE.LLM_GROUNDING_NOT_RUN,
+      message:
+        "LLM grounding did not run (unavailable); cannot treat as evidence that grounding passed.",
     });
   }
 

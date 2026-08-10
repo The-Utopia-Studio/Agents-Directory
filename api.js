@@ -172,6 +172,13 @@ window.DirectoryAPI = (function () {
       j("POST", `/api/agents/${id}/mechanical-compare`, body, { signedIdentity: true }),
     mechanicalResults: (id, n = 10) =>
       j("GET", `/api/agents/${id}/mechanical-results?limit=${n}`),
+    /** Approver-only. Body must include { reason }. Returns deleted ids + auditId. */
+    clearMechanicalResults: (id, body) =>
+      j("POST", `/api/agents/${id}/mechanical-results/clear`, body, {
+        signedIdentity: true,
+      }),
+    adminAudit: (id, n = 20) =>
+      j("GET", `/api/agents/${id}/admin-audit?limit=${n}`),
   };
 
   api.ready = api.probe();

@@ -1,6 +1,12 @@
 // LLM grounding checker — additive to mechanical checks. Finds relabelled /
 // fabricated claims that regex cannot. Never blended into a style score.
 //
+// Three outcomes — never collapse "not run" into "no findings":
+//   passed      — checker ran; no contradictions
+//   failed      — checker ran; findings present
+//   skipped     — not requested (disabled / nothing to check)
+//   unavailable — requested but could not run (missing key / API error)
+//
 // Storage contract for Railway traces: digests + enums only. Raw spans stay
 // off the trace (optional evidence payload returned for privileged stores).
 
@@ -12,6 +18,13 @@ import {
   SCORING_DEFAULT_MODEL,
   SCORING_PROVIDER,
 } from "./invokeHistorical.js";
+
+export const LLM_GROUNDING_STATUS = Object.freeze({
+  PASSED: "passed",
+  FAILED: "failed",
+  SKIPPED: "skipped",
+  UNAVAILABLE: "unavailable",
+});
 
 export const GROUNDING_CHECK_IDS = Object.freeze([
   "source_claim_tenure_years",
@@ -41,6 +54,20 @@ const CLAIM_KIND_TO_CHECK = Object.freeze({
   credential: "source_claim_credential",
   quote: "source_claim_quote",
   other: "source_claim_other",
+});
+
+/** Closed-vocabulary copy for the run response — never raw fellow/source spans. */
+const GROUNDING_MESSAGES = Object.freeze({
+  tenure_years:
+    "Draft tenure/years claim is not supported by the source as stated.",
+  role_title:
+    "Draft role or title claim is not supported by the source as stated.",
+  employer_frame:
+    "Draft employer/workplace framing is not supported by the source.",
+  metric: "Draft metric or achievement claim is not supported by the source.",
+  credential: "Draft credential claim is not supported by the source.",
+  quote: "Draft quote attribution is not supported by the source.",
+  other: "Draft claim is not supported by the source.",
 });
 
 function normalizeClaimText(text) {
@@ -114,21 +141,7 @@ function normalizeFinding(row) {
     category: CHECK_SET_CATEGORY_GROUNDING,
     family: "source-grounding-llm",
     status: "fail",
-    message:
-      {
-        tenure_years:
-          "Draft tenure/years claim is not supported by the source as stated.",
-        role_title:
-          "Draft role or title claim is not supported by the source as stated.",
-        employer_frame:
-          "Draft employer/workplace framing is not supported by the source.",
-        metric:
-          "Draft metric or achievement claim is not supported by the source.",
-        credential:
-          "Draft credential claim is not supported by the source.",
-        quote: "Draft quote attribution is not supported by the source.",
-        other: "Draft claim is not supported by the source.",
-      }[claimKind] || "Draft claim is not supported by the source.",
+    message: GROUNDING_MESSAGES[claimKind] || GROUNDING_MESSAGES.other,
     claimSpanDigest: digestSpan(claimSpan),
     sourceSpanDigest: digestSpan(sourceSpan),
     // Evidence-store only — callers that persist Railway traces must strip these.
@@ -149,11 +162,26 @@ export function toTraceSafeGroundingResult(finding) {
     status: "fail",
     message:
       finding.message ||
-      "Draft claim is not supported by the source.",
+      GROUNDING_MESSAGES[finding.claimKind] ||
+      GROUNDING_MESSAGES.other,
     claimSpanDigest: finding.claimSpanDigest,
     sourceSpanDigest: finding.sourceSpanDigest,
     sectionFound: true,
   };
+}
+
+function resultShape(status, findings = [], reason = null) {
+  return {
+    status,
+    findings,
+    ...(reason ? { reason } : {}),
+  };
+}
+
+function groundingEnabled(config) {
+  if (config?.grounding?.llmEnabled === false) return false;
+  if (config?.grounding?.llmEnabled === true) return true;
+  return process.env.LLM_GROUNDING_ENABLED === "true";
 }
 
 const SYSTEM = `You are a grounding checker for LinkedIn bio drafts.
@@ -174,7 +202,7 @@ For claimSpan and sourceSpan: quote the minimal contradictory phrase only —
 no leading subject ("I have"), no trailing punctuation, no surrounding sentence.`;
 
 /**
- * @returns {Promise<object[]>} trace-safe grounding fail rows (empty if unset/skip)
+ * @returns {Promise<{status: string, findings: object[], reason?: string}>}
  */
 export async function runLlmGroundingCheck({
   output,
@@ -185,61 +213,90 @@ export async function runLlmGroundingCheck({
 } = {}) {
   const source = String(sourceText || "").trim();
   const draft = String(output || "").trim();
-  if (!source || !draft) return [];
+  const enabled = groundingEnabled(config);
+
+  if (!enabled) {
+    return resultShape(LLM_GROUNDING_STATUS.SKIPPED, [], "disabled");
+  }
+  if (!source || !draft) {
+    // Enabled but nothing to check — not a clean pass.
+    return resultShape(
+      LLM_GROUNDING_STATUS.UNAVAILABLE,
+      [],
+      !draft ? "empty_draft" : "empty_source",
+    );
+  }
 
   const openai = config?.runtime?.openai || {};
   const apiKey = openai.apiKey || process.env.OPENAI_API_KEY || "";
   if (!apiKey) {
-    const err = new Error("LLM grounding check needs OPENAI_API_KEY");
-    err.status = 503;
-    throw err;
-  }
-  // Opt-in gate: variance must pass before production enablement.
-  if (config?.grounding?.llmEnabled === false) return [];
-  if (
-    config?.grounding?.llmEnabled !== true &&
-    process.env.LLM_GROUNDING_ENABLED !== "true"
-  ) {
-    return [];
+    return resultShape(
+      LLM_GROUNDING_STATUS.UNAVAILABLE,
+      [],
+      "missing_api_key",
+    );
   }
 
   const model = openai.model || SCORING_DEFAULT_MODEL;
   const fetchFn = openai.fetch || fetchImpl;
-  const response = await fetchFn("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${apiKey}`,
-      "content-type": "application/json",
-    },
-    // Match scoring path: no temperature — gpt-5.6-terra rejects it.
-    body: JSON.stringify({
-      model,
-      instructions: SYSTEM,
-      input: `SOURCE:\n${source}\n\nDRAFT:\n${draft}`,
-      store: false,
-    }),
-  });
+  let response;
+  try {
+    response = await fetchFn("https://api.openai.com/v1/responses", {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${apiKey}`,
+        "content-type": "application/json",
+      },
+      // Match scoring path: no temperature — gpt-5.6-terra rejects it.
+      body: JSON.stringify({
+        model,
+        instructions: SYSTEM,
+        input: `SOURCE:\n${source}\n\nDRAFT:\n${draft}`,
+        store: false,
+      }),
+    });
+  } catch (error) {
+    return resultShape(
+      LLM_GROUNDING_STATUS.UNAVAILABLE,
+      [],
+      `request_failed:${String(error?.message || error).slice(0, 80)}`,
+    );
+  }
+
   if (!response.ok) {
     let detail = "";
     try {
-      detail = (await response.text()).slice(0, 300);
+      detail = (await response.text()).slice(0, 120);
     } catch {
       /* ignore */
     }
-    const err = new Error(
-      `OpenAI grounding check HTTP ${response.status}${detail ? `: ${detail}` : ""}`,
+    return resultShape(
+      LLM_GROUNDING_STATUS.UNAVAILABLE,
+      [],
+      `http_${response.status}${detail ? `:${detail}` : ""}`.slice(0, 160),
     );
-    err.status = 502;
-    throw err;
   }
-  const payload = await response.json();
+
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    return resultShape(
+      LLM_GROUNDING_STATUS.UNAVAILABLE,
+      [],
+      "invalid_response_json",
+    );
+  }
+
   const findings = parseFindingsJson(extractOpenAiText(payload))
     .map(normalizeFinding)
-    .filter(Boolean);
+    .filter(Boolean)
+    .map((row) => (includeRawSpans ? row : toTraceSafeGroundingResult(row)));
 
-  return findings.map((row) =>
-    includeRawSpans ? row : toTraceSafeGroundingResult(row),
-  );
+  if (findings.length) {
+    return resultShape(LLM_GROUNDING_STATUS.FAILED, findings);
+  }
+  return resultShape(LLM_GROUNDING_STATUS.PASSED, []);
 }
 
 /**
@@ -249,10 +306,11 @@ export async function runLlmGroundingCheck({
 export async function measureGroundingVariance(args, runs = 3) {
   const signatures = [];
   for (let i = 0; i < runs; i++) {
-    const findings = await runLlmGroundingCheck({
+    const result = await runLlmGroundingCheck({
       ...args,
       includeRawSpans: true,
     });
+    const findings = result.findings || [];
     const identity = findings
       .map((f) => groundingIdentityKey(f.claimKind, f.claimSpan))
       .sort()
@@ -261,18 +319,17 @@ export async function measureGroundingVariance(args, runs = 3) {
       .map((f) => `${f.checkId}:${f.claimKind}`)
       .sort()
       .join("|");
-    // Provenance digests (of normalised text) — informative, not the gate key.
     const digestSig = findings
       .map((f) => `${f.checkId}:${f.claimSpanDigest}:${f.sourceSpanDigest}`)
       .sort()
       .join("|");
     signatures.push({
       run: i + 1,
+      status: result.status,
       count: findings.length,
       identity,
       claimKindSignature: claimKindSig,
       digestSignature: digestSig,
-      // Back-compat alias used by earlier reports.
       signature: identity,
       findings: findings.map((f) =>
         args.includeRawSpans ? f : toTraceSafeGroundingResult(f),
@@ -284,6 +341,7 @@ export async function measureGroundingVariance(args, runs = 3) {
     signatures.map((s) => s.claimKindSignature),
   );
   const uniqueDigests = new Set(signatures.map((s) => s.digestSignature));
+  const statuses = new Set(signatures.map((s) => s.status));
   return {
     runs,
     uniqueIdentities: uniqueIdentity.size,
@@ -291,8 +349,13 @@ export async function measureGroundingVariance(args, runs = 3) {
     uniqueDigestSignatures: uniqueDigests.size,
     claimKindStable: uniqueClaimKinds.size <= 1,
     identityStable: uniqueIdentity.size <= 1,
+    statusStable: statuses.size <= 1,
     // Gate-worthy when claimKind + normalised claim hold across runs.
-    stable: uniqueIdentity.size <= 1 && uniqueClaimKinds.size <= 1,
+    stable:
+      uniqueIdentity.size <= 1 &&
+      uniqueClaimKinds.size <= 1 &&
+      statuses.size <= 1 &&
+      ![...statuses].includes(LLM_GROUNDING_STATUS.UNAVAILABLE),
     signatures,
     provider: SCORING_PROVIDER,
     modelId: args?.config?.runtime?.openai?.model || SCORING_DEFAULT_MODEL,

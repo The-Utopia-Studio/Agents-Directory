@@ -48,10 +48,26 @@ export const KNOWN_FAILURE_CODES = Object.freeze([
   // Status was fail/error but every check id / message was stripped or absent.
   // Keeps the maker from seeing a silent fail with no cause.
   "uncategorized_failure",
+  // LLM grounding was requested but did not run (missing key / API error).
+  // Distinct from a clean grounding pass — never omit this from the trace.
+  "llm_grounding_unavailable",
 ]);
 
 const ALLOWED_REASONS = new Set([...KNOWN_CHECK_IDS, ...KNOWN_FAILURE_CODES]);
 const ALLOWED_CHECK_IDS = new Set(KNOWN_CHECK_IDS);
+
+const LLM_GROUNDING_STATUS_VALUES = new Set([
+  "passed",
+  "failed",
+  "skipped",
+  "unavailable",
+]);
+
+/** Closed enum for whether LLM grounding ran. Unknown values are dropped. */
+export function sanitizeLlmGroundingStatus(value) {
+  const status = typeof value === "string" ? value.trim() : "";
+  return LLM_GROUNDING_STATUS_VALUES.has(status) ? status : null;
+}
 
 /** Counts and lengths — structure, never content. */
 const NUMERIC_FACTS = new Set([
@@ -177,9 +193,14 @@ export function ensureFailureCause(status, failureReason, checkResults = []) {
   if (
     !reason &&
     !checks.length &&
-    (status === "fail" || status === "error")
+    (status === "fail" ||
+      status === "error" ||
+      status === "grounding_unavailable")
   ) {
-    reason = "uncategorized_failure";
+    reason =
+      status === "grounding_unavailable"
+        ? "llm_grounding_unavailable"
+        : "uncategorized_failure";
   }
   return { failureReason: reason, checkResults: checks };
 }

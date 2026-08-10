@@ -13,6 +13,7 @@ export const IMMUTABLE_COLLECTIONS = Object.freeze([
   "loopRuns",
   "learnings",
   "mechanicalResults",
+  "adminAudit",
 ]);
 
 export function createStore(dataDir, { createIfMissing = true } = {}) {
@@ -101,6 +102,28 @@ export function createStore(dataDir, { createIfMissing = true } = {}) {
 
     async query(coll, predicate) {
       return (await this.all(coll)).filter(predicate);
+    },
+
+    /**
+     * Remove docs matching predicate and flush. Returns the removed copies.
+     * Intended for explicit admin purge of evidence — not a silent rewrite of
+     * an immutable id (put still rejects in-place replacement).
+     */
+    async removeWhere(coll, predicate) {
+      if (typeof predicate !== "function") {
+        throw new Error("removeWhere requires a predicate function");
+      }
+      const map = await load(coll);
+      const removed = [];
+      for (const [id, doc] of [...map.entries()]) {
+        const copy = clone(doc);
+        if (predicate(copy)) {
+          map.delete(id);
+          removed.push(copy);
+        }
+      }
+      if (removed.length) await flush(coll);
+      return removed;
     },
 
     /** Seed a collection only if it's currently empty (idempotent). */

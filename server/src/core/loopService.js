@@ -17,7 +17,8 @@ import {
   getHandoffCapability,
   loadHandoffBriefing,
 } from "../handoff/handoffArtifacts.js";
-import { sanitizeCheckResults, sanitizeFailureReason, ensureFailureCause } from "./traceSafety.js";
+import { sanitizeCheckResults, sanitizeFailureReason, ensureFailureCause, sanitizeLlmGroundingStatus } from "./traceSafety.js";
+import { LLM_GROUNDING_STATUS } from "../eval/llmGroundingCheck.js";
 import { validateProposal } from "../improve/proposalContract.js";
 import { readProposals, writeProposals, selectProposal } from "./proposals.js";
 import { buildServiceMigrationSnapshot } from "../migration/export.js";
@@ -84,6 +85,9 @@ function metadataOnlyTrace(agentId, trace) {
     sanitizeFailureReason(trace.failureReason),
     checkResults,
   );
+  const llmGroundingStatus = sanitizeLlmGroundingStatus(
+    trace.llmGroundingStatus,
+  );
   return {
     agentId,
     status,
@@ -119,6 +123,7 @@ function metadataOnlyTrace(agentId, trace) {
       : {}),
     ...(failureReason ? { failureReason } : {}),
     ...(checkResults.length ? { checkResults } : {}),
+    ...(llmGroundingStatus ? { llmGroundingStatus } : {}),
     ...(Object.keys(metadata).length ? { metadata } : {}),
   };
 }
@@ -474,12 +479,27 @@ export function createLoopService({
 
       // The invocation returned. A failed mechanical check means it ran and
       // missed the bar — status "fail", distinct from "error", which means the
-      // run did not happen. Both are visible to getFailingTraces, and "fail"
-      // now carries the check ids the maker reads as a defect signal.
+      // run did not happen. Grounding "unavailable" is a third outcome: the
+      // draft was produced but truthfulness was never checked — never collapse
+      // that into a clean "ok" / empty findings pass.
       const checkResults = Array.isArray(result.checkResults)
         ? result.checkResults
         : [];
       const failedChecks = checkResults.map((r) => r.checkId);
+      const llmGroundingStatus = sanitizeLlmGroundingStatus(
+        result.llmGroundingStatus,
+      );
+      const groundingUnavailable =
+        llmGroundingStatus === LLM_GROUNDING_STATUS.UNAVAILABLE;
+      let runStatus = "ok";
+      let traceStatus = "ok";
+      if (failedChecks.length) {
+        runStatus = "checks_failed";
+        traceStatus = "fail";
+      } else if (groundingUnavailable) {
+        runStatus = "grounding_unavailable";
+        traceStatus = "grounding_unavailable";
+      }
 
       // Tracing it is secondary bookkeeping: if the writer fails, the output
       // still has to reach the caller.
@@ -487,10 +507,13 @@ export function createLoopService({
       try {
         trace = await obs.recordTrace(metadataOnlyTrace(agentId, {
           agentId,
-          status: failedChecks.length ? "fail" : "ok",
+          status: traceStatus,
           ...(failedChecks.length
             ? { failureReason: failedChecks.join(", "), checkResults }
-            : {}),
+            : groundingUnavailable
+              ? { failureReason: "llm_grounding_unavailable" }
+              : {}),
+          ...(llmGroundingStatus ? { llmGroundingStatus } : {}),
           latencyMs:
             typeof result.latencyMs === "number"
               ? result.latencyMs
@@ -548,7 +571,7 @@ export function createLoopService({
 
       return {
         output: result.output,
-        status: failedChecks.length ? "checks_failed" : "ok",
+        status: runStatus,
         ...(failedChecks.length
           ? {
               failedChecks,
@@ -560,6 +583,13 @@ export function createLoopService({
                 ...(r.claimKind ? { claimKind: r.claimKind } : {}),
                 ...(r.category ? { category: r.category } : {}),
               })),
+            }
+          : {}),
+        ...(llmGroundingStatus ? { llmGroundingStatus } : {}),
+        ...(groundingUnavailable
+          ? {
+              groundingNotice:
+                "Grounding check unavailable for this run — truthfulness was not verified.",
             }
           : {}),
         via: invoker.name,
@@ -820,10 +850,13 @@ export function createLoopService({
         challengerVersion: prop.challengerArtifactVersion || null,
       });
       const gate = evaluatePromotionGate(
-        pair || {
-          incumbentScore: null,
-          candidateScore: null,
-          outputSource: null,
+        {
+          ...(pair || {
+            incumbentScore: null,
+            candidateScore: null,
+            outputSource: null,
+          }),
+          llmGroundingEnabled: config?.grounding?.llmEnabled === true,
         },
       );
       prop.promotionGate = {
@@ -1172,6 +1205,85 @@ export function createLoopService({
       );
       return rows
         .sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")))
+        .slice(0, limit);
+    },
+
+    /**
+     * Approver-only purge of stored mechanical evidence for one agent.
+     * Returns what was deleted and appends an adminAudit row — never a silent wipe.
+     */
+    async clearMechanicalResults(agentId, body = {}, actor = null) {
+      assertVerifiedApprover(actor);
+      const agent = await store.get("agents", agentId);
+      if (!agent) throw httpError(404, `No agent ${agentId}`);
+
+      const reason = String(body?.reason || "").trim();
+      if (!reason) {
+        throw httpError(
+          400,
+          'Clearing mechanical results requires a non-empty "reason" (audit trail).',
+        );
+      }
+      if (reason.length > 500) {
+        throw httpError(400, "reason must be 500 characters or fewer");
+      }
+
+      const removed = await store.removeWhere(
+        "mechanicalResults",
+        (row) => row.agentId === agentId,
+      );
+      const deleted = removed
+        .map((row) => ({
+          id: row.id,
+          ts: row.ts || null,
+          artifactVersion: row.artifactVersion || null,
+          checkSetId: row.checkSetId || null,
+          rulerVersion: row.rulerVersion || null,
+          experiment: row.experiment || null,
+          outputSource: row.outputSource || null,
+          provider: row.provider || null,
+          modelId: row.modelId || null,
+        }))
+        .sort((a, b) => String(b.ts || "").localeCompare(String(a.ts || "")));
+
+      const clearedAt = new Date().toISOString();
+      const audit = await store.append("adminAudit", {
+        kind: "mechanical_results_cleared",
+        agentId,
+        clearedAt,
+        deletedCount: deleted.length,
+        deletedIds: deleted.map((row) => row.id),
+        reason,
+        actor: {
+          subject: actor.subject,
+          issuer: actor.issuer,
+          role: actor.role,
+          ...(actor.name ? { name: actor.name } : {}),
+        },
+      });
+
+      return {
+        agentId,
+        deletedCount: deleted.length,
+        deleted,
+        reason,
+        clearedAt,
+        clearedBy: audit.actor,
+        auditId: audit.id,
+      };
+    },
+
+    async listAdminAudit(agentId, { limit = 20 } = {}) {
+      const rows = await store.query(
+        "adminAudit",
+        (row) => !agentId || row.agentId === agentId,
+      );
+      return rows
+        .sort((a, b) =>
+          String(b.clearedAt || b.ts || "").localeCompare(
+            String(a.clearedAt || a.ts || ""),
+          ),
+        )
         .slice(0, limit);
     },
 
