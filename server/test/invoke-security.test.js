@@ -1183,7 +1183,7 @@ test("usability modes remain separate from the scalar invocation adapter", async
   // A failed-check run must be visually distinct from a clean one, not the
   // same card with a line of text above it.
   assert.match(appSource, /run-result-failed/);
-  assert.match(appSource, /mechanical check\$\{r\.checkFailures\.length===1\?"":"s"\} did not pass/);
+  assert.match(appSource, /check\$\{r\.checkFailures\.length===1\?"":"s"\} did not pass/);
   assert.match(appSource, /Output \(failed checks\)/);
   // The banner must not translate "no detector fired" into "the model omitted".
   assert.match(appSource, /A check can be wrong about a correct draft/);

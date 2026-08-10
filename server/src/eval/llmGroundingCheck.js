@@ -114,6 +114,21 @@ function normalizeFinding(row) {
     category: CHECK_SET_CATEGORY_GROUNDING,
     family: "source-grounding-llm",
     status: "fail",
+    message:
+      {
+        tenure_years:
+          "Draft tenure/years claim is not supported by the source as stated.",
+        role_title:
+          "Draft role or title claim is not supported by the source as stated.",
+        employer_frame:
+          "Draft employer/workplace framing is not supported by the source.",
+        metric:
+          "Draft metric or achievement claim is not supported by the source.",
+        credential:
+          "Draft credential claim is not supported by the source.",
+        quote: "Draft quote attribution is not supported by the source.",
+        other: "Draft claim is not supported by the source.",
+      }[claimKind] || "Draft claim is not supported by the source.",
     claimSpanDigest: digestSpan(claimSpan),
     sourceSpanDigest: digestSpan(sourceSpan),
     // Evidence-store only — callers that persist Railway traces must strip these.
@@ -123,7 +138,7 @@ function normalizeFinding(row) {
   };
 }
 
-/** Trace-safe row: digests + enums, never raw fellow text. */
+/** Trace-safe row: digests + enums + closed message, never raw fellow text. */
 export function toTraceSafeGroundingResult(finding) {
   if (!finding) return null;
   return {
@@ -132,6 +147,9 @@ export function toTraceSafeGroundingResult(finding) {
     category: CHECK_SET_CATEGORY_GROUNDING,
     family: finding.family || "source-grounding-llm",
     status: "fail",
+    message:
+      finding.message ||
+      "Draft claim is not supported by the source.",
     claimSpanDigest: finding.claimSpanDigest,
     sourceSpanDigest: finding.sourceSpanDigest,
     sectionFound: true,

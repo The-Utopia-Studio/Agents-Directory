@@ -149,6 +149,9 @@ window.DirectoryAPI = (function () {
         feedback,
         { signedIdentity: true },
       ),
+    // Metadata-only hosted-run traces (no draft / source text).
+    listTraces: (id, n = 20) =>
+      j("GET", `/api/agents/${id}/traces?limit=${encodeURIComponent(n)}`),
     // Loop / automations (the heartbeat)
     runLoop: () => j("POST", "/api/loop/run", null, { signedIdentity: true }),
     loopInbox: () => j("GET", "/api/loop/inbox"),

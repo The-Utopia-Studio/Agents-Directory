@@ -1234,6 +1234,7 @@ function renderDetail(a){
           ${h.notes?`<div class="eval-note">${escHtml(h.notes)}</div>`:""}
           ${h.knownIssues?`<div class="eval-issue"><b>Known issues:</b> ${escHtml(h.knownIssues)}</div>`:""}
         </div>`).join("")}</div>`:renderEmptyEval(a)}
+      ${window.DirectoryAPI&&DirectoryAPI.enabled?renderTraceSurface(a):""}
       ${a.id==="A7"&&window.DirectoryAPI&&DirectoryAPI.enabled?renderMechanicalComparePanel(a):""}
     </div>
 
@@ -1513,7 +1514,11 @@ function renderRunResult(id,r){
   const notesBox=cap.feedbackNotes===false?"":`<label class="run-feedback-notes-label" for="run-feedback-notes">Why this rating — what was wrong or right</label><textarea id="run-feedback-notes" class="run-feedback-notes" maxlength="${Number(cap.feedbackNotesMaxChars)||2000}" placeholder="Specific defects, fabrications, or things it got right."></textarea>`;
   const feedback=r.tracePersisted&&r.traceId?`<div class="run-feedback" data-trace-id="${escHtml(r.traceId)}"><div class="run-feedback-title">Rate this run</div><div class="run-feedback-stars" role="radiogroup" aria-label="Rate this run">${[1,2,3,4,5].map(n=>`<label title="${n} star${n===1?"":"s"}"><input type="radio" name="run-rating" value="${n}"><span>&#9733;</span></label>`).join("")}</div>${notesBox}<button class="btn btn-sm" onclick="submitRunFeedback('${id}',this)">Submit feedback</button><div class="run-feedback-status"></div></div>`:"";
   const failed=r.status==="checks_failed"&&(r.checkFailures||[]).length;
-  const banner=failed?`<div class="run-checks-failed"><div class="run-checks-title">&#9888; ${r.checkFailures.length} mechanical check${r.checkFailures.length===1?"":"s"} did not pass — review before shipping</div><ul>${r.checkFailures.map(c=>`<li><code>${escHtml(c.checkId)}</code> — ${escHtml(c.message)}</li>`).join("")}</ul><div class="run-checks-note">The output below was still generated and billed. A check can be wrong about a correct draft — if that is what happened, say so in the notes.</div></div>`:"";
+  const banner=failed?`<div class="run-checks-failed"><div class="run-checks-title">&#9888; ${r.checkFailures.length} check${r.checkFailures.length===1?"":"s"} did not pass — review before shipping</div><ul>${r.checkFailures.map(c=>{
+    const msg=c.message||c.why||"";
+    const kind=c.claimKind?` · ${escHtml(c.claimKind)}`:"";
+    return`<li><code>${escHtml(c.checkId)}</code>${kind}${msg?` — ${escHtml(msg)}`:""}</li>`;
+  }).join("")}</ul><div class="run-checks-note">The output below was still generated and billed. A check can be wrong about a correct draft — if that is what happened, say so in the notes.</div></div>`:"";
   const callMeta=typeof r.callCount==="number"?` · ${r.callCount} call${r.callCount===1?"":"s"}`:"";
   box.innerHTML=`<div class="run-result${failed?" run-result-failed":""}">${banner}<div class="run-result-head">${failed?"Output (failed checks)":"Output"} <span class="run-via">via ${escHtml(runModeLabel(r.mode)||r.via)}${callMeta}</span> ${r.tracePersisted&&r.traceId?`<span class="run-trace">&#10003; metadata trace ${escHtml(r.traceId)} recorded</span>`:`<span class="run-via">trace not persisted</span>`}</div><pre>${escHtml(r.output)}</pre>${feedback}</div>`;
 }
@@ -1606,6 +1611,63 @@ async function submitRunFeedback(id,button){
 }
 
 const MECH_LAST_RESULT_PREFIX="directory_mech_last_";
+
+function formatTraceTimestamp(ts){
+  if(!ts)return"—";
+  const s=String(ts);
+  // Prefer ISO → readable UTC without inventing local TZ claims.
+  if(/^\d{4}-\d{2}-\d{2}T/.test(s)){
+    return s.replace("T"," ").replace(/\.\d+Z$/," UTC").replace(/Z$/," UTC");
+  }
+  return s;
+}
+
+function renderTraceSurface(a){
+  queueMicrotask(()=>hydrateTraceSurface(a.id));
+  return`<div class="trace-surface" id="trace-surface">
+    <h4>HOSTED RUN TRACES <span class="golden-sub">metadata only · no draft or source text</span></h4>
+    <div id="trace-surface-body" class="trace-surface-body" aria-live="polite">Loading traces…</div>
+  </div>`;
+}
+
+async function hydrateTraceSurface(agentId){
+  const box=document.getElementById("trace-surface-body");
+  if(!box||!window.DirectoryAPI||!DirectoryAPI.enabled)return;
+  try{
+    const payload=await DirectoryAPI.listTraces(agentId,20);
+    const traces=Array.isArray(payload)?payload:(payload?.traces||[]);
+    const sorted=[...traces].sort((a,b)=>
+      String(b.ts||b.timestamp||"").localeCompare(String(a.ts||a.timestamp||""))
+    );
+    const count=sorted.length;
+    if(!count){
+      box.innerHTML=`<div class="mech-meta">0 traces stored. Hosted runs land here as metadata-only records.</div>`;
+      return;
+    }
+    const recent=sorted.slice(0,8);
+    box.innerHTML=`<div class="trace-count"><strong>${count}</strong> trace${count===1?"":"s"} stored · showing latest ${recent.length}</div>
+      <div class="trace-list">${recent.map((t)=>{
+        const status=t.status||"unknown";
+        const reason=t.failureReason?escHtml(t.failureReason):"";
+        const model=[t.provider,t.modelId].filter(Boolean).join(" / ");
+        return`<div class="trace-row">
+          <div class="trace-row-top">
+            <span class="pill pill-xs ${
+              status==="ok"?"pill-green"
+              :status==="fail"?"pill-amber"
+              :status==="error"?"pill-grey"
+              :"pill-neutral"
+            }">${escHtml(status)}</span>
+            <span class="trace-ts">${escHtml(formatTraceTimestamp(t.ts||t.timestamp))}</span>
+            ${model?`<span class="trace-model">${escHtml(model)}</span>`:""}
+          </div>
+          ${reason?`<div class="trace-reason"><b>failureReason:</b> ${reason}</div>`:""}
+        </div>`;
+      }).join("")}</div>`;
+  }catch(e){
+    box.innerHTML=`<div class="mech-refuse">Could not load traces: ${escHtml(String(e.message||e))}</div>`;
+  }
+}
 
 function mechLastResultKey(agentId){
   return`${MECH_LAST_RESULT_PREFIX}${agentId||"unknown"}`;

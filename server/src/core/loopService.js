@@ -556,7 +556,9 @@ export function createLoopService({
               // structural facts above are persisted on the trace.
               checkFailures: checkResults.map((r) => ({
                 checkId: r.checkId,
-                message: r.message,
+                message: r.message || null,
+                ...(r.claimKind ? { claimKind: r.claimKind } : {}),
+                ...(r.category ? { category: r.category } : {}),
               })),
             }
           : {}),
