@@ -503,6 +503,9 @@ input[type="date"] { color-scheme: dark; }
 .loop-target code { font-family: ui-monospace, monospace; }
 .loop-approval-notice { font-size: 12px; line-height: 1.5; color: var(--foreground-muted); border-left: 3px solid var(--warning-border); padding-left: 10px; margin: 12px 0; }
 .loop-approval-notice strong { color: var(--foreground); }
+.loop-promotion-gate { font-size: 12px; line-height: 1.5; border-left: 3px solid var(--warning-border); padding: 8px 10px; margin: 12px 0; background: rgb(215 122 89 / 8%); }
+.loop-promotion-gate ul { margin: 6px 0 0; padding-left: 18px; }
+.loop-promotion-gate code { font-size: 11px; }
 .loop-actions { display: flex; gap: 8px; }
 .loop-verdict { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .loop-verdict-why { font-size: 12px; color: var(--foreground-subtle); }

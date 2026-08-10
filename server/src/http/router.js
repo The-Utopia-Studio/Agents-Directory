@@ -66,6 +66,8 @@ export function createRouter({ corsOrigin = "*", apiToken = "" } = {}) {
             if (typeof e.tracePersisted === "boolean") {
               body.tracePersisted = e.tracePersisted;
             }
+            if (e.promotionGate) body.promotionGate = e.promotionGate;
+            if (e.proposal) body.proposal = e.proposal;
             send(res, e.status || 500, body, cors);
           }
           return;

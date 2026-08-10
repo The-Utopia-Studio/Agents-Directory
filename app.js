@@ -860,7 +860,17 @@ async function approveImprovement(id,proposalId){
       render();toast("Review approval recorded. Behaviour is unchanged until a human commits the patch.");return;
     }
     toast("Approval was recorded, but the proposal panel could not refresh. Reload to reconcile it.");
-  }catch(e){toast(`Approval failed — ${String(e&&e.message||"the review decision was not recorded")}`)}
+  }catch(e){
+    if(e&&e.proposal){
+      const displayed=governedPilotById.get(id);
+      if(displayed){
+        const proposals=proposalsOf(displayed).map(proposal=>proposal&&proposal.id===proposalId?e.proposal:proposal);
+        setRailwayProposals(id,proposals);
+        render();
+      }
+    }
+    toast(`Approval failed — ${String(e&&e.message||"the review decision was not recorded")}`);
+  }
 }
 async function rejectImprovement(id,proposalId){
   const displayed=governedPilotById.get(id);if(!displayed){toast("Cannot reject: the governed agent record is unavailable.");return}
@@ -1108,6 +1118,13 @@ function copyProposalPatch(agentId,proposalId){
   if(!proposal||!proposal.patch){toast("No approved patch is available to copy.");return}
   copyText(proposal.patch,"Approved change patch copied — review it before committing")
 }
+function renderPromotionGate(p){
+  const gate=p&&p.promotionGate;
+  if(!gate||gate.eligible)return"";
+  const failures=Array.isArray(gate.failures)?gate.failures:[];
+  if(!failures.length)return`<div class="loop-promotion-gate"><strong>Promotion evidence gate:</strong> not eligible.</div>`;
+  return`<div class="loop-promotion-gate"><strong>Promotion evidence gate — not eligible.</strong> Proposal stays proposed until these pass:<ul>${failures.map(f=>`<li><code>${escHtml(f.code||"")}</code> — ${escHtml(f.message||"")}</li>`).join("")}</ul></div>`;
+}
 function renderProposalCard(a,p,index,total){
   const approveLabel="Record review approval";
   const hasChange=Array.isArray(p.changes)&&p.changes.length===1;
@@ -1123,7 +1140,8 @@ function renderProposalCard(a,p,index,total){
     ${renderProposalChanges(p.changes)}
     ${p.verdict?`<div class="loop-verdict"><span class="pill pill-xs ${p.verdict.verdict==="ship"?"pill-green":p.verdict.verdict==="reject"?"pill-amber":"pill-blue"}">checker: ${escHtml(p.verdict.verdict)} · ${p.verdict.confidence}</span>${(p.verdict.reasons||[]).length?`<span class="loop-verdict-why">${escHtml(p.verdict.reasons[0])}</span>`:""}</div>`:""}
     ${p.targetArtifactVersion?`<div class="loop-target">Derived against artifact <strong>${escHtml(p.targetArtifactVersion)}</strong>${p.targetArtifactDigest?` · <code>${escHtml(String(p.targetArtifactDigest).slice(0,7))}</code>`:""}.</div>`:""}
-    ${approved?`<div class="loop-approval-notice"><strong>Approved is not applied.</strong> ${p.approvedBy?`Recorded by ${escHtml(p.approvedBy.name||p.approvedBy.subject)} on ${formatDate(p.approvedAt)}. `:""}A human must review, commit and release the artifact change.</div>`:`<div class="loop-approval-notice"><strong>Approval records a review decision only.</strong> It does not change the Railway catalog version, prompt, check, runtime, or governed Convex version. A human must make, verify and commit the artifact edit separately.</div>`}
+    ${renderPromotionGate(p)}
+    ${approved?`<div class="loop-approval-notice"><strong>Approved is not applied.</strong> ${p.approvedBy?`Recorded by ${escHtml(p.approvedBy.name||p.approvedBy.subject)} on ${formatDate(p.approvedAt)}. `:""}A human must review, commit and release the artifact change.</div>`:`<div class="loop-approval-notice"><strong>Approval records a review decision only.</strong> It does not change the Railway catalog version, prompt, check, runtime, or governed Convex version. A human must make, verify and commit the artifact edit separately. Live comparable evidence (guardrails pass, non-negative grounding delta) is required in addition to this review.</div>`}
     <div class="loop-actions">${approved?`<button class="btn btn-sm btn-primary" onclick="copyProposalPatch('${a.id}','${escHtml(p.id||"")}')" ${p.patch?"":"disabled"}>Copy approved patch</button>`:autoRejected?`<button class="btn btn-sm" onclick="reopenVerifierRejectedImprovement('${a.id}','${escHtml(p.id||"")}')">Re-open for human review</button>`:`${canApprove?`<button class="btn btn-primary btn-sm" onclick="approveImprovement('${a.id}','${escHtml(p.id||"")}')" ${hasChange?"":"disabled"}>${escHtml(approveLabel)}</button>`:lockedControl(approveLabel,APPROVAL_LOCK_REASON,"btn btn-primary btn-sm")}<button class="btn btn-sm" onclick="rejectImprovement('${a.id}','${escHtml(p.id||"")}')">Reject proposal</button>`}</div>
   </div>`;
 }
@@ -1574,7 +1592,7 @@ function loadMechLastResultLocal(agentId){
 
 function mechRecordIsModern(rec){
   if(!rec||typeof rec!=="object")return false;
-  if(!rec.checkSetVersion)return false;
+  if(!rec.checkSetId&&!rec.checkSetVersion)return false;
   if(rec.outputSource!=="live"&&rec.outputSource!=="canned")return false;
   const rows=rec.checkResults;
   if(!Array.isArray(rows)||!rows.length)return false;
@@ -1607,7 +1625,9 @@ function mechSideFromStoredRecord(rec,outputSource){
   return{
     artifactVersion:rec.artifactVersion,
     artifactDigest:rec.artifactDigest,
-    checkSetVersion:rec.checkSetVersion,
+    checkSetId:rec.checkSetId||null,
+    checkSetVersion:rec.checkSetVersion||null,
+    rulerVersion:rec.rulerVersion||null,
     mechanicalCheckScore:rec.mechanicalCheckScore,
     scoreableCount:rec.scoreableCount,
     stylePassRate:rec.stylePassRate,
@@ -1618,6 +1638,7 @@ function mechSideFromStoredRecord(rec,outputSource){
           style:rec.byCategory.style?{...rec.byCategory.style}:null,
         }
       :null,
+    guardrailGate:rec.guardrailGate||null,
     passed:[...rec.passed],
     failed:[...rec.failed],
     notScoreable:[...rec.notScoreable],
@@ -1816,18 +1837,22 @@ function reconstructMechPayloadFromStored(rows){
     const scoreDelta=
       left.legacyIncomplete||right.legacyIncomplete
         ?{comparable:false,reason:"not yet checked"}
-        :left.checkSetVersion&&right.checkSetVersion&&left.checkSetVersion===right.checkSetVersion
-          ?{
-              comparable:true,
-              value:
-                typeof left.mechanicalCheckScore==="number"&&typeof right.mechanicalCheckScore==="number"
-                  ?Math.round((right.mechanicalCheckScore-left.mechanicalCheckScore)*10)/10
-                  :null,
-            }
-          :{
-              comparable:false,
-              reason:`check set changed: ${(left.checkResults||[]).length} checks → ${(right.checkResults||[]).length} checks`,
-            };
+        :!left.checkSetId||!right.checkSetId
+          ?{comparable:false,reason:"recorded before check-set versioning"}
+          :left.checkSetId!==right.checkSetId
+            ?{
+                comparable:false,
+                reason:`check set changed: ${(left.checkResults||[]).length} checks → ${(right.checkResults||[]).length} checks`,
+              }
+            :(left.rulerVersion||right.rulerVersion)&&(left.rulerVersion!==right.rulerVersion)
+              ?{comparable:false,reason:"ruler version mismatch"}
+              :{
+                  comparable:true,
+                  value:
+                    typeof left.mechanicalCheckScore==="number"&&typeof right.mechanicalCheckScore==="number"
+                      ?Math.round((right.mechanicalCheckScore-left.mechanicalCheckScore)*10)/10
+                      :null,
+                };
     if(scoreDelta.comparable&&typeof scoreDelta.value!=="number"){
       scoreDelta.comparable=false;
       scoreDelta.reason="grounding pass rate missing on one or both sides";

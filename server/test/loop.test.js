@@ -35,6 +35,50 @@ async function freshServiceWithStore() {
   return { svc: createLoopService({ store, obs, optimizer, memory, config }), store };
 }
 
+async function seedLivePromotionEvidence(store, agentId, {
+  incumbentVersion = "seed-incumbent-v1",
+  challengerVersion = "seed-challenger-v1",
+  checkSetId = "a".repeat(64),
+} = {}) {
+  await store.append("mechanicalResults", {
+    agentId,
+    artifactVersion: incumbentVersion,
+    artifactDigest: "b".repeat(64),
+    checkSetId,
+    rulerVersion: "ruler-v1",
+    outputSource: "live",
+    experiment: "output_quality",
+    comparedTo: challengerVersion,
+    mechanicalCheckScore: 40,
+    byCategory: { grounding: { passRate: 40 }, style: { passRate: 100 } },
+    checkResults: [{ id: "g", checkId: "g", passed: true, category: "grounding" }],
+    guardrailGate: { passed: true, results: [] },
+    passed: ["g"],
+    failed: [],
+    notScoreable: [],
+    timestamp: new Date().toISOString(),
+  });
+  await store.append("mechanicalResults", {
+    agentId,
+    artifactVersion: challengerVersion,
+    artifactDigest: "c".repeat(64),
+    checkSetId,
+    rulerVersion: "ruler-v1",
+    outputSource: "live",
+    experiment: "output_quality",
+    comparedTo: incumbentVersion,
+    mechanicalCheckScore: 90,
+    byCategory: { grounding: { passRate: 90 }, style: { passRate: 100 } },
+    checkResults: [{ id: "g", checkId: "g", passed: true, category: "grounding" }],
+    guardrailGate: { passed: true, results: [] },
+    passed: ["g"],
+    failed: [],
+    notScoreable: [],
+    timestamp: new Date().toISOString(),
+  });
+  return { incumbentVersion, challengerVersion, checkSetId };
+}
+
 /**
  * Mirror the real A7 state: successful metadata-only runs plus reviewer
  * feedback. Feedback must attach to a real trace, so the trace is seeded here
@@ -291,10 +335,27 @@ test("approval is refused when the targeted artifact has moved", async () => {
 });
 
 test("approval retains the decided proposal without moving the Railway catalog version", async () => {
-  const svc = await freshService();
+  const { svc, store } = await freshServiceWithStore();
   const before = await svc.getAgent("A2");
   const proposals = await svc.runImprovement("A2");
   assert.equal(proposals.length, 2);
+
+  // Seed live comparable evidence so the promotion gate can pass.
+  const { incumbentVersion, challengerVersion } = await seedLivePromotionEvidence(
+    store,
+    "A2",
+  );
+  const agent = await svc.getAgent("A2");
+  agent.proposedImprovements = proposals.map((proposal, index) =>
+    index === 0
+      ? {
+          ...proposal,
+          targetArtifactVersion: incumbentVersion,
+          challengerArtifactVersion: challengerVersion,
+        }
+      : proposal,
+  );
+  await svc.putAgent(agent);
 
   const { version, proposal: approved } = await svc.approveImprovement(
     "A2",
@@ -312,6 +373,29 @@ test("approval retains the decided proposal without moving the Railway catalog v
     "a decision must retain both its audit record and the pending sibling",
   );
   assert.deepEqual(a2.changelog, before.changelog);
+});
+
+test("approval refuses when live promotion evidence is missing", async () => {
+  const svc = await freshService();
+  const [proposal] = await svc.runImprovement("A2");
+  await assert.rejects(
+    () => svc.approveImprovement("A2", proposal.id, TEST_APPROVER),
+    (e) => {
+      assert.equal(e.status, 409);
+      assert.match(e.message, /Promotion evidence gate refused/);
+      assert.ok(e.promotionGate);
+      assert.equal(e.promotionGate.eligible, false);
+      assert.ok(
+        e.promotionGate.failures.some((f) => f.code === "output_source" || f.code === "missing_evidence"),
+      );
+      return true;
+    },
+  );
+  const pending = (await svc.getAgent("A2")).proposedImprovements.find(
+    (p) => p.id === proposal.id,
+  );
+  assert.equal(pending.status, "proposed");
+  assert.equal(pending.promotionGate.eligible, false);
 });
 
 test("approval refuses missing or unverified human identity", async () => {
@@ -339,12 +423,20 @@ test("an unnamed decision is refused while several proposals are pending", async
 });
 
 test("a record written before the split is still approvable", async () => {
-  const svc = await freshService();
+  const { svc, store } = await freshServiceWithStore();
   const [proposal] = await svc.runImprovement("A2");
+  const { incumbentVersion, challengerVersion } = await seedLivePromotionEvidence(
+    store,
+    "A2",
+  );
   const agent = await svc.getAgent("A2");
   // The legacy singular shape, exactly as older stores hold it.
   agent.proposedImprovements = undefined;
-  agent.proposedImprovement = proposal;
+  agent.proposedImprovement = {
+    ...proposal,
+    targetArtifactVersion: incumbentVersion,
+    challengerArtifactVersion: challengerVersion,
+  };
   await svc.putAgent(agent);
 
   await svc.approveImprovement("A2", proposal.id, TEST_APPROVER);

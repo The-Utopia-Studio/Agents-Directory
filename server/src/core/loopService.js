@@ -587,7 +587,10 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
       // Golden-case mechanical failures reach the maker the same way run
       // failureReasons do — closed vocabulary, no draft text. Prefixed so they
       // are never mistaken for fleet-health eval scores.
+      // Canned plumbing rows are structurally excluded from maker signals so
+      // fixture failures cannot mint Approve-button proposals.
       const mechanicalDefects = mechanicalResults
+        .filter((row) => row.outputSource === "live")
         .flatMap((row) =>
           (row.failed || []).map(
             (checkId) => `mechanical:${checkId}`,
@@ -762,6 +765,53 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
             `Re-run the proposal against the current build.`,
         );
       }
+
+      // Evidence gate — in addition to human approval, never instead of it.
+      const { evaluatePromotionGate, resolveLivePromotionPair } = await import(
+        "../eval/promotionGate.js"
+      );
+      const mechanicalRows = await store.query(
+        "mechanicalResults",
+        (row) => row.agentId === agentId,
+      );
+      const incumbentVersion =
+        current?.artifactVersion || prop.targetArtifactVersion || null;
+      const pair = resolveLivePromotionPair(mechanicalRows, {
+        incumbentVersion,
+        challengerVersion: prop.challengerArtifactVersion || null,
+      });
+      const gate = evaluatePromotionGate(
+        pair || {
+          incumbentScore: null,
+          candidateScore: null,
+          outputSource: null,
+        },
+      );
+      prop.promotionGate = {
+        eligible: gate.eligible,
+        failures: gate.failures,
+        scoreDelta: gate.scoreDelta,
+        checkedAt: new Date().toISOString(),
+        evidenceSource: pair?.source || null,
+        incumbentArtifactVersion: pair?.incumbentScore?.artifactVersion || incumbentVersion,
+        candidateArtifactVersion: pair?.candidateScore?.artifactVersion || null,
+      };
+      if (!gate.eligible) {
+        writeProposals(agent, proposals);
+        await store.put("agents", agent);
+        const detail = gate.failures
+          .map((failure) => `${failure.code}: ${failure.message}`)
+          .join(" | ");
+        throw httpError(
+          409,
+          `Promotion evidence gate refused — proposal stays proposed. ${detail}`,
+          {
+            promotionGate: prop.promotionGate,
+            proposal: prop,
+          },
+        );
+      }
+
       const approvedAt = new Date().toISOString();
       prop.status = "approved";
       prop.approvedAt = approvedAt;
@@ -1079,8 +1129,13 @@ export function createLoopService({ store, obs, optimizer, memory, verifier, con
   return svc;
 }
 
-export function httpError(status, message) {
+export function httpError(status, message, extras = null) {
   const e = new Error(message);
   e.status = status;
+  if (extras && typeof extras === "object") {
+    for (const [key, value] of Object.entries(extras)) {
+      e[key] = value;
+    }
+  }
   return e;
 }

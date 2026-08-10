@@ -57,6 +57,8 @@ window.DirectoryAPI = (function () {
       error.runStatus = payload && payload.status;
       error.traceId = payload && payload.traceId;
       error.tracePersisted = payload && payload.tracePersisted;
+      error.promotionGate = payload && payload.promotionGate;
+      error.proposal = payload && payload.proposal;
       throw error;
     }
     return payload;
