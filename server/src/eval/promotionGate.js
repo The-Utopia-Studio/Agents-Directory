@@ -9,6 +9,7 @@ export const PROMOTION_FAILURE = Object.freeze({
   GUARDRAIL_COVERAGE: "guardrail_coverage",
   COMPARABLE_DELTA: "comparable_delta",
   GROUNDING_DELTA: "grounding_delta",
+  LLM_GROUNDING: "llm_grounding",
   OUTPUT_SOURCE: "output_source",
   MISSING_EVIDENCE: "missing_evidence",
 });
@@ -72,6 +73,28 @@ export function evaluatePromotionGate({
         message: `Guardrail coverage is zero executable — not promotion-eligible (${summary}).`,
       });
     }
+  }
+
+  // LLM grounding findings are a hard gate (never averaged into a score).
+  const llmFindings = [
+    ...(candidateScore?.llmGroundingFindings || []),
+    ...(candidateScore?.checkResults || []).filter(
+      (row) =>
+        row?.category === "grounding" &&
+        row?.family === "source-grounding-llm" &&
+        row?.status === "fail",
+    ),
+  ];
+  if (llmFindings.length) {
+    const ids = [
+      ...new Set(llmFindings.map((row) => row.checkId || row.claimKind).filter(Boolean)),
+    ];
+    failures.push({
+      code: PROMOTION_FAILURE.LLM_GROUNDING,
+      message: ids.length
+        ? `LLM grounding checker found contradictions: ${ids.join(", ")}`
+        : "LLM grounding checker found contradictions on the candidate.",
+    });
   }
 
   if (!incumbentScore || !candidateScore) {

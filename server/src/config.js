@@ -99,6 +99,7 @@ export const config = {
   },
 
   optimizer: {
+    // "llm" = OpenAI Responses real-diff maker; "heuristic" = offline.
     provider: env.OPTIMIZER || "heuristic",
     gepa: {
       endpoint: env.GEPA_ENDPOINT || "",
@@ -106,6 +107,12 @@ export const config = {
       model: env.GEPA_MODEL || "claude-opus-4-8",
       budget: Number(env.GEPA_BUDGET || 10),
     },
+  },
+
+  // LLM grounding checker (additive). Off until variance passes and
+  // LLM_GROUNDING_ENABLED=true (or grounding.llmEnabled in tests).
+  grounding: {
+    llmEnabled: env.LLM_GROUNDING_ENABLED === "true",
   },
 
   // The checker in the maker/checker split — grades the optimizer's proposals.
@@ -121,6 +128,8 @@ export const config = {
     intervalMs: Number(env.LOOP_INTERVAL_MS || 0), // 0 = no auto scheduler (manual trigger only)
     lowScore: Number(env.LOOP_LOW_SCORE || 70),
     maxJobs: Number(env.LOOP_MAX_JOBS || 3),
+    // Unused for accounting (no measured token spend on the heuristic path).
+    // Kept so old env files do not crash config reads.
     budgetUsd: Number(env.LOOP_BUDGET_USD || 1),
     costPerJobUsd: Number(env.LOOP_COST_PER_JOB || 0.05),
     autoApply: false, // hard-disabled; LOOP_AUTOAPPLY=true aborts boot above

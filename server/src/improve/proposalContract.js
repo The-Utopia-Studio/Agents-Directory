@@ -4,8 +4,10 @@ const LIMITS = Object.freeze({
   summary: 120,
   detail: 500,
   target: 240,
-  current: 320,
-  proposed: 600,
+  // Full SKILL.md section bodies (Method ~2k, Guardrails ~1.3k today).
+  // LLM maker returns the entire section, not a truncated note.
+  current: 12000,
+  proposed: 12000,
   rationale: 240,
 });
 

@@ -28,8 +28,41 @@ import {
   resolveRuntimeInputs,
   validateRuntimeArtifactOutput,
 } from "./runtimeArtifacts.js";
+import { postProcessDraft } from "./postProcessDraft.js";
+import { runLlmGroundingCheck } from "../eval/llmGroundingCheck.js";
 
 export { RUNTIME_TIMEOUT_MS };
+
+/**
+ * Post-process deterministic style rules, then run mechanical + optional LLM
+ * grounding checks on the cleaned output.
+ */
+async function finalizeRuntimeOutput(agentId, rawOutput, sourceText, config) {
+  const { output, applied } = postProcessDraft(rawOutput);
+  const mechanical = validateRuntimeArtifactOutput(agentId, output, {
+    sourceText: sourceText || "",
+  });
+  let grounding = [];
+  try {
+    grounding = await runLlmGroundingCheck({
+      output,
+      sourceText: sourceText || "",
+      config,
+    });
+  } catch (error) {
+    if (error?.status !== 503) {
+      console.warn(
+        `[grounding] check failed for ${agentId}: ${error?.message || error}`,
+      );
+    }
+    grounding = [];
+  }
+  return {
+    output,
+    checkResults: [...mechanical, ...grounding],
+    postProcessed: applied,
+  };
+}
 
 const manual = (type) => ({
   name: type,
@@ -136,7 +169,7 @@ async function completeWithTimeout(llm, args, timeoutMs) {
   }
 }
 
-async function invokeGapFill(agent, inputs, llm, timeoutMs) {
+async function invokeGapFill(agent, inputs, llm, timeoutMs, config) {
   const pin = assertRuntimePin(agent.id, llm);
   const { values, missing } = resolveRuntimeInputs(agent.id, inputs);
   if (missing.length) {
@@ -244,9 +277,12 @@ async function invokeGapFill(agent, inputs, llm, timeoutMs) {
     timeoutMs,
   );
 
-  const checkResults = validateRuntimeArtifactOutput(agent.id, call2.output, {
-    sourceText: values.sourceMaterial,
-  });
+  const finalized = await finalizeRuntimeOutput(
+    agent.id,
+    call2.output,
+    values.sourceMaterial,
+    config,
+  );
   const usage = sumUsage([call1.usage, call2.usage]);
   const costParts = [call1.costUsd, call2.costUsd].filter(
     (n) => typeof n === "number",
@@ -257,8 +293,13 @@ async function invokeGapFill(agent, inputs, llm, timeoutMs) {
 
   return {
     status: "ok",
-    output: call2.output,
-    ...(checkResults.length ? { checkResults } : {}),
+    output: finalized.output,
+    ...(finalized.checkResults.length
+      ? { checkResults: finalized.checkResults }
+      : {}),
+    ...(finalized.postProcessed.length
+      ? { postProcessed: finalized.postProcessed }
+      : {}),
     callCount: 2,
     gapsCount: gaps.length,
     provider: call2.provider || call1.provider || llm.name,
@@ -303,7 +344,7 @@ export function runtimeInvoker(config = {}) {
 
       const runtimeMode = getRuntimeArtifactMode(agent.id);
       if (runtimeMode === "gap-fill") {
-        return invokeGapFill(agent, inputs, llm, timeoutMs);
+        return invokeGapFill(agent, inputs, llm, timeoutMs, config);
       }
 
       const pin = assertRuntimePin(agent.id, llm);
@@ -332,14 +373,22 @@ export function runtimeInvoker(config = {}) {
         timeoutMs,
       );
 
-      const checkResults = validateRuntimeArtifactOutput(agent.id, call.output, {
-        sourceText: values.sourceMaterial || "",
-      });
+      const finalized = await finalizeRuntimeOutput(
+        agent.id,
+        call.output,
+        values.sourceMaterial || "",
+        config,
+      );
 
       return {
         status: "ok",
-        output: call.output,
-        ...(checkResults.length ? { checkResults } : {}),
+        output: finalized.output,
+        ...(finalized.checkResults.length
+          ? { checkResults: finalized.checkResults }
+          : {}),
+        ...(finalized.postProcessed.length
+          ? { postProcessed: finalized.postProcessed }
+          : {}),
         callCount: 1,
         provider: call.provider || llm.name,
         modelId: call.modelId,

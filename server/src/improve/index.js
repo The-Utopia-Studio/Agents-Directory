@@ -4,9 +4,11 @@
 import { createRegistry } from "../core/registry.js";
 import { createHeuristicOptimizer } from "./heuristicOptimizer.js";
 import { createGepaOptimizer } from "./gepaAdapter.js";
+import { createLlmOptimizer } from "./llmMaker.js";
 
 const registry = createRegistry("optimizer")
   .register("heuristic", () => createHeuristicOptimizer())
+  .register("llm", (opts) => createLlmOptimizer(opts))
   .register("gepa", (opts) => createGepaOptimizer(opts));
 
 /**
@@ -15,7 +17,11 @@ const registry = createRegistry("optimizer")
  */
 export function getOptimizer(config) {
   const { provider, gepa } = config.optimizer;
+  const openai = config.runtime?.openai || {};
   try {
+    if (provider === "llm") {
+      return registry.create("llm", { openai, fetch: openai.fetch });
+    }
     return registry.create(provider, gepa);
   } catch (e) {
     if (provider !== "heuristic") {
