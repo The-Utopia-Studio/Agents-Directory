@@ -754,7 +754,8 @@ test("OpenAI API failures stay non-2xx and do not expose the key", async (t) => 
   assert.equal(trace.agentVersion, "1.0");
   assert.equal("input" in trace, false);
   assert.equal("output" in trace, false);
-  assert.equal("failureReason" in trace, false);
+  // Cause-less errors stamp a closed-vocabulary code — never silent.
+  assert.equal(trace.failureReason, "uncategorized_failure");
 });
 
 test("single-shot runtime uses the server artifact, persists metadata, and links rating", async (t) => {

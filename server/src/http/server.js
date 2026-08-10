@@ -85,7 +85,12 @@ export async function start() {
   // loop demonstrable as an actual automation, not just a manual trigger.
   if (config.loop.enabled && config.loop.intervalMs > 0) {
     const tick = () => engine.runCycle()
-      .then((r) => console.log(`[loop] cycle: scanned ${r.scanned}, selected ${r.selected}, jobs ${r.jobs.length}, spent $${r.budget.spentUsd}`))
+      .then((r) => {
+        const o = r.outcomes || {};
+        console.log(
+          `[loop] cycle: scanned ${r.scanned}, attempted ${o.attempted ?? r.selected}, proposed ${o.proposed ?? 0}, refused ${o.refused ?? 0}, jobs ${r.budget?.jobs ?? 0} of ${r.budget?.maxJobs ?? "?"}`,
+        );
+      })
       .catch((e) => console.warn(`[loop] cycle error: ${e.message}`));
     setInterval(tick, config.loop.intervalMs).unref();
     console.log(`[loop] heartbeat every ${config.loop.intervalMs}ms (autoApply=${config.loop.autoApply})`);

@@ -531,6 +531,9 @@ input[type="date"] { color-scheme: dark; }
 .auto-inbox { margin-top: 12px; }
 .auto-inbox-title { display: flex; align-items: center; gap: 8px; font-size: 12px; letter-spacing: var(--tracking-eyebrow); text-transform: uppercase; color: var(--foreground-subtle); margin-bottom: 8px; }
 .auto-item { display: flex; align-items: center; gap: 10px; padding: 8px 0; border-top: 1px solid var(--border-subtle); font-size: 13.5px; }
+.auto-item-stack { display: block; }
+.auto-item-row { display: flex; align-items: center; gap: 10px; }
+.auto-refuse { margin: 6px 0 0 34px; color: var(--foreground-subtle); font-size: 12.5px; line-height: 1.35; }
 .auto-agent { font-family: ui-monospace, monospace; font-size: 12px; color: var(--accent-text); flex: 0 0 auto; }
 .auto-summary { color: var(--foreground); flex: 1; }
 .auto-empty { font-size: 13px; color: var(--foreground-subtle); }

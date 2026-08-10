@@ -20,6 +20,25 @@ const dominantSignal = (proposal, agent) =>
   (agent?.evalHistory?.at(-1)?.knownIssues || "").toLowerCase().split(/\W+/).find((w) => w.length > 4) ||
   "unknown";
 
+/** Honest cycle counts — never treat a refusal as an improvement. */
+export function summarizeCycleJobs(jobs = []) {
+  let attempted = 0;
+  let proposed = 0;
+  let refused = 0;
+  let verifierRejected = 0;
+  for (const job of jobs) {
+    if (!job || job.action === "skipped:budget") continue;
+    attempted += 1;
+    if (String(job.action || "").startsWith("refused:")) {
+      refused += 1;
+      continue;
+    }
+    proposed += Number(job.proposals) || 0;
+    verifierRejected += Number(job.rejected) || 0;
+  }
+  return { attempted, proposed, refused, verifierRejected };
+}
+
 export function createLoopEngine({ svc, obs, verifier, config, now = () => new Date().toISOString() }) {
   const loopCfg = config.loop;
   const latestEval = (a) => (a.evalHistory || []).at(-1);
@@ -97,8 +116,16 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
           proposals = await svc.runImprovement(item.agentId);          // maker
         } catch (e) {
           if (e?.status !== 422) throw e;
-          await svc.setResearchStatus(item.id, "blocked", e.message);
-          jobs.push({ agentId: item.agentId, item: item.id, action: "refused:no-evidence" });
+          const reason = String(e.message || "maker refused");
+          await svc.setResearchStatus(item.id, "blocked", reason);
+          jobs.push({
+            agentId: item.agentId,
+            item: item.id,
+            action: "refused:no-evidence",
+            reason,
+            proposals: 0,
+            rejected: 0,
+          });
           continue;
         }
 
@@ -138,9 +165,14 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
 
       const q = await svc.listResearchQueue();
       const count = (s) => q.filter((x) => x.status === s).length;
+      const outcomes = summarizeCycleJobs(jobs);
       return svc.recordLoopRun({
         ts: now(), contract,
-        scanned: (await svc.listAgents()).length, selected: jobs.length, jobs,
+        scanned: (await svc.listAgents()).length,
+        // selected kept as attempted for older readers; UI must use outcomes.
+        selected: outcomes.attempted,
+        outcomes,
+        jobs,
         budget: budget.report(),
         queue: { open: count("open"), inProgress: count("in-progress"), blocked: count("blocked"), done: count("done") },
       });

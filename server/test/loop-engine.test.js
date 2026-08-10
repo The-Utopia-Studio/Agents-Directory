@@ -77,6 +77,12 @@ test("runCycle triages the fleet and queues to the inbox (no auto-apply)", async
   const { svc, engine } = await freshStack({ autoApply: false });
   const run = await engine.runCycle();
   assert.ok(run.selected >= 1, "A2 (score 58) should be selected");
+  assert.equal(run.outcomes.attempted, run.selected);
+  assert.ok(run.outcomes.proposed >= 1, "at least one proposal must be counted");
+  assert.equal(run.outcomes.refused, 0);
+  assert.equal(run.budget.spentUsd, undefined);
+  assert.ok(run.budget.jobs >= 1);
+  assert.equal(run.budget.maxJobs, 3);
   const a2job = run.jobs.find((j) => j.agentId === "A2");
   assert.equal(a2job.action, "queued:inbox");
   // One verdict per proposal: grading the set as a unit would let one weak
@@ -134,7 +140,7 @@ test("a verifier rejection blocks the queue item and isn't retried next cycle", 
   assert.equal(run1.jobs.find((j) => j.agentId === "A2").action, "rejected:verifier→learning");
   const learning = (await svc.recentLearnings()).find((l) => l.agentId === "A2");
   assert.ok(learning, "a learning was written");
-  assert.ok(["voice", "aggressive"].includes(learning.signal));
+  assert.ok(["voice", "aggressive", "aggressive-cta"].includes(learning.signal));
   assert.ok(await svc.isBlockedSignal("A2", learning.signal));
   assert.ok((await svc.listResearchQueue()).some((x) => x.agentId === "A2" && x.status === "blocked"));
   const rejected = (await svc.getAgent("A2")).proposedImprovements;

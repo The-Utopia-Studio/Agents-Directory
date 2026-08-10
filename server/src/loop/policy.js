@@ -48,12 +48,17 @@ export function defaultContract(overrides = {}) {
   };
 }
 
-/** A tiny token/cost budget — Osmani's caveat made concrete. */
-export function createBudget({ budgetUsd = 1, costPerJobUsd = 0.05, maxJobs = 3 }) {
-  let jobs = 0, spentUsd = 0;
+/**
+ * Job-slot budget only. There is no measured token spend on the heuristic path,
+ * so this never invents a dollar figure — callers report "N of M jobs".
+ * `budgetUsd` / `costPerJobUsd` are ignored if still present in config.
+ */
+export function createBudget({ maxJobs = 3 } = {}) {
+  let jobs = 0;
+  const limit = Math.max(0, Number(maxJobs) || 0);
   return {
-    canRun() { return jobs < maxJobs && spentUsd + costPerJobUsd <= budgetUsd; },
-    spend() { jobs += 1; spentUsd = Number((spentUsd + costPerJobUsd).toFixed(4)); },
-    report() { return { jobs, spentUsd, budgetUsd, maxJobs }; },
+    canRun() { return jobs < limit; },
+    spend() { jobs += 1; },
+    report() { return { jobs, maxJobs: limit }; },
   };
 }

@@ -1107,9 +1107,12 @@ function renderProposalAttempt(a){
   const attempt=a&&a.latestProposalAttempt;
   if(!attempt)return"";
   if(attempt.outcome==="maker-refused-no-evidence")return `<div class="proposal-attempt proposal-attempt-refused"><strong>Maker produced no proposal.</strong> It refused because no eligible defect evidence was available (${escHtml(String(attempt.failingTraces||0))} failing trace(s), ${escHtml(String(attempt.feedbackWithNotes||0))} feedback note(s)).</div>`;
+  if(attempt.outcome==="maker-refused")return `<div class="proposal-attempt proposal-attempt-refused"><strong>Maker produced no proposal.</strong> ${escHtml(attempt.reason||"The optimizer refused to invent a change.")}</div>`;
   if(attempt.outcome==="verifier-rejected")return `<div class="proposal-attempt proposal-attempt-rejected"><strong>Verifier rejected a proposal.</strong> The retained proposal below includes its checker verdict and can be reopened for human review.</div>`;
   if(attempt.outcome==="reopened-for-human-review")return `<div class="proposal-attempt"><strong>Proposal reopened for human review.</strong> The verifier's earlier rejection remains on the proposal as context.</div>`;
   if(attempt.outcome==="human-approved-change-ready-to-commit")return `<div class="proposal-attempt"><strong>Review approved; change ready for a human commit.</strong> No artifact or runtime behaviour changed automatically.</div>`;
+  if(attempt.outcome==="human-approved-pull-request-opened")return `<div class="proposal-attempt"><strong>Review approved; pull request opened.</strong> No catalog version was bumped automatically.</div>`;
+  if(attempt.outcome==="proposals-created")return"";
   return"";
 }
 function copyProposalPatch(agentId,proposalId){
@@ -1261,6 +1264,36 @@ function render(){
 }
 
 // ── Automations panel (server-side loop; shown only when the service is up) ──
+function cycleOutcomes(last){
+  if(!last)return{attempted:0,proposed:0,refused:0,verifierRejected:0};
+  if(last.outcomes)return last.outcomes;
+  // Older loopRuns lacked outcomes — derive from jobs without inventing "improved".
+  const jobs=Array.isArray(last.jobs)?last.jobs:[];
+  let attempted=0,proposed=0,refused=0,verifierRejected=0;
+  for(const job of jobs){
+    if(!job||job.action==="skipped:budget")continue;
+    attempted+=1;
+    if(String(job.action||"").startsWith("refused:")){refused+=1;continue}
+    proposed+=Number(job.proposals)||0;
+    verifierRejected+=Number(job.rejected)||0;
+  }
+  if(!jobs.length&&typeof last.selected==="number")attempted=last.selected;
+  return{attempted,proposed,refused,verifierRejected};
+}
+function formatCycleSub(last){
+  if(!last)return"heartbeat idle — run a cycle to discover + improve";
+  const o=cycleOutcomes(last);
+  const jobs=last.budget&&typeof last.budget.jobs==="number"?last.budget.jobs:o.attempted;
+  const maxJobs=last.budget&&typeof last.budget.maxJobs==="number"?last.budget.maxJobs:null;
+  const jobPart=maxJobs!=null?` · ${jobs} of ${maxJobs} jobs`:` · ${jobs} job${jobs===1?"":"s"}`;
+  const q=last.queue;
+  const queuePart=q?` · queue ${q.open||0} open / ${q.blocked||0} blocked`:"";
+  return`last cycle ${formatDate(last.ts)} · scanned ${last.scanned} · attempted ${o.attempted} · proposed ${o.proposed} · refused ${o.refused}${jobPart}${queuePart}`;
+}
+function formatQueueItem(x,sClass){
+  const reason=x.note?`<div class="auto-refuse">${escHtml(x.note)}</div>`:"";
+  return`<div class="auto-item auto-item-stack"><div class="auto-item-row"><span class="rq-score" title="score 1–3">${x.score}</span><span class="auto-agent">${escHtml(x.agentId)}</span><span class="auto-summary">${escHtml(x.title)}</span><span class="pill pill-xs ${sClass(x.status)}">${escHtml(x.status)}</span></div>${reason}</div>`;
+}
 async function loadAutomations(){
   const el=document.getElementById("automations");
   if(!el||!(window.DirectoryAPI&&DirectoryAPI.enabled))return;
@@ -1270,16 +1303,17 @@ async function loadAutomations(){
     const items=inbox.inbox||[];
     const learnings=(learn&&learn.learnings)||[];
     const q=(queue&&queue.queue)||[];
-    const openq=q.filter(x=>x.status==="open"||x.status==="in-progress").slice(0,5);
+    // Blocked refusals are the useful output of a starved cycle — show them.
+    const shownq=q.filter(x=>x.status==="open"||x.status==="in-progress"||x.status==="blocked").slice(0,8);
     const vClass=v=>v==="ship"?"pill-green":v==="reject"?"pill-amber":"pill-blue";
     const sClass=s=>s==="open"?"pill-blue":s==="in-progress"?"pill-purple":s==="blocked"?"pill-amber":"pill-green";
     el.innerHTML=`
       <div class="auto-head">
-        <div><span class="auto-title">◷ Automations</span><span class="auto-sub">${last?`last cycle ${formatDate(last.ts)} · scanned ${last.scanned} · improved ${last.selected} · $${last.budget.spentUsd}${last.queue?` · queue ${last.queue.open} open`:""}`:"heartbeat idle — run a cycle to discover + improve"}</span></div>
+        <div><span class="auto-title">◷ Automations</span><span class="auto-sub">${formatCycleSub(last)}</span></div>
         <button class="btn btn-sm btn-primary" onclick="runLoopNow(this)">Run automations now</button>
       </div>
       <div class="auto-live-note">${escHtml(AUTOMATION_LIVE_NOTE)}</div>
-      ${openq.length?`<div class="auto-queue"><div class="auto-inbox-title">Research queue <span class="auto-sub2">discover → improve</span><span class="count-badge">${q.filter(x=>x.status==="open").length}</span></div>${openq.map(x=>`<div class="auto-item"><span class="rq-score" title="score 1–3">${x.score}</span><span class="auto-agent">${escHtml(x.agentId)}</span><span class="auto-summary">${escHtml(x.title)}</span><span class="pill pill-xs ${sClass(x.status)}">${escHtml(x.status)}</span></div>`).join("")}</div>`:""}
+      ${shownq.length?`<div class="auto-queue"><div class="auto-inbox-title">Research queue <span class="auto-sub2">discover → improve</span><span class="count-badge">${q.filter(x=>x.status==="open").length} open · ${q.filter(x=>x.status==="blocked").length} blocked</span></div>${shownq.map(x=>formatQueueItem(x,sClass)).join("")}</div>`:""}
       <div class="auto-inbox">
         <div class="auto-inbox-title">Triage inbox<span class="count-badge">${items.length}</span></div>
         ${items.length?items.map(x=>`<div class="auto-item"><span class="auto-agent">${escHtml(x.agentId)}</span><span class="auto-summary">${escHtml(x.proposal.summary)}</span>${x.proposal.verdict?`<span class="pill pill-xs ${vClass(x.proposal.verdict.verdict)}">checker: ${escHtml(x.proposal.verdict.verdict)} ${x.proposal.verdict.confidence}</span>`:""}</div>`).join(""):'<div class="auto-empty">Inbox clear — nothing awaiting triage.</div>'}
@@ -1293,7 +1327,13 @@ async function runLoopNow(btn){
   // approveImprovement, so it cannot bump a catalog version. Auto-apply is dead.
   // A separately configured Railway scheduler is outside this UI guard.
   if(btn){btn.disabled=true;btn.textContent="Running…"}
-  try{const r=await DirectoryAPI.runLoop();toast(`Cycle: scanned ${r.scanned}, ${r.jobs.length} job(s) run, $${r.budget.spentUsd} spent`)}
+  try{
+    const r=await DirectoryAPI.runLoop();
+    const o=r.outcomes||cycleOutcomes(r);
+    const jobs=r.budget&&typeof r.budget.jobs==="number"?r.budget.jobs:o.attempted;
+    const maxJobs=r.budget&&typeof r.budget.maxJobs==="number"?r.budget.maxJobs:"?";
+    toast(`Cycle: scanned ${r.scanned}, attempted ${o.attempted}, proposed ${o.proposed}, refused ${o.refused}, ${jobs} of ${maxJobs} jobs`);
+  }
   catch(e){toast("Loop service unreachable")}
   if(btn){btn.disabled=false;btn.textContent="Run automations now"}
   await loadRailwayProposalOverlay();

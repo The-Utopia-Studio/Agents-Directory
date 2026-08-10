@@ -17,7 +17,7 @@ import {
   getHandoffCapability,
   loadHandoffBriefing,
 } from "../handoff/handoffArtifacts.js";
-import { sanitizeCheckResults, sanitizeFailureReason } from "./traceSafety.js";
+import { sanitizeCheckResults, sanitizeFailureReason, ensureFailureCause } from "./traceSafety.js";
 import { validateProposal } from "../improve/proposalContract.js";
 import { readProposals, writeProposals, selectProposal } from "./proposals.js";
 import { buildServiceMigrationSnapshot } from "../migration/export.js";
@@ -78,10 +78,15 @@ function metadataOnlyTrace(agentId, trace) {
   // filtered through closed vocabularies/field allowlists, so an Anthropic
   // message or model output cannot reach the store if a future caller passes it.
   const checkResults = sanitizeCheckResults(trace.checkResults);
-  const failureReason = sanitizeFailureReason(trace.failureReason);
+  const status = trace.status || "ok";
+  const { failureReason } = ensureFailureCause(
+    status,
+    sanitizeFailureReason(trace.failureReason),
+    checkResults,
+  );
   return {
     agentId,
-    status: trace.status,
+    status,
     ...(typeof trace.latencyMs === "number"
       ? { latencyMs: trace.latencyMs }
       : {}),
@@ -722,7 +727,27 @@ export function createLoopService({
       // Optimizers are untrusted adapter boundaries. A better model with an
       // untyped output is still unsafe: enforce concrete changes, bounded text,
       // and evidence ids that exist for this agent before anything is queued.
-      const raw = await optimizer.propose(agent, evidence);
+      let raw;
+      try {
+        raw = await optimizer.propose(agent, evidence);
+      } catch (error) {
+        // Surface the refuse reason on the agent record so the UI does not
+        // require curling the research-queue note.
+        if (error?.status === 422) {
+          agent.latestProposalAttempt = {
+            outcome: "maker-refused",
+            recordedAt: new Date().toISOString(),
+            reason: String(error.message || "maker refused"),
+            traces: evidence.traces.length,
+            failingTraces: evidence.failingTraces.length,
+            feedback: evidence.feedback.length,
+            feedbackWithNotes: evidence.feedback.filter((f) => String(f.notes || "").trim()).length,
+            hasEval: Boolean(evidence.latestEval),
+          };
+          await store.put("agents", agent);
+        }
+        throw error;
+      }
       const proposals = (Array.isArray(raw) ? raw : [raw]).map((candidate, index) => {
         const proposal = validateProposal(candidate, evidence);
         proposal.id = `imp_${Date.now().toString(36)}_${index}`;

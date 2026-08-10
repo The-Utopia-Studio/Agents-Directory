@@ -3,6 +3,7 @@
 import {
   sanitizeCheckResults,
   sanitizeFailureReason,
+  ensureFailureCause,
 } from "../core/traceSafety.js";
 
 export const FILE_TRACE_WRITES_ENABLED = false;
@@ -50,12 +51,18 @@ export function createLocalObservability({ store, lowScoreThreshold = 70 }) {
         checkResults,
         ...metadataOnly
       } = trace;
-      const safeReason = sanitizeFailureReason(failureReason);
+      const status = metadataOnly.status || "ok";
       const safeChecks = sanitizeCheckResults(checkResults);
+      const { failureReason: safeReason } = ensureFailureCause(
+        status,
+        sanitizeFailureReason(failureReason),
+        safeChecks,
+      );
       const doc = {
         status: "ok",
         ts: new Date().toISOString(),
         ...metadataOnly,
+        status,
         ...(safeReason ? { failureReason: safeReason } : {}),
         ...(safeChecks.length ? { checkResults: safeChecks } : {}),
       };
