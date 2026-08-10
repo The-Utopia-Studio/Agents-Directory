@@ -197,12 +197,12 @@ test("live quality path uses historical system prompts (fake provider)", async (
   process.env.NODE_TEST_CONTEXT = "1";
   const responses = {
     [V5]: {
-      content: [{ type: "text", text: "### LinkedIn About\nI help — badly.\n\n### Spoken event introduction\nMira sits at the intersection of x and y and founded Dextrum.\n\n### Suggested headline\nX" }],
+      output_text: "### LinkedIn About\nI help — badly.\n\n### Spoken event introduction\nMira sits at the intersection of x and y and founded Dextrum.\n\n### Suggested headline\nX",
       usage: { input_tokens: 10, output_tokens: 20 },
       model: "fake-v5",
     },
     [V6]: {
-      content: [{ type: "text", text: `### LinkedIn About
+      output_text: `### LinkedIn About
 
 As an Intern at Helix Labs I learned shipping. I worked for Dextrum Health as a contractor. I founded Northline Studio.
 
@@ -214,7 +214,7 @@ Mira Okonkwo contracted for Dextrum and founded Northline Studio.
 
 ### Suggested headline
 
-Designer` }],
+Designer`,
       usage: { input_tokens: 11, output_tokens: 22 },
       model: "fake-v6",
     },
@@ -222,9 +222,9 @@ Designer` }],
 
   const fetchImpl = async (_url, init) => {
     const body = JSON.parse(init.body);
-    const version = body.system.match(/^artifact_version:\s*(\S+)/m)?.[1];
+    const version = body.instructions.match(/^artifact_version:\s*(\S+)/m)?.[1];
     const payload = responses[version];
-    assert.ok(payload, `unexpected system artifact_version ${version}`);
+    assert.ok(payload, `unexpected instructions artifact_version ${version}`);
     return {
       ok: true,
       async json() {
@@ -241,20 +241,71 @@ Designer` }],
     outputSource: "live",
     config: {
       runtime: {
-        anthropic: { apiKey: "test", fetch: fetchImpl, model: "fake" },
+        openai: { apiKey: "test", fetch: fetchImpl, model: "fake" },
       },
     },
   });
-  assert.equal(result.left.generation.provider, "anthropic");
+  assert.equal(result.left.generation.provider, "openai");
   assert.equal(result.right.generation.modelId, "fake-v6");
+  // Different model ids from the API payloads → not comparable as a quality delta.
+  assert.equal(result.scoreDelta.comparable, false);
+  assert.match(result.scoreDelta.reason, /model mismatch/);
   assert.equal(result.outputSource, "live");
   assert.equal(result.outputProvenance, "live_generation");
   assert.equal(result.answersDidImprovementHelp, true);
   assert.equal(result.findingKind, "prompt_comparison");
   assert.match(result.interpretation, /live pair answers whether the prompt change helped/);
-  assert.equal(result.scoreDelta.comparable, true);
-  assert.ok(result.scoreDelta.value > 0);
   // Response must not include draft text
   assert.equal("output" in result.left, false);
   assert.equal(result.left.generation.output, undefined);
+});
+
+test("live quality path with one shared model yields a comparable delta", async () => {
+  const body = {
+    [V5]: "### LinkedIn About\nI help — badly.\n\n### Spoken event introduction\nMira sits at the intersection of x and y and founded Dextrum.\n\n### Suggested headline\nX",
+    [V6]: `### LinkedIn About
+
+As an Intern at Helix Labs I learned shipping. I worked for Dextrum Health as a contractor. I founded Northline Studio.
+
+Open to advisory conversations by email.
+
+### Spoken event introduction
+
+Mira Okonkwo contracted for Dextrum and founded Northline Studio.
+
+### Suggested headline
+
+Designer`,
+  };
+  const fetchImpl = async (_url, init) => {
+    const req = JSON.parse(init.body);
+    const version = req.instructions.match(/^artifact_version:\s*(\S+)/m)?.[1];
+    return {
+      ok: true,
+      async json() {
+        return {
+          output_text: body[version],
+          usage: { input_tokens: 10, output_tokens: 20 },
+          model: "gpt-5.6-terra",
+        };
+      },
+    };
+  };
+  const result = await runOutputQualityCompare({
+    caseId: CASE,
+    leftVersion: V5,
+    rightVersion: V6,
+    rulerVersion: V6,
+    outputSource: "live",
+    config: {
+      runtime: {
+        openai: { apiKey: "test", fetch: fetchImpl, model: "gpt-5.6-terra" },
+      },
+    },
+  });
+  assert.equal(result.left.generation.provider, "openai");
+  assert.equal(result.left.generation.modelId, "gpt-5.6-terra");
+  assert.equal(result.right.generation.modelId, "gpt-5.6-terra");
+  assert.equal(result.scoreDelta.comparable, true);
+  assert.ok(result.scoreDelta.value > 0);
 });

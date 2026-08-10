@@ -34,6 +34,9 @@ test("identical checks across prompt versions are comparable via checkSetId", ()
   const left = {
     checkSetId,
     artifactVersion: "biocraft-singleshot-v5",
+    outputSource: "live",
+    provider: "openai",
+    modelId: "gpt-5.6-terra",
     byCategory: { grounding: { passRate: 0 } },
     checkResults: [
       { id: "about_closing_has_cta", passed: true, category: "style" },
@@ -43,6 +46,9 @@ test("identical checks across prompt versions are comparable via checkSetId", ()
   const right = {
     checkSetId,
     artifactVersion: "biocraft-singleshot-v6",
+    outputSource: "live",
+    provider: "openai",
+    modelId: "gpt-5.6-terra",
     byCategory: { grounding: { passRate: 100 } },
     checkResults: left.checkResults.map((row) =>
       row.id.startsWith("source_") ? { ...row, passed: true } : row,
@@ -51,6 +57,53 @@ test("identical checks across prompt versions are comparable via checkSetId", ()
   const delta = groundingScoreDelta(left, right);
   assert.equal(delta.comparable, true);
   assert.equal(delta.value, 100);
+});
+
+test("live scores without model identity refuse with an explicit reason", () => {
+  const checkSetId = computeCheckSetId([{ id: "g", category: "grounding" }]);
+  const delta = groundingScoreDelta(
+    {
+      checkSetId,
+      outputSource: "live",
+      byCategory: { grounding: { passRate: 40 } },
+      checkResults: [{ id: "g", passed: true, category: "grounding" }],
+    },
+    {
+      checkSetId,
+      outputSource: "live",
+      byCategory: { grounding: { passRate: 80 } },
+      checkResults: [{ id: "g", passed: true, category: "grounding" }],
+    },
+  );
+  assert.equal(delta.comparable, false);
+  assert.equal(delta.reason, "recorded before model identity");
+});
+
+test("model mismatch refuses even when checkSetId and ruler match", () => {
+  const checkSetId = computeCheckSetId([{ id: "g", category: "grounding" }]);
+  const delta = groundingScoreDelta(
+    {
+      checkSetId,
+      rulerVersion: "ruler-v1",
+      outputSource: "live",
+      provider: "anthropic",
+      modelId: "claude-sonnet-4-6",
+      byCategory: { grounding: { passRate: 40 } },
+      checkResults: [{ id: "g", passed: true, category: "grounding" }],
+    },
+    {
+      checkSetId,
+      rulerVersion: "ruler-v1",
+      outputSource: "live",
+      provider: "openai",
+      modelId: "gpt-5.6-terra",
+      byCategory: { grounding: { passRate: 80 } },
+      checkResults: [{ id: "g", passed: true, category: "grounding" }],
+    },
+    { requireRulerMatch: true },
+  );
+  assert.equal(delta.comparable, false);
+  assert.match(delta.reason, /model mismatch/);
 });
 
 test("missing checkSetId refuses with migration reason — no backfill guess", () => {
@@ -166,6 +219,9 @@ test("promotion gate requires live + guardrails + non-negative comparable delta"
   const incumbent = {
     checkSetId,
     rulerVersion: "ruler-v1",
+    outputSource: "live",
+    provider: "openai",
+    modelId: "gpt-5.6-terra",
     byCategory: { grounding: { passRate: 50 } },
     checkResults: [{ id: "g", passed: true, category: "grounding" }],
     guardrailGate: { passed: true, results: [], coverage },
@@ -173,6 +229,9 @@ test("promotion gate requires live + guardrails + non-negative comparable delta"
   const candidate = {
     checkSetId,
     rulerVersion: "ruler-v1",
+    outputSource: "live",
+    provider: "openai",
+    modelId: "gpt-5.6-terra",
     byCategory: { grounding: { passRate: 80 } },
     checkResults: [{ id: "g", passed: true, category: "grounding" }],
     guardrailGate: { passed: true, results: [], coverage },

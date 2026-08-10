@@ -1,15 +1,25 @@
 // Invoke a digest-verified historical artifact as the system prompt.
 // Does not touch the live RUNTIME_ARTIFACTS registry — baselines are fixtures.
 //
-// Live path: Anthropic Messages API (paid).
-// Test path: config.runtime.anthropic.fetch override, or outputSource fixtures.
+// Scoring path (option 3): OpenAI Responses API — same provider family as the
+// hosted biocraft / Software Factory agents. Not Anthropic.
+// Test path: config.runtime.openai.fetch override, or outputSource fixtures.
 
 import { loadHistoricalArtifact } from "./historicalArtifacts.js";
 import { RUNTIME_TIMEOUT_MS } from "../invoke/index.js";
 import { getRuntimeInputContract, resolveRuntimeInputs } from "../invoke/runtimeArtifacts.js";
 
+/** Default scoring model when the historical fixture has no runtime_model pin. */
+export const SCORING_DEFAULT_MODEL = "gpt-5.6-terra";
+export const SCORING_PROVIDER = "openai";
+
 function refuse(message, status = 500) {
   throw Object.assign(new Error(message), { status });
+}
+
+function runtimeModelFromArtifactContent(content) {
+  const match = String(content || "").match(/^runtime_model:\s*(\S+)\s*$/m);
+  return match ? match[1] : null;
 }
 
 /**
@@ -37,8 +47,25 @@ export function buildGoldenUserPayload(agentId, golden) {
   return values;
 }
 
+function extractOpenAiText(payload) {
+  if (typeof payload?.output_text === "string" && payload.output_text.trim()) {
+    return payload.output_text.trim();
+  }
+  const chunks = [];
+  for (const item of payload?.output || []) {
+    if (item?.type === "message") {
+      for (const part of item.content || []) {
+        if (part?.type === "output_text" && typeof part.text === "string") {
+          chunks.push(part.text);
+        }
+      }
+    }
+  }
+  return chunks.join("\n").trim();
+}
+
 /**
- * Generate one draft under a historical artifact prompt.
+ * Generate one draft under a historical artifact prompt via OpenAI Responses.
  * Returns metadata + output text. Caller scores; this module does not persist text.
  */
 export async function generateUnderHistoricalArtifact({
@@ -48,14 +75,17 @@ export async function generateUnderHistoricalArtifact({
   config = {},
 }) {
   const artifact = loadHistoricalArtifact(artifactVersion);
-  const anthropic = config.runtime?.anthropic || {};
-  const model = anthropic.model || "claude-sonnet-4-6";
-  const timeoutMs = anthropic.timeoutMs || RUNTIME_TIMEOUT_MS;
-  const fetchImpl = anthropic.fetch || globalThis.fetch;
+  const openai = config.runtime?.openai || {};
+  const model =
+    openai.model ||
+    runtimeModelFromArtifactContent(artifact.content) ||
+    SCORING_DEFAULT_MODEL;
+  const timeoutMs = openai.timeoutMs || RUNTIME_TIMEOUT_MS;
+  const fetchImpl = openai.fetch || globalThis.fetch;
 
-  if (!anthropic.apiKey && fetchImpl === globalThis.fetch) {
+  if (!openai.apiKey && fetchImpl === globalThis.fetch) {
     refuse(
-      "Live output_quality generation needs ANTHROPIC_API_KEY (or a test fetch)",
+      "Live output_quality generation needs OPENAI_API_KEY (or a test fetch)",
       503,
     );
   }
@@ -64,67 +94,66 @@ export async function generateUnderHistoricalArtifact({
   }
 
   const userPayload = buildGoldenUserPayload(agentId, golden);
+  const userContent = JSON.stringify(userPayload, null, 2);
   const controller = new AbortController();
   const timer = setTimeout(
-    () => controller.abort(new Error("Anthropic generation timed out")),
+    () => controller.abort(new Error("OpenAI generation timed out")),
     timeoutMs,
   );
   const started = Date.now();
   let response;
   let payload;
   try {
-    response = await fetchImpl("https://api.anthropic.com/v1/messages", {
+    response = await fetchImpl("https://api.openai.com/v1/responses", {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "anthropic-version": "2023-06-01",
-        "x-api-key": anthropic.apiKey || "test-key",
+        authorization: `Bearer ${openai.apiKey || "test-key"}`,
       },
       body: JSON.stringify({
         model,
-        max_tokens: 4096,
-        system: artifact.content,
-        messages: [
-          {
-            role: "user",
-            content: JSON.stringify(userPayload, null, 2),
-          },
-        ],
+        instructions: artifact.content,
+        input: userContent,
+        store: false,
       }),
       signal: controller.signal,
     });
     if (!response.ok) {
-      refuse(`Anthropic Messages API returned ${response.status}`, 502);
+      refuse(`OpenAI Responses API returned ${response.status}`, 502);
     }
     try {
       payload = await response.json();
     } catch {
-      refuse("Anthropic Messages API returned invalid JSON", 502);
+      refuse("OpenAI Responses API returned invalid JSON", 502);
     }
   } catch (error) {
     if (controller.signal.aborted) {
-      refuse("Anthropic generation timed out", 504);
+      refuse("OpenAI generation timed out", 504);
     }
     if (error.status) throw error;
-    refuse("Anthropic Messages API request failed", 502);
+    refuse("OpenAI Responses API request failed", 502);
   } finally {
     clearTimeout(timer);
   }
 
-  const output = (payload.content || [])
-    .filter((block) => block.type === "text")
-    .map((block) => block.text)
-    .join("\n")
-    .trim();
+  if (
+    payload.status === "failed" ||
+    payload.error ||
+    payload.status === "cancelled"
+  ) {
+    refuse("OpenAI Responses API failed to complete", 502);
+  }
+
+  const output = extractOpenAiText(payload);
   if (!output) {
-    refuse("Anthropic Messages API returned no text output", 502);
+    refuse("OpenAI Responses API returned no text output", 502);
   }
 
   return {
     output,
     artifactVersion: artifact.artifactVersion,
     artifactDigest: artifact.artifactDigest,
-    provider: "anthropic",
+    provider: SCORING_PROVIDER,
     modelId: payload.model || model,
     latencyMs: Date.now() - started,
     inputTokens: payload.usage?.input_tokens,

@@ -27,6 +27,9 @@ export const EXPERIMENTS = Object.freeze([
 export const REASON_PRE_CHECKSET_VERSIONING =
   "recorded before check-set versioning";
 
+export const REASON_PRE_MODEL_IDENTITY =
+  "recorded before model identity";
+
 function refuse(message, status = 400) {
   throw Object.assign(new Error(message), { status });
 }
@@ -60,7 +63,8 @@ function scoreableCheckCount(score) {
 
 /**
  * Explicit delta state — never a bare null.
- * Comparability is checkSetId (and optional rulerVersion), never artifactVersion.
+ * Comparability is checkSetId + model identity (+ optional rulerVersion),
+ * never artifactVersion alone.
  *
  * @param {object} left
  * @param {object} right
@@ -74,17 +78,40 @@ export function groundingScoreDelta(left, right, opts = {}) {
   const rightId = right.checkSetId || null;
   const leftRuler = left.rulerVersion || null;
   const rightRuler = right.rulerVersion || null;
+  const leftModel = left.modelId || null;
+  const rightModel = right.modelId || null;
+  const leftProvider = left.provider || null;
+  const rightProvider = right.provider || null;
+  const eitherLive =
+    left.outputSource === "live" || right.outputSource === "live";
+  const leftRealModel =
+    leftProvider && leftProvider !== "fixture" && leftModel
+      ? true
+      : false;
+  const rightRealModel =
+    rightProvider && rightProvider !== "fixture" && rightModel
+      ? true
+      : false;
+  const eitherRealModel = leftRealModel || rightRealModel;
+
+  const baseMeta = {
+    leftCheckCount: leftCount,
+    rightCheckCount: rightCount,
+    leftCheckSetId: leftId,
+    rightCheckSetId: rightId,
+    leftRulerVersion: leftRuler,
+    rightRulerVersion: rightRuler,
+    leftModelId: leftModel,
+    rightModelId: rightModel,
+    leftProvider,
+    rightProvider,
+  };
 
   if (!leftId || !rightId) {
     return {
       comparable: false,
       reason: REASON_PRE_CHECKSET_VERSIONING,
-      leftCheckCount: leftCount,
-      rightCheckCount: rightCount,
-      leftCheckSetId: leftId,
-      rightCheckSetId: rightId,
-      leftRulerVersion: leftRuler,
-      rightRulerVersion: rightRuler,
+      ...baseMeta,
     };
   }
 
@@ -92,12 +119,7 @@ export function groundingScoreDelta(left, right, opts = {}) {
     return {
       comparable: false,
       reason: `check set changed: ${leftCount} checks → ${rightCount} checks`,
-      leftCheckCount: leftCount,
-      rightCheckCount: rightCount,
-      leftCheckSetId: leftId,
-      rightCheckSetId: rightId,
-      leftRulerVersion: leftRuler,
-      rightRulerVersion: rightRuler,
+      ...baseMeta,
     };
   }
 
@@ -106,12 +128,27 @@ export function groundingScoreDelta(left, right, opts = {}) {
       return {
         comparable: false,
         reason: "ruler version mismatch",
-        leftCheckCount: leftCount,
-        rightCheckCount: rightCount,
-        leftCheckSetId: leftId,
-        rightCheckSetId: rightId,
-        leftRulerVersion: leftRuler,
-        rightRulerVersion: rightRuler,
+        ...baseMeta,
+      };
+    }
+  }
+
+  // Live scores (and any row that already carries a real model pin) must match
+  // on provider + modelId. Fixture/canned plumbing stays comparable without a
+  // model. Missing pins on live rows get an explicit migration reason.
+  if (eitherLive || eitherRealModel) {
+    if (!leftModel || !rightModel || !leftProvider || !rightProvider || leftProvider === "fixture" || rightProvider === "fixture") {
+      return {
+        comparable: false,
+        reason: REASON_PRE_MODEL_IDENTITY,
+        ...baseMeta,
+      };
+    }
+    if (leftProvider !== rightProvider || leftModel !== rightModel) {
+      return {
+        comparable: false,
+        reason: `model mismatch: ${leftProvider}/${leftModel} → ${rightProvider}/${rightModel}`,
+        ...baseMeta,
       };
     }
   }
@@ -122,24 +159,14 @@ export function groundingScoreDelta(left, right, opts = {}) {
     return {
       comparable: false,
       reason: "grounding pass rate missing on one or both sides",
-      leftCheckCount: leftCount,
-      rightCheckCount: rightCount,
-      leftCheckSetId: leftId,
-      rightCheckSetId: rightId,
-      leftRulerVersion: leftRuler,
-      rightRulerVersion: rightRuler,
+      ...baseMeta,
     };
   }
 
   return {
     comparable: true,
     value: Math.round((rightScore - leftScore) * 10) / 10,
-    leftCheckCount: leftCount,
-    rightCheckCount: rightCount,
-    leftCheckSetId: leftId,
-    rightCheckSetId: rightId,
-    leftRulerVersion: leftRuler,
-    rightRulerVersion: rightRuler,
+    ...baseMeta,
   };
 }
 
@@ -228,14 +255,28 @@ export function buildOutputQualityResult({
     );
   }
 
+  const leftForDelta = {
+    ...left,
+    outputSource,
+    provider: leftGeneration?.provider || left.provider || null,
+    modelId: leftGeneration?.modelId || left.modelId || null,
+  };
+  const rightForDelta = {
+    ...right,
+    outputSource,
+    provider: rightGeneration?.provider || right.provider || null,
+    modelId: rightGeneration?.modelId || right.modelId || null,
+  };
+
   const leftArtifact = loadHistoricalArtifact(leftArtifactVersion);
   const rightArtifact = loadHistoricalArtifact(rightArtifactVersion);
   const comparability = comparabilityForVersions(leftArtifact, rightArtifact);
 
-  // Ruler is part of comparison identity — never overwrite recorded fields to
-  // force a match. Both sides must already carry the same checkSetId and
-  // rulerVersion from scoring under that ruler.
-  const delta = groundingScoreDelta(left, right, { requireRulerMatch: true });
+  // Ruler + model are part of comparison identity — never overwrite recorded
+  // fields to force a match.
+  const delta = groundingScoreDelta(leftForDelta, rightForDelta, {
+    requireRulerMatch: true,
+  });
 
   const isLive = outputSource === "live";
   const isCanned = outputSource === "canned";

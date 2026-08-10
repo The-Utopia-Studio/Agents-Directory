@@ -57,6 +57,8 @@ async function seedLivePromotionEvidence(store, agentId, {
   incumbentVersion = "seed-incumbent-v1",
   challengerVersion = "seed-challenger-v1",
   checkSetId = "a".repeat(64),
+  provider = "openai",
+  modelId = "gpt-5.6-terra",
 } = {}) {
   await store.append("mechanicalResults", {
     agentId,
@@ -64,6 +66,8 @@ async function seedLivePromotionEvidence(store, agentId, {
     artifactDigest: "b".repeat(64),
     checkSetId,
     rulerVersion: "ruler-v1",
+    provider,
+    modelId,
     outputSource: "live",
     experiment: "output_quality",
     comparedTo: challengerVersion,
@@ -93,6 +97,8 @@ async function seedLivePromotionEvidence(store, agentId, {
     artifactDigest: "c".repeat(64),
     checkSetId,
     rulerVersion: "ruler-v1",
+    provider,
+    modelId,
     outputSource: "live",
     experiment: "output_quality",
     comparedTo: incumbentVersion,
@@ -116,7 +122,7 @@ async function seedLivePromotionEvidence(store, agentId, {
     notScoreable: [],
     timestamp: new Date().toISOString(),
   });
-  return { incumbentVersion, challengerVersion, checkSetId };
+  return { incumbentVersion, challengerVersion, checkSetId, provider, modelId };
 }
 
 /**

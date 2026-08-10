@@ -107,6 +107,7 @@ export function buildMechanicalResultRecord({
   outputSource = "canned",
   experiment = null,
   comparedTo = null,
+  generation = null,
 }) {
   if (!score?.artifactVersion || !score?.artifactDigest) {
     throw Object.assign(
@@ -138,6 +139,22 @@ export function buildMechanicalResultRecord({
     .map(cleanCheckResult)
     .filter(Boolean);
 
+  const gen = generation || score.generation || null;
+  const provider =
+    gen?.provider != null
+      ? String(gen.provider)
+      : score.provider != null
+        ? String(score.provider)
+        : canonicalSource === "canned"
+          ? "fixture"
+          : null;
+  const modelId =
+    gen?.modelId != null
+      ? String(gen.modelId)
+      : score.modelId != null
+        ? String(score.modelId)
+        : null;
+
   return {
     agentId,
     goldenCaseId: goldenCaseId || null,
@@ -148,6 +165,9 @@ export function buildMechanicalResultRecord({
     // Legacy field — never used for comparability once checkSetId is present.
     checkSetVersion: score.checkSetVersion || null,
     ...(score.rulerVersion ? { rulerVersion: score.rulerVersion } : {}),
+    // Model identity — required for live delta comparability.
+    ...(provider ? { provider } : {}),
+    ...(modelId ? { modelId } : {}),
     outputSource: canonicalSource,
     ...(resolvedExperiment ? { experiment: resolvedExperiment } : {}),
     passed: [...(score.passed || [])],

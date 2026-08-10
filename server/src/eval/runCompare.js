@@ -167,6 +167,7 @@ export async function runMechanicalScore({
         goldenCaseId: caseId,
         score,
         outputSource,
+        generation,
       }),
     );
     result.recordedId = recorded.id;
@@ -395,6 +396,7 @@ export async function runMechanicalCompare(store, opts) {
         outputSource: opts.outputSource || "canned",
         experiment,
         comparedTo: opts.rightVersion,
+        generation: result.left.generation || null,
       }),
     );
     const rightRec = await recordMechanicalResult(
@@ -406,6 +408,7 @@ export async function runMechanicalCompare(store, opts) {
         outputSource: opts.outputSource || "canned",
         experiment,
         comparedTo: opts.leftVersion,
+        generation: result.right.generation || null,
       }),
     );
     result = { ...result, recorded: { leftId: leftRec.id, rightId: rightRec.id } };

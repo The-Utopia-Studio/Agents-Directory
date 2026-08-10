@@ -140,7 +140,9 @@ export function resolveLivePromotionPair(
       row &&
       row.outputSource === "live" &&
       row.checkSetId &&
-      row.artifactVersion,
+      row.artifactVersion &&
+      row.provider &&
+      row.modelId,
   );
   if (!live.length || !incumbentVersion) return null;
 
@@ -158,6 +160,8 @@ export function resolveLivePromotionPair(
         row.comparedTo === right.artifactVersion &&
         row.checkSetId === right.checkSetId &&
         (row.rulerVersion || null) === (right.rulerVersion || null) &&
+        row.provider === right.provider &&
+        row.modelId === right.modelId &&
         row.experiment === right.experiment,
     );
     if (!left) continue;
@@ -183,7 +187,9 @@ export function resolveLivePromotionPair(
         (!challengerVersion || row.artifactVersion === challengerVersion) &&
         !row.comparedTo &&
         row.checkSetId === incumbent.checkSetId &&
-        (row.rulerVersion || null) === (incumbent.rulerVersion || null),
+        (row.rulerVersion || null) === (incumbent.rulerVersion || null) &&
+        row.provider === incumbent.provider &&
+        row.modelId === incumbent.modelId,
     )
     .sort((a, b) => String(b.timestamp || b.ts).localeCompare(String(a.timestamp || a.ts)));
 
