@@ -152,7 +152,7 @@ describe("approved A7/A8 merged re-import", () => {
     expect(a7).toMatchObject({
       initials: "SA",
       category: "Personal Branding",
-      repoUrl: "https://github.com/haniyahumair19/utopia-agents/tree/main/biocraft",
+      repoUrl: "https://github.com/The-Utopia-Studio/utopia-agents/tree/main/biocraft",
       objective: MERGED_REIMPORT_SPEC.imports.A7.agent.objective,
       whenToUse: MERGED_REIMPORT_SPEC.imports.A7.agent.whenToUse,
       sop: MERGED_REIMPORT_SPEC.imports.A7.agent.sop,

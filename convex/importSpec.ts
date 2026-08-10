@@ -30,13 +30,13 @@ export const APPROVED_IMPORT_SPEC = {
         tagline:
           "A stateless text-only draft mode inspired by /biocraft. It requires all source material up front and has no Chrome or Drive tools.",
         description:
-          "This is not the full /biocraft agent. It makes one Anthropic call with no conversation state, browser tools, Drive tools, or HTML rendering.",
-        platform: "Claude",
+          "This is not the full /biocraft agent. It makes one OpenAI Responses call with no conversation state, browser tools, Drive tools, or HTML rendering.",
+        platform: "OpenAI",
         status: "Experimental",
         category: "Personal Branding",
         owner: "Sarah",
         initials: "S",
-        model: "Claude Sonnet 4.6",
+        model: "gpt-5.6-terra",
         runner: "native",
         usabilityModes: ["hosted-run", "download-install"],
         invocation: {

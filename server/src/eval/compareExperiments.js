@@ -155,10 +155,27 @@ export function groundingScoreDelta(left, right, opts = {}) {
 
   const leftScore = left.byCategory?.grounding?.passRate;
   const rightScore = right.byCategory?.grounding?.passRate;
-  if (typeof leftScore !== "number" || typeof rightScore !== "number") {
+  const groundingScoreable = (score) => {
+    const fromCat = score.byCategory?.grounding?.scoreableCount;
+    if (typeof fromCat === "number") return fromCat;
+    return (score.checkResults || []).filter(
+      (row) =>
+        row.category === "grounding" &&
+        (row.passed === true || row.passed === false),
+    ).length;
+  };
+  const leftScoreable = groundingScoreable(left);
+  const rightScoreable = groundingScoreable(right);
+  if (
+    typeof leftScore !== "number" ||
+    typeof rightScore !== "number" ||
+    leftScoreable <= 0 ||
+    rightScoreable <= 0
+  ) {
     return {
       comparable: false,
-      reason: "grounding pass rate missing on one or both sides",
+      reason:
+        "no grounding delta — one or both sides have no grounding measurement",
       ...baseMeta,
     };
   }

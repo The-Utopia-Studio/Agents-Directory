@@ -1712,8 +1712,44 @@ function mechCategoryCounts(side,category){
   };
 }
 
+/** True only when grounding was actually scored (scoreable > 0 with a numeric rate). */
+function mechGroundingMeasured(side){
+  const g=mechCategoryCounts(side,"grounding");
+  return Boolean(
+    g
+    &&typeof g.passRate==="number"
+    &&typeof g.scoreable==="number"
+    &&g.scoreable>0
+  );
+}
+
+/**
+ * Grounding Δ only when both sides have a real grounding measurement.
+ * Never invent a delta from mechanicalCheckScore when the UI would say
+ * "not yet checked".
+ */
+function mechGroundingDeltaFromSides(left,right){
+  if(!mechGroundingMeasured(left)||!mechGroundingMeasured(right)){
+    return{
+      comparable:false,
+      reason:"no grounding delta — one or both sides have no grounding measurement",
+    };
+  }
+  const leftRate=mechCategoryCounts(left,"grounding").passRate;
+  const rightRate=mechCategoryCounts(right,"grounding").passRate;
+  return{
+    comparable:true,
+    value:Math.round((rightRate-leftRate)*10)/10,
+  };
+}
+
 function mechFormatPassRate(passRate,passed,scoreable){
-  if(typeof passRate!=="number"||typeof passed!=="number"||typeof scoreable!=="number"){
+  if(
+    typeof passRate!=="number"
+    ||typeof passed!=="number"
+    ||typeof scoreable!=="number"
+    ||scoreable<=0
+  ){
     return"not yet checked";
   }
   return`${passRate}% · ${passed} of ${scoreable} checks passed`;
@@ -1832,16 +1868,10 @@ function reconstructMechPayloadFromStored(rows){
             leftCheckCount:leftCount,
             rightCheckCount:rightCount,
           }
-        :{
-            comparable:true,
-            value:
-              typeof left.mechanicalCheckScore==="number"&&typeof right.mechanicalCheckScore==="number"
-                ?Math.round((right.mechanicalCheckScore-left.mechanicalCheckScore)*10)/10
-                :null,
-          };
+        :mechGroundingDeltaFromSides(left,right);
       if(scoreDelta.comparable&&typeof scoreDelta.value!=="number"){
         scoreDelta.comparable=false;
-        scoreDelta.reason="grounding pass rate missing on one or both sides";
+        scoreDelta.reason="no grounding delta — one or both sides have no grounding measurement";
         delete scoreDelta.value;
       }
       return{
@@ -1886,16 +1916,10 @@ function reconstructMechPayloadFromStored(rows){
               }
             :(left.rulerVersion||right.rulerVersion)&&(left.rulerVersion!==right.rulerVersion)
               ?{comparable:false,reason:"ruler version mismatch"}
-              :{
-                  comparable:true,
-                  value:
-                    typeof left.mechanicalCheckScore==="number"&&typeof right.mechanicalCheckScore==="number"
-                      ?Math.round((right.mechanicalCheckScore-left.mechanicalCheckScore)*10)/10
-                      :null,
-                };
+              :mechGroundingDeltaFromSides(left,right);
     if(scoreDelta.comparable&&typeof scoreDelta.value!=="number"){
       scoreDelta.comparable=false;
-      scoreDelta.reason="grounding pass rate missing on one or both sides";
+      scoreDelta.reason="no grounding delta — one or both sides have no grounding measurement";
       delete scoreDelta.value;
     }
     return{
@@ -1991,12 +2015,32 @@ function renderMechRestoredCaption(payload){
 function showMechResult(agentId,payload,{persist=false,markRestored=false}={}){
   const box=document.getElementById("mech-compare-out");
   if(!box||!payload?.result)return;
-  if(persist)saveMechLastResult(agentId,payload);
-  const body=payload.kind==="score"
-    ?renderMechanicalScoreResult(payload.result)
-    :renderMechanicalCompareResult(payload.result);
-  const caption=markRestored||payload.result.restoredFromStore||payload.source==="local"
-    ?renderMechRestoredCaption(payload)
+  let next=payload;
+  if(payload.kind==="compare"&&payload.result){
+    const safe=mechGroundingDeltaFromSides(payload.result.left,payload.result.right);
+    const claimed=mechNormalizeScoreDelta(
+      payload.result.scoreDelta||payload.result.mechanicalCheckScoreDelta
+    );
+    // Never keep a numeric Δ when grounding wasn't measured on both sides.
+    if(!safe.comparable&&claimed.comparable){
+      next={
+        ...payload,
+        result:{
+          ...payload.result,
+          scoreDelta:safe,
+          mechanicalCheckScoreDelta:safe,
+          promotionEligible:false,
+          promotionEligibility:{eligible:false,reason:safe.reason},
+        },
+      };
+    }
+  }
+  if(persist)saveMechLastResult(agentId,next);
+  const body=next.kind==="score"
+    ?renderMechanicalScoreResult(next.result)
+    :renderMechanicalCompareResult(next.result);
+  const caption=markRestored||next.result.restoredFromStore||next.source==="local"
+    ?renderMechRestoredCaption(next)
     :"";
   box.innerHTML=`${caption}${body}`;
 }
@@ -2004,11 +2048,12 @@ function showMechResult(agentId,payload,{persist=false,markRestored=false}={}){
 async function hydrateMechLastResultUI(id){
   const box=document.getElementById("mech-compare-out");
   if(!box)return;
+  const emptyHtml=`<div class="mech-meta mech-empty-last">No mechanical run stored yet. Results land here after the first score or compare.</div>`;
   const local=loadMechLastResultLocal(id);
   if(local){
     showMechResult(id,{...local,source:local.source||"local"},{markRestored:true});
   }else{
-    box.innerHTML=`<div class="mech-meta mech-empty-last">No mechanical run stored yet. Results land here after the first score or compare.</div>`;
+    box.innerHTML=emptyHtml;
     const rerun=document.querySelector("#mech-compare-panel details.mech-rerun");
     if(rerun)rerun.open=true;
   }
@@ -2016,11 +2061,18 @@ async function hydrateMechLastResultUI(id){
     const rows=await DirectoryAPI.mechanicalResults(id,20);
     const list=Array.isArray(rows)?rows:(rows?.results||rows?.items||[]);
     const fromServer=reconstructMechPayloadFromStored(list);
-    if(!fromServer)return;
+    if(!fromServer){
+      // Empty or non-reconstructable server store wins over a stale browser cache.
+      try{localStorage.removeItem(mechLastResultKey(id));}catch(_){}
+      box.innerHTML=emptyHtml;
+      const rerun=document.querySelector("#mech-compare-panel details.mech-rerun");
+      if(rerun)rerun.open=true;
+      return;
+    }
     // Prefer a fresher server pair over a stale browser cache.
     const localTs=local?.savedAt||local?.result?.restoredAt||"";
     const serverTs=fromServer.result.restoredAt||"";
-    if(!local||(serverTs&&serverTs>localTs)){
+    if(!local||(serverTs&&serverTs>localTs)||!mechGroundingMeasured(local?.result?.left)||!mechGroundingMeasured(local?.result?.right)){
       saveMechLastResult(id,fromServer);
       showMechResult(id,fromServer,{markRestored:true});
       const rerun=document.querySelector("#mech-compare-panel details.mech-rerun");
@@ -2212,11 +2264,13 @@ function renderPromotionEligibilityNote(r){
 
 function renderMechQualityDeltaChip(delta,{allowDirection=true}={}){
   const d=mechNormalizeScoreDelta(delta);
-  if(!d.comparable){
+  if(!d.comparable||typeof d.value!=="number"){
     return`<div class="mech-delta-chip mech-delta-refused">
       <div class="mech-delta-chip-label">grounding Δ</div>
       <div class="mech-delta-chip-value">—</div>
-      <div class="mech-delta-chip-reason">${escHtml(d.reason||"not comparable")}</div>
+      <div class="mech-delta-chip-reason">${escHtml(
+        d.reason||"no grounding delta — one or both sides have no grounding measurement"
+      )}</div>
     </div>`;
   }
   const value=d.value;

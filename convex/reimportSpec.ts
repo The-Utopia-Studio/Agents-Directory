@@ -64,13 +64,13 @@ export const MERGED_REIMPORT_SPEC = {
         tagline:
           "A stateless text-only draft mode inspired by /biocraft. It requires all source material up front and has no Chrome or Drive tools.",
         description:
-          "This is not the full /biocraft agent. It makes one Anthropic call with no conversation state, browser tools, Drive tools, or HTML rendering.",
-        platform: "Claude",
+          "This is not the full /biocraft agent. It makes one OpenAI Responses call with no conversation state, browser tools, Drive tools, or HTML rendering.",
+        platform: "OpenAI",
         status: "Experimental",
         category: "Personal Branding",
         owner: "Sarah",
         initials: "SA",
-        model: "Claude Sonnet 4.6",
+        model: "gpt-5.6-terra",
         objective:
           "Draft a LinkedIn About bio, spoken event introduction, and headline from complete source material supplied in one request.",
         whenToUse:
@@ -133,7 +133,7 @@ export const MERGED_REIMPORT_SPEC = {
         skills: ["biocraft", "personal-branding", "copywriting"],
         tools: [],
         context: [{ label: "Complete fellow source material supplied up front" }],
-        repoUrl: "https://github.com/haniyahumair19/utopia-agents/tree/main/biocraft",
+        repoUrl: "https://github.com/The-Utopia-Studio/utopia-agents/tree/main/biocraft",
       },
       version: {
         version: "biocraft-singleshot-v5",
