@@ -105,6 +105,11 @@ export function registerRoutes(router, svc, engine, config = {}) {
       limit: Number(query.limit) || 20,
     }),
   }));
+  router.get("/api/agents/:id/grounding-calibration", async ({ params, query }) =>
+    svc.listGroundingCalibration(params.id, {
+      limit: Number(query.limit) || 50,
+    }),
+  );
 
   // ── Identity-gated: paid model calls and/or mutations ──
   router.post("/api/loop/run", async ({ req }) =>
@@ -187,6 +192,14 @@ export function registerRoutes(router, svc, engine, config = {}) {
   router.post("/api/agents/:id/mechanical-results/clear", async ({ params, body, req }) => {
     const actor = await requireClerkApprover(req, config.clerk);
     return reply(200, await svc.clearMechanicalResults(params.id, body || {}, actor));
+  });
+  router.post("/api/agents/:id/grounding-calibration", async ({ params, body, req }) => {
+    const actor = await requireClerkApprover(req, config.clerk);
+    return reply(201, await svc.recordGroundingCalibration(params.id, body || {}, actor));
+  });
+  router.get("/api/agents/:id/traces/:traceId/grounding-evidence", async ({ params, req }) => {
+    const actor = await requireClerkApprover(req, config.clerk);
+    return svc.getGroundingEvidence(params.id, params.traceId, actor);
   });
 }
 

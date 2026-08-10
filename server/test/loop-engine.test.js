@@ -76,7 +76,7 @@ test("verifier ships a well-evidenced, high-gain proposal", async () => {
 test("runCycle triages the fleet and queues to the inbox (no auto-apply)", async () => {
   const { svc, engine } = await freshStack({ autoApply: false });
   const run = await engine.runCycle();
-  assert.ok(run.selected >= 1, "A2 (score 58) should be selected");
+  assert.ok(run.selected >= 1, "A2 with seed failing traces should be selected");
   assert.equal(run.outcomes.attempted, run.selected);
   assert.ok(run.outcomes.proposed >= 1, "at least one proposal must be counted");
   assert.equal(run.outcomes.refused, 0);
@@ -152,6 +152,69 @@ test("a verifier rejection blocks the queue item and isn't retried next cycle", 
   // Second cycle: the blocked signal is not retried.
   const run2 = await engine.runCycle();
   assert.ok(!run2.jobs.some((j) => j.agentId === "A2"), "blocked signal is not retried");
+});
+
+test("maker refusal does not reopen the same research-queue focus next cycle", async () => {
+  const { svc, engine } = await freshStack();
+  // First cycle creates proposals. Clear them and block RQ so the next
+  // research pass would have previously reopened the same focus.
+  await engine.runCycle();
+  const openBefore = await svc.listResearchQueue("open");
+  assert.equal(openBefore.length, 0);
+  const items = await svc.listResearchQueue();
+  const a2 = items.find((x) => x.agentId === "A2");
+  assert.ok(a2);
+  // Simulate a refused item with the same focus the next research would write.
+  await svc.setResearchStatus(a2.id, "blocked", "maker refused (test)");
+  await svc.upsertResearchItem({
+    agentId: "A2",
+    focus: a2.focus,
+    title: a2.title,
+    score: 2,
+    why: "should stay blocked",
+    evidence: "test",
+    next: "runImprovement",
+    estimate: "S",
+    status: "open",
+  });
+  const after = await svc.listResearchQueue();
+  const again = after.find((x) => x.id === a2.id);
+  assert.equal(again.status, "blocked", "same focus must not reopen after refusal");
+});
+
+test("triage selects agents with failing traces even without catalog evalHistory", async () => {
+  const { selectForTriage, scoreResearchCandidate } = await import(
+    "../src/loop/policy.js"
+  );
+  const agents = [
+    { id: "A7", evalHistory: [], proposedImprovements: [] },
+    { id: "A2", evalHistory: [{ status: "Needs improvement", score: 58 }], proposedImprovements: [] },
+    { id: "AX", evalHistory: [{ status: "Needs improvement", score: 40 }], proposedImprovements: [] },
+  ];
+  const evidenceByAgent = {
+    A7: { actionableFailingCount: 2 },
+    A2: { actionableFailingCount: 3 },
+    AX: { actionableFailingCount: 0 },
+  };
+  const selected = selectForTriage(agents, { evidenceByAgent });
+  assert.deepEqual(
+    selected.map((a) => a.id).sort(),
+    ["A2", "A7"],
+  );
+  assert.equal(
+    scoreResearchCandidate({
+      actionableFailingCount: 2,
+      evalRecord: null,
+    }),
+    2,
+  );
+  assert.equal(
+    scoreResearchCandidate({
+      actionableFailingCount: 2,
+      evalRecord: { status: "Needs improvement", score: 58 },
+    }),
+    3,
+  );
 });
 
 test("runGoal stops at the human gate on a verifier ship", async () => {

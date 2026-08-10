@@ -8,8 +8,13 @@
 // Entry points:
 //   runCycle() — one heartbeat across the fleet (Automations)
 //   runGoal(agentId, …) — run-until-done on one agent (the /goal primitive)
-import { selectForTriage, createBudget, defaultContract } from "./policy.js";
+import { selectForTriage, scoreResearchCandidate, createBudget, defaultContract } from "./policy.js";
 import { pendingProposals } from "../core/proposals.js";
+import {
+  falsePositiveExclusions,
+  sanitizeFailingTraceForMaker,
+  systematicFalsePositiveChecks,
+} from "../eval/groundingCalibration.js";
 
 const dominantSignal = (proposal, agent) =>
   proposal?.evidence?.signalKeys?.[0] ||
@@ -69,25 +74,85 @@ export function createLoopEngine({ svc, obs, verifier, config, now = () => new D
   const engine = {
     // DISCOVERY — scan the fleet and write scored items to the research queue.
     // Structured evidence, not open-ended browsing (SPF). Nothing auto-merges.
+    // Selection is evidence-first: actionable failing traces the maker can use.
+    // Catalog eval is a secondary score bump only — never the eligibility gate.
     async runResearch() {
       const agents = await svc.listAgents();
-      const candidates = selectForTriage(agents, { lowScore: loopCfg.lowScore });
+      await svc.ensureGroundingCalibrationSeed();
+      const calibration = await svc.listCalibrationRows();
+
+      const evidenceByAgent = {};
+      for (const agent of agents) {
+        if (pendingProposals(agent).length) {
+          evidenceByAgent[agent.id] = { actionableFailingCount: 0 };
+          continue;
+        }
+        const rawFailing = await obs
+          .getFailingTraces(agent.id, { limit: 100 })
+          .catch(() => []);
+        const agentCalib = calibration.filter(
+          (row) => !row.agentId || row.agentId === agent.id,
+        );
+        const exclusions = falsePositiveExclusions(agentCalib, {
+          agentId: agent.id,
+        });
+        const systematicIds = new Set(
+          systematicFalsePositiveChecks(agentCalib).map((p) => p.checkId),
+        );
+        const actionable = rawFailing
+          .map((trace) =>
+            sanitizeFailingTraceForMaker(trace, exclusions, systematicIds),
+          )
+          .filter(Boolean);
+        evidenceByAgent[agent.id] = {
+          actionableFailingCount: actionable.length,
+          focusReason: actionable
+            .map((t) => t.failureReason)
+            .filter(Boolean)[0],
+        };
+      }
+
+      const candidates = selectForTriage(agents, {
+        lowScore: loopCfg.lowScore,
+        evidenceByAgent,
+      });
       let n = 0;
       for (const agent of candidates) {
-        const focus = await candidateSignal(agent);
-        const blocked = await svc.isBlockedSignal(agent.id, focus);
+        const evidence = evidenceByAgent[agent.id] || {};
+        const focus =
+          (evidence.focusReason || "")
+            .toLowerCase()
+            .split(/\W+/)
+            .find((w) => w.length > 3) || (await candidateSignal(agent));
+        const learningBlocked = await svc.isBlockedSignal(agent.id, focus);
         const e = agent.evalHistory?.at(-1);
-        const score = e && typeof e.score === "number" && e.score < 60 ? 3
-          : e && e.status === "Needs improvement" ? 2 : 1;
+        const score = scoreResearchCandidate({
+          actionableFailingCount: evidence.actionableFailingCount || 0,
+          evalRecord: e,
+          lowScore: loopCfg.lowScore,
+        });
         // in-progress while a proposal is pending in the inbox; else open.
-        const status = blocked ? "blocked" : pendingProposals(agent).length ? "in-progress" : "open";
+        // Blocked learnings stay blocked. Reopen churn is also refused in
+        // upsertResearchItem when the same focus was already refused.
+        const status = learningBlocked
+          ? "blocked"
+          : pendingProposals(agent).length
+            ? "in-progress"
+            : "open";
         await svc.upsertResearchItem({
-          agentId: agent.id, focus,
+          agentId: agent.id,
+          focus,
           title: `${agent.name}: ${focus}`,
           score,
-          why: e ? `eval ${e.score} · ${e.status}` : "unevaluated",
+          why: evidence.actionableFailingCount
+            ? `${evidence.actionableFailingCount} actionable failing trace(s)${e ? ` · eval ${e.score} · ${e.status}` : ""}`
+            : e
+              ? `eval ${e.score} · ${e.status}`
+              : "unevaluated",
           evidence: `${agent.id} failing traces + latest eval`,
-          next: "runImprovement", estimate: "S", status,
+          next: "runImprovement",
+          estimate: "S",
+          status,
         });
         n++;
       }

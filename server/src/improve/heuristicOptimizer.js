@@ -248,6 +248,12 @@ export function collectDefects(agent, evidence, artifact) {
     // Deterministic host post-processing owns these checks — never propose
     // a prompt edit for a rule the host already enforces on every run.
     if (isPostProcessedCheckId(token)) return;
+    // check-quality:… signals name a broken checker, not an agent defect.
+    if (String(token).startsWith("check-quality:")) return;
+    const systematic = new Set(
+      (evidence.calibration?.checkProblems || []).map((p) => p.checkId),
+    );
+    if (systematic.has(token)) return;
     const registered = resolveCheckDefect(token);
     if (registered) {
       const key = registered.id;
@@ -331,6 +337,7 @@ export function collectDefects(agent, evidence, artifact) {
 
   for (const signal of evidence.defectSignals || []) {
     const text = String(signal || "").trim();
+    if (text.startsWith("check-quality:")) continue;
     if (!text.startsWith("mechanical:")) continue;
     for (const token of parseFailureReasonTokens(text)) {
       recordCheckOrUnclassified(token, "mechanical", [`mechanical:${token}`], []);

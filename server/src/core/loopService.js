@@ -19,6 +19,17 @@ import {
 } from "../handoff/handoffArtifacts.js";
 import { sanitizeCheckResults, sanitizeFailureReason, ensureFailureCause, sanitizeLlmGroundingStatus } from "./traceSafety.js";
 import { LLM_GROUNDING_STATUS } from "../eval/llmGroundingCheck.js";
+import {
+  GROUNDING_CALIBRATION_COLLECTION,
+  GROUNDING_EVIDENCE_COLLECTION,
+  GROUNDING_VERDICT,
+  SEED_CALIBRATION_FINDINGS,
+  findTextForDigest,
+  summarizeCalibration,
+  falsePositiveExclusions,
+  sanitizeFailingTraceForMaker,
+  systematicFalsePositiveChecks,
+} from "../eval/groundingCalibration.js";
 import { validateProposal } from "../improve/proposalContract.js";
 import { readProposals, writeProposals, selectProposal } from "./proposals.js";
 import { buildServiceMigrationSnapshot } from "../migration/export.js";
@@ -560,6 +571,26 @@ export function createLoopService({
         );
       }
 
+      // Privileged span store for calibration — never returned on the fellow
+      // run response or on public listTraces.
+      const evidenceRows = Array.isArray(result.llmGroundingEvidence)
+        ? result.llmGroundingEvidence
+        : [];
+      if (evidenceRows.length && trace?.id && trace.persisted !== false) {
+        try {
+          await store.append(GROUNDING_EVIDENCE_COLLECTION, {
+            agentId,
+            traceId: trace.id,
+            ts: new Date().toISOString(),
+            findings: evidenceRows,
+          });
+        } catch (evidenceError) {
+          console.error(
+            `[grounding] evidence for ${agentId}/${trace.id} not persisted: ${String(evidenceError?.message || evidenceError)}`,
+          );
+        }
+      }
+
       const liveDigest = result.artifactDigest || artifactDigest || null;
       // Scored hosted run: invocation returned and mechanical checks ran.
       // Convex looks up the governed version by digest; never creates one.
@@ -624,14 +655,32 @@ export function createLoopService({
 
     // ── the loop: run the optimizer on failing signal ──
     async collectImprovementEvidence(agentId, agent) {
-      const [failingTraces, traces, feedback, mechanicalResults] =
+      const failingTracesRaw = await obs.getFailingTraces(agentId, { limit: 100 });
+      const [traces, feedback, mechanicalResults] =
         await Promise.all([
-          obs.getFailingTraces(agentId, { limit: 100 }),
           obs.listTraces(agentId, { limit: 100 }),
           store.query("feedback", (f) => f.agentId === agentId),
           store.query("mechanicalResults", (r) => r.agentId === agentId),
         ]);
       const latestEval = (agent.evalHistory || []).at(-1);
+
+      await this.ensureGroundingCalibrationSeed();
+      const calibrationRows = await store.query(
+        GROUNDING_CALIBRATION_COLLECTION,
+        (row) => !row.agentId || row.agentId === agentId,
+      );
+      const fpExclusions = falsePositiveExclusions(calibrationRows, {
+        agentId,
+      });
+      const checkProblems = systematicFalsePositiveChecks(calibrationRows);
+      const systematicIds = new Set(checkProblems.map((p) => p.checkId));
+      const failingTraces = failingTracesRaw
+        .map((trace) =>
+          sanitizeFailingTraceForMaker(trace, fpExclusions, systematicIds),
+        )
+        .filter(Boolean);
+      const falsePositivesExcludedCount =
+        failingTracesRaw.length - failingTraces.length;
 
       // Golden-case mechanical failures reach the maker the same way run
       // failureReasons do — closed vocabulary, no draft text. Prefixed so they
@@ -645,18 +694,25 @@ export function createLoopService({
             (checkId) => `mechanical:${checkId}`,
           ),
         )
-        .filter(Boolean);
+        .filter((signal) => {
+          const checkId = String(signal).replace(/^mechanical:/, "");
+          if (systematicIds.has(checkId)) return false;
+          return true;
+        });
 
       // A defect signal is a human-or-checker statement of what went wrong.
       // Runs alone are not one: a metadata trace records that the agent ran,
       // never that it ran badly. Closed-vocabulary failureReason survives on
       // failed traces; reviewer notes carry human judgement separately.
+      // Calibrated false positives are excluded above — they must not teach
+      // the agent to avoid an accurate claim.
       const defectSignals = [
         ...failingTraces.map((t) => t.failureReason).filter(Boolean),
         ...mechanicalDefects,
         ...feedback.map((f) => String(f.notes || "").trim()).filter(Boolean),
         String(latestEval?.knownIssues || "").trim(),
         String(latestEval?.notes || "").trim(),
+        ...checkProblems.map((p) => `check-quality:${p.checkId}`),
       ].filter(Boolean);
 
       const lowRatings = feedback.filter(
@@ -678,6 +734,11 @@ export function createLoopService({
         defectSignals,
         latestEval,
         artifact,
+        calibration: {
+          falsePositiveExclusions: fpExclusions,
+          falsePositivesExcludedCount,
+          checkProblems,
+        },
       };
     },
 
@@ -726,14 +787,15 @@ export function createLoopService({
       const agent = await store.get("agents", agentId);
       if (!agent) throw httpError(404, `No agent ${agentId}`);
       const evidence = await this.collectImprovementEvidence(agentId, agent);
+      const checkProblems = evidence.calibration?.checkProblems || [];
+      const agentDefectSignals = (evidence.defectSignals || []).filter(
+        (signal) => !String(signal).startsWith("check-quality:"),
+      );
 
-      // No evidence must refuse, naming what is absent. Falling back to a
-      // template produces a proposal with an Approve button and nothing behind
-      // it, which is worse than no proposal at all.
-      if (!evidence.defectSignals.length) {
-        // This is a maker refusal, not a rejected proposal. Preserve only
-        // structural counts so the agent page can distinguish it from a
-        // verifier-rejected proposal without storing reviewer prose.
+      // No agent-level evidence must refuse, naming what is absent — including
+      // when the only remaining signals are calibrated false positives or
+      // systematic check-quality problems (those are not agent defects).
+      if (!agentDefectSignals.length) {
         agent.latestProposalAttempt = {
           outcome: "maker-refused-no-evidence",
           recordedAt: new Date().toISOString(),
@@ -742,18 +804,39 @@ export function createLoopService({
           feedback: evidence.feedback.length,
           feedbackWithNotes: evidence.feedback.filter((f) => String(f.notes || "").trim()).length,
           hasEval: Boolean(evidence.latestEval),
+          falsePositivesExcluded:
+            evidence.calibration?.falsePositivesExcludedCount || 0,
+          checkProblems: checkProblems.map((p) => p.checkId),
         };
         await store.put("agents", agent);
+        const checkNote = checkProblems.length
+          ? ` Check-quality problems (not agent defects): ${checkProblems
+              .map((p) => p.message)
+              .join("; ")}.`
+          : "";
+        const fpNote =
+          (evidence.calibration?.falsePositivesExcludedCount || 0) > 0
+            ? ` Excluded ${evidence.calibration.falsePositivesExcludedCount} failing trace(s) as calibrated false positives.`
+            : "";
         throw httpError(
           422,
           `Cannot propose for ${agentId} without evidence of a defect. ` +
             `Found ${evidence.traces.length} trace(s) (${evidence.failingTraces.length} failing), ` +
             `${evidence.feedback.length} feedback record(s), ` +
             `${evidence.feedback.filter((f) => String(f.notes || "").trim()).length} with notes, ` +
-            `${evidence.latestEval ? "a latest eval with no known issues" : "no eval history"}. ` +
-            `Supply at least one of: a failing trace, feedback notes, or an eval with knownIssues.`,
+            `${evidence.latestEval ? "a latest eval with no known issues" : "no eval history"}.` +
+            fpNote +
+            checkNote +
+            ` Supply at least one of: a failing trace, feedback notes, or an eval with knownIssues.`,
         );
       }
+
+      // Pass only agent defects to the maker — check-quality signals stay on
+      // evidence.calibration for surfacing, not for Method/Guardrails edits.
+      const makerEvidence = {
+        ...evidence,
+        defectSignals: agentDefectSignals,
+      };
 
       const artifact = getRuntimeArtifactDescriptor(agentId);
       // Optimizers are untrusted adapter boundaries. A better model with an
@@ -761,7 +844,7 @@ export function createLoopService({
       // and evidence ids that exist for this agent before anything is queued.
       let raw;
       try {
-        raw = await optimizer.propose(agent, evidence);
+        raw = await optimizer.propose(agent, makerEvidence);
       } catch (error) {
         // Surface the refuse reason on the agent record so the UI does not
         // require curling the research-queue note.
@@ -781,7 +864,7 @@ export function createLoopService({
         throw error;
       }
       const proposals = (Array.isArray(raw) ? raw : [raw]).map((candidate, index) => {
-        const proposal = validateProposal(candidate, evidence);
+        const proposal = validateProposal(candidate, makerEvidence);
         proposal.id = `imp_${Date.now().toString(36)}_${index}`;
         // Stamp what this proposal was derived against, so approval cannot be
         // applied to a build that has since changed underneath it.
@@ -1085,11 +1168,26 @@ export function createLoopService({
       return filtered.sort((a, b) => (b.score - a.score) || (a.ts < b.ts ? 1 : -1));
     },
     // Dedup by agentId+focus among non-done items; regressions get a fresh item.
+    // Refused/blocked items with the same focus stay blocked — research must not
+    // reopen them every cycle to refuse again (RQ-001 churn).
     async upsertResearchItem(item) {
       const rows = await store.all("researchQueue");
       const existing = rows.find((r) => r.agentId === item.agentId && r.focus === item.focus && r.status !== "done");
       if (existing) {
-        return store.put("researchQueue", { ...existing, ...item, id: existing.id, status: item.status || existing.status });
+        let nextStatus = item.status || existing.status;
+        if (
+          existing.status === "blocked" &&
+          item.status === "open" &&
+          existing.focus === item.focus
+        ) {
+          nextStatus = "blocked";
+        }
+        return store.put("researchQueue", {
+          ...existing,
+          ...item,
+          id: existing.id,
+          status: nextStatus,
+        });
       }
       const id = item.id || `RQ-${String(rows.length + 1).padStart(3, "0")}`;
       return store.append("researchQueue", { id, status: "open", ts: new Date().toISOString(), ...item });
@@ -1285,6 +1383,136 @@ export function createLoopService({
           ),
         )
         .slice(0, limit);
+    },
+
+    async ensureGroundingCalibrationSeed() {
+      for (const seed of SEED_CALIBRATION_FINDINGS) {
+        const existing = await store.get(
+          GROUNDING_CALIBRATION_COLLECTION,
+          seed.id,
+        );
+        if (existing) continue;
+        await store.put(GROUNDING_CALIBRATION_COLLECTION, { ...seed });
+      }
+    },
+
+    async listCalibrationRows(agentId = null) {
+      await this.ensureGroundingCalibrationSeed();
+      return store.query(
+        GROUNDING_CALIBRATION_COLLECTION,
+        (row) => !agentId || !row.agentId || row.agentId === agentId,
+      );
+    },
+
+    async listGroundingCalibration(agentId, { limit = 50 } = {}) {
+      const rows = await this.listCalibrationRows(agentId);
+      const sorted = rows
+        .sort((a, b) =>
+          String(b.reviewedAt || b.ts || "").localeCompare(
+            String(a.reviewedAt || a.ts || ""),
+          ),
+        )
+        .slice(0, limit);
+      return {
+        findings: sorted,
+        summary: summarizeCalibration(rows),
+      };
+    },
+
+    /**
+     * Approver labels a live grounding finding true_positive | false_positive.
+     * Optionally paste draft/source to recover span text for historical traces.
+     */
+    async recordGroundingCalibration(agentId, body = {}, actor = null) {
+      assertVerifiedApprover(actor);
+      const agent = await store.get("agents", agentId);
+      if (!agent) throw httpError(404, `No agent ${agentId}`);
+
+      const verdict = String(body?.verdict || "").trim();
+      if (
+        verdict !== GROUNDING_VERDICT.TRUE_POSITIVE &&
+        verdict !== GROUNDING_VERDICT.FALSE_POSITIVE
+      ) {
+        throw httpError(
+          400,
+          `verdict must be "${GROUNDING_VERDICT.TRUE_POSITIVE}" or "${GROUNDING_VERDICT.FALSE_POSITIVE}"`,
+        );
+      }
+
+      const traceId = String(body?.traceId || "").trim();
+      const checkId = String(body?.checkId || "").trim();
+      const claimSpanDigest = String(body?.claimSpanDigest || "").trim();
+      const sourceSpanDigest = String(body?.sourceSpanDigest || "").trim();
+      if (!traceId || !checkId || !claimSpanDigest || !sourceSpanDigest) {
+        throw httpError(
+          400,
+          "traceId, checkId, claimSpanDigest, and sourceSpanDigest are required",
+        );
+      }
+
+      const notes = String(body?.notes || "").trim();
+      if (notes.length > 2000) {
+        throw httpError(400, "notes must be 2000 characters or fewer");
+      }
+
+      // Prefer privileged evidence from the run; fall back to pasted text.
+      const evidenceDocs = await store.query(
+        GROUNDING_EVIDENCE_COLLECTION,
+        (row) => row.agentId === agentId && row.traceId === traceId,
+      );
+      let claimSpan = null;
+      let sourceSpan = null;
+      for (const doc of evidenceDocs) {
+        for (const finding of doc.findings || []) {
+          if (
+            finding.claimSpanDigest === claimSpanDigest &&
+            finding.sourceSpanDigest === sourceSpanDigest
+          ) {
+            claimSpan = finding.claimSpan || null;
+            sourceSpan = finding.sourceSpan || null;
+          }
+        }
+      }
+      if (!claimSpan && body?.draftText) {
+        claimSpan = findTextForDigest(body.draftText, claimSpanDigest);
+      }
+      if (!sourceSpan && body?.sourceText) {
+        sourceSpan = findTextForDigest(body.sourceText, sourceSpanDigest);
+      }
+
+      const saved = await store.append(GROUNDING_CALIBRATION_COLLECTION, {
+        agentId,
+        traceId,
+        checkId,
+        claimKind: body?.claimKind ? String(body.claimKind) : null,
+        claimSpanDigest,
+        sourceSpanDigest,
+        verdict,
+        notes: notes || null,
+        spansRecovered: Boolean(claimSpan && sourceSpan),
+        ...(claimSpan ? { claimSpan } : {}),
+        ...(sourceSpan ? { sourceSpan } : {}),
+        reviewedAt: new Date().toISOString(),
+        reviewedBy: {
+          subject: actor.subject,
+          issuer: actor.issuer,
+          role: actor.role,
+          ...(actor.name ? { name: actor.name } : {}),
+        },
+      });
+
+      const listed = await this.listGroundingCalibration(agentId, { limit: 50 });
+      return { recorded: saved, summary: listed.summary };
+    },
+
+    /** Approver-only: raw claim/source spans for one trace (calibration). */
+    async getGroundingEvidence(agentId, traceId, actor = null) {
+      assertVerifiedApprover(actor);
+      const rows = await store.query(
+        GROUNDING_EVIDENCE_COLLECTION,
+        (row) => row.agentId === agentId && row.traceId === traceId,
+      );
+      return { traceId, evidence: rows };
     },
 
     // ── fleet health roll-up ──

@@ -32,6 +32,7 @@ import { postProcessDraft } from "./postProcessDraft.js";
 import {
   LLM_GROUNDING_STATUS,
   runLlmGroundingCheck,
+  toTraceSafeGroundingResult,
 } from "../eval/llmGroundingCheck.js";
 
 export { RUNTIME_TIMEOUT_MS };
@@ -50,10 +51,13 @@ async function finalizeRuntimeOutput(agentId, rawOutput, sourceText, config) {
   });
   let groundingResult;
   try {
+    // Keep raw spans for privileged evidence / calibration. Public checkResults
+    // and traces still get digests only.
     groundingResult = await runLlmGroundingCheck({
       output,
       sourceText: sourceText || "",
       config,
+      includeRawSpans: true,
     });
   } catch (error) {
     console.warn(
@@ -70,14 +74,32 @@ async function finalizeRuntimeOutput(agentId, rawOutput, sourceText, config) {
       `[grounding] unavailable for ${agentId}: ${groundingResult.reason || "unknown"}`,
     );
   }
-  const findings = Array.isArray(groundingResult.findings)
+  const rawFindings = Array.isArray(groundingResult.findings)
     ? groundingResult.findings
     : [];
+  const safeFindings = rawFindings.map((row) =>
+    row?.claimSpan || row?.sourceSpan
+      ? toTraceSafeGroundingResult(row)
+      : row,
+  );
+  const evidenceFindings = rawFindings
+    .filter((row) => row?.claimSpan && row?.sourceSpan)
+    .map((row) => ({
+      checkId: row.checkId,
+      claimKind: row.claimKind,
+      claimSpanDigest: row.claimSpanDigest,
+      sourceSpanDigest: row.sourceSpanDigest,
+      claimSpan: row.claimSpan,
+      sourceSpan: row.sourceSpan,
+    }));
   return {
     output,
-    checkResults: [...mechanical, ...findings],
+    checkResults: [...mechanical, ...safeFindings],
     postProcessed: applied,
     llmGroundingStatus: groundingResult.status,
+    ...(evidenceFindings.length
+      ? { llmGroundingEvidence: evidenceFindings }
+      : {}),
   };
 }
 
@@ -91,6 +113,9 @@ function withGroundingFields(result, finalized) {
       ? { postProcessed: finalized.postProcessed }
       : {}),
     llmGroundingStatus: finalized.llmGroundingStatus,
+    ...(finalized.llmGroundingEvidence?.length
+      ? { llmGroundingEvidence: finalized.llmGroundingEvidence }
+      : {}),
   };
 }
 

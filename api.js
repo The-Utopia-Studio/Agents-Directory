@@ -179,6 +179,12 @@ window.DirectoryAPI = (function () {
       }),
     adminAudit: (id, n = 20) =>
       j("GET", `/api/agents/${id}/admin-audit?limit=${n}`),
+    groundingCalibration: (id, n = 50) =>
+      j("GET", `/api/agents/${id}/grounding-calibration?limit=${n}`),
+    recordGroundingCalibration: (id, body) =>
+      j("POST", `/api/agents/${id}/grounding-calibration`, body, {
+        signedIdentity: true,
+      }),
   };
 
   api.ready = api.probe();

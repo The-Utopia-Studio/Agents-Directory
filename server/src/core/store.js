@@ -14,6 +14,8 @@ export const IMMUTABLE_COLLECTIONS = Object.freeze([
   "learnings",
   "mechanicalResults",
   "adminAudit",
+  "groundingEvidence",
+  "groundingCalibration",
 ]);
 
 export function createStore(dataDir, { createIfMissing = true } = {}) {
