@@ -22,6 +22,10 @@ const V6_DIGEST =
   "a8c08f4e98cd88f018764754eda760a20113e6fcf8a3362a192254b6bca81a10";
 const V7_DIGEST =
   "751912f479d4ca65144e927bb18fe6e6c66c34ab63be557cab24ad28bc77fa26";
+// Snapshot of live server/src/artifacts/biocraft/SKILL.md at registration —
+// digest must match getRuntimeArtifactDescriptor("A7").artifactDigest.
+const V9_DIGEST =
+  "e229c64f44bcf3b6e8f57ea7dc74c868b7987ddfc7f92379ad4723761fa4314e";
 
 const FIXTURES_ROOT = new URL("../eval-artifacts/", import.meta.url);
 
@@ -57,6 +61,17 @@ export const HISTORICAL_ARTIFACT_REGISTRY = Object.freeze({
     // Fill after the v7 release commit lands (dev-time git verify only).
     gitRev: "0000000000000000000000000000000000000000",
     declaredDigest: V7_DIGEST,
+    declaredDigestAlgorithm: "sha256",
+  }),
+  // Live incumbent pin: registered so mechanical score/compare can use the
+  // same load path as v5–v7. Prefer this over a dual "live artifact" scorer.
+  "biocraft-singleshot-v9": Object.freeze({
+    agentId: "A7",
+    artifactVersion: "biocraft-singleshot-v9",
+    path: "server/src/artifacts/biocraft/SKILL.md",
+    fixtureRelativePath: "biocraft/biocraft-singleshot-v9/SKILL.md",
+    gitRev: "0000000000000000000000000000000000000000",
+    declaredDigest: V9_DIGEST,
     declaredDigestAlgorithm: "sha256",
   }),
 });

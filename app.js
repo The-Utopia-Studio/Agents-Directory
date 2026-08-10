@@ -2004,10 +2004,10 @@ function renderMechanicalComparePanel(a){
       <div id="mech-inventory" class="mech-inventory">Loading inventory…</div>
       <div class="mech-compare-controls">
         <label>Golden case <select id="mech-case"><option value="a7-mira-okonkwo-v1">a7-mira-okonkwo-v1 (synthetic)</option></select></label>
-        <label>Score version <select id="mech-score-version"><option value="biocraft-singleshot-v5">v5</option><option value="biocraft-singleshot-v6">v6</option><option value="biocraft-singleshot-v7" selected>v7</option></select></label>
-        <label>Left <select id="mech-left"><option value="biocraft-singleshot-v5">v5</option><option value="biocraft-singleshot-v6" selected>v6</option><option value="biocraft-singleshot-v7">v7</option></select></label>
-        <label>Right <select id="mech-right"><option value="biocraft-singleshot-v5">v5</option><option value="biocraft-singleshot-v6">v6</option><option value="biocraft-singleshot-v7" selected>v7</option></select></label>
-        <label>Ruler (quality only) <select id="mech-ruler"><option value="biocraft-singleshot-v7" selected>v7 checks</option><option value="biocraft-singleshot-v6">v6 checks</option><option value="biocraft-singleshot-v5">v5 checks</option></select></label>
+        <label>Score version <select id="mech-score-version"><option value="biocraft-singleshot-v5">v5</option><option value="biocraft-singleshot-v6">v6</option><option value="biocraft-singleshot-v7">v7</option><option value="biocraft-singleshot-v9" selected>v9 (live)</option></select></label>
+        <label>Left <select id="mech-left"><option value="biocraft-singleshot-v5">v5</option><option value="biocraft-singleshot-v6">v6</option><option value="biocraft-singleshot-v7">v7</option><option value="biocraft-singleshot-v9" selected>v9 (live)</option></select></label>
+        <label>Right <select id="mech-right"><option value="biocraft-singleshot-v5">v5</option><option value="biocraft-singleshot-v6">v6</option><option value="biocraft-singleshot-v7">v7</option><option value="biocraft-singleshot-v9">v9 (live)</option></select></label>
+        <label>Ruler (quality only) <select id="mech-ruler"><option value="biocraft-singleshot-v9" selected>v9 checks</option><option value="biocraft-singleshot-v7">v7 checks</option><option value="biocraft-singleshot-v6">v6 checks</option><option value="biocraft-singleshot-v5">v5 checks</option></select></label>
       </div>
       <div class="mech-compare-actions">
         <button class="btn btn-sm" onclick="runMechanicalScoreUI('${a.id}','canned')">With canned output (free)</button>
@@ -2051,10 +2051,10 @@ async function loadMechanicalInventoryUI(id){
 function mechCompareVersions(){
   return {
     caseId:document.getElementById("mech-case")?.value||"a7-mira-okonkwo-v1",
-    scoreVersion:document.getElementById("mech-score-version")?.value||"biocraft-singleshot-v7",
-    leftVersion:document.getElementById("mech-left")?.value||"biocraft-singleshot-v6",
-    rightVersion:document.getElementById("mech-right")?.value||"biocraft-singleshot-v7",
-    rulerVersion:document.getElementById("mech-ruler")?.value||"biocraft-singleshot-v7",
+    scoreVersion:document.getElementById("mech-score-version")?.value||"biocraft-singleshot-v9",
+    leftVersion:document.getElementById("mech-left")?.value||"biocraft-singleshot-v9",
+    rightVersion:document.getElementById("mech-right")?.value||"biocraft-singleshot-v9",
+    rulerVersion:document.getElementById("mech-ruler")?.value||"biocraft-singleshot-v9",
   };
 }
 

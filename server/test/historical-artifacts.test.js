@@ -15,6 +15,9 @@ import {
 const V5 = "biocraft-singleshot-v5";
 const V6 = "biocraft-singleshot-v6";
 const V7 = "biocraft-singleshot-v7";
+const V9 = "biocraft-singleshot-v9";
+const V9_DIGEST =
+  "e229c64f44bcf3b6e8f57ea7dc74c868b7987ddfc7f92379ad4723761fa4314e";
 const V5_DIGEST =
   "c5cc1a587a10deb6fb1b2ee73fed0c31fcad96fa12ed58bc5907544e408df92b";
 const V6_DIGEST =
@@ -26,6 +29,7 @@ test("registry pins full SHAs and declared digests; fixtures are under src/", ()
   assert.equal(HISTORICAL_ARTIFACT_REGISTRY[V5].declaredDigest, V5_DIGEST);
   assert.equal(HISTORICAL_ARTIFACT_REGISTRY[V6].declaredDigest, V6_DIGEST);
   assert.equal(HISTORICAL_ARTIFACT_REGISTRY[V7].declaredDigest, V7_DIGEST);
+  assert.equal(HISTORICAL_ARTIFACT_REGISTRY[V9].declaredDigest, V9_DIGEST);
   assert.match(HISTORICAL_ARTIFACT_REGISTRY[V5].gitRev, /^[a-f0-9]{40}$/);
   assert.match(
     HISTORICAL_ARTIFACT_REGISTRY[V5].fixtureRelativePath,
@@ -56,10 +60,22 @@ test("loadHistoricalArtifact reads committed fixtures and verifies digests", () 
   assert.ok(v7.checks.includes("headline_max_220_characters"));
   assert.match(v7.content, /Compare every\s+company relationship and role title/);
   assert.notEqual(v6.artifactDigest, v7.artifactDigest);
+
+  const v9 = loadHistoricalArtifact(V9);
+  assert.equal(v9.artifactDigest, V9_DIGEST);
+  assert.equal(v9.artifactVersion, V9);
+  // Live digest must match the registered fixture (incumbent scoring path).
+  const liveBytes = readFileSync(
+    fileURLToPath(new URL("../src/artifacts/biocraft/SKILL.md", import.meta.url)),
+  );
+  assert.equal(
+    createHash("sha256").update(liveBytes).digest("hex"),
+    V9_DIGEST,
+  );
 });
 
 test("fixture bytes on disk match declared digests", () => {
-  for (const version of [V5, V6, V7]) {
+  for (const version of [V5, V6, V7, V9]) {
     const entry = HISTORICAL_ARTIFACT_REGISTRY[version];
     const path = fileURLToPath(
       new URL(
@@ -118,7 +134,7 @@ test("listHistoricalArtifactVersions scopes to A7", () => {
     listHistoricalArtifactVersions("A7")
       .map((row) => row.artifactVersion)
       .sort(),
-    [V5, V6, V7].sort(),
+    [V5, V6, V7, V9].sort(),
   );
   assert.equal(listHistoricalArtifactVersions("A8").length, 0);
 });

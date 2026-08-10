@@ -25,9 +25,9 @@ const CASE = "a7-mira-okonkwo-v1";
 test("inventory states golden cases and verified versions", () => {
   const inv = getMechanicalInventory("A7");
   assert.equal(inv.goldenCaseCount, 1);
-  assert.equal(inv.verifiedArtifactVersionCount, 3);
+  assert.equal(inv.verifiedArtifactVersionCount, 4);
   assert.match(inv.summary, /1 golden case/);
-  assert.match(inv.summary, /3 digest-verified/);
+  assert.match(inv.summary, /4 digest-verified/);
   assert.equal(inv.feedsFleetHealth, false);
   assert.equal(inv.writesEvalHistory, false);
   assert.ok(inv.artifactVersions.every((v) => v.verification === "ok"));

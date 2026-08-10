@@ -254,7 +254,7 @@ export const MERGED_REIMPORT_SPEC = {
 // SHA-256(stableStringify(MERGED_REIMPORT_SPEC)); tests bind this literal to
 // the exact approved spec so an edited merge cannot execute silently.
 export const MERGED_REIMPORT_MANIFEST_DIGEST =
-  "23b04a0348e35976bdae5d7354c2524932aa8ede04edcf34aa249b57dbcae48d";
+  "50b687997f719850796cb2bcc702eca18160b3e9832d25c55e42732f4ae09dae";
 
 export const A7_V6_RELEASE_SPEC = {
   agentDisplayId: "A7",

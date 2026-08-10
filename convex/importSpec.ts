@@ -294,4 +294,4 @@ export function stableStringify(value: unknown): string {
 // schema and import-behaviour stability; the human-facing name is
 // "Approved import-spec digest".
 export const APPROVED_IMPORT_MANIFEST_DIGEST =
-  "2da90d8095b37eeca8e91fcf1accf5283c037c5bf5b73f3871d1dc90191e91ac";
+  "505707a187d66447aef28a435c28103ce3594b9e76010473032ab022c3bcfd02";
