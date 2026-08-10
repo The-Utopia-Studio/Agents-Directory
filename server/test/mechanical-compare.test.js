@@ -57,7 +57,10 @@ test("single-version canned score returns table fields and never evalHistory", a
   assert.equal(result.label, "mechanical_check_score");
   assert.equal(result.writesEvalHistory, false);
   assert.ok(result.artifactDigest);
-  assert.ok(result.checkSetVersion);
+  assert.ok(result.checkSetId);
+  assert.match(result.checkSetId, /^[a-f0-9]{64}$/);
+  assert.ok(result.guardrailGate);
+  assert.equal(typeof result.guardrailGate.passed, "boolean");
   assert.equal(result.byCategory.grounding.category, "grounding");
   assert.equal(result.byCategory.style.category, "style");
   assert.ok(result.checkResults.every((r) => r.id && "passed" in r && r.category));
@@ -69,7 +72,8 @@ test("single-version canned score returns table fields and never evalHistory", a
   const mech = await store.all("mechanicalResults");
   assert.ok(mech.length >= 1);
   assert.equal(mech[0].outputSource, "canned");
-  assert.ok(mech[0].checkSetVersion);
+  assert.ok(mech[0].checkSetId);
+  assert.ok(mech[0].guardrailGate);
   assert.ok(mech[0].timestamp);
 });
 
@@ -108,6 +112,11 @@ test("canned output_quality is plumbing verification, not a prompt finding", asy
   assert.match(result.interpretation, /verifies the scoring path, not the prompts/);
   assert.equal(result.left.outputSource, "canned");
   assert.equal(result.right.outputSource, "canned");
+  assert.equal(result.left.checkSetId, result.right.checkSetId);
+  assert.equal(result.left.rulerVersion, V6);
+  assert.equal(result.right.rulerVersion, V6);
+  assert.equal(result.left.artifactVersion, V5);
+  assert.equal(result.right.artifactVersion, V6);
   assert.equal(result.scoreDelta.comparable, true);
   assert.ok(result.scoreDelta.value > 0);
   assert.equal(result.mechanicalCheckScoreDelta.comparable, true);

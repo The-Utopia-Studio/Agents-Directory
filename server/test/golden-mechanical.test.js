@@ -188,11 +188,26 @@ test("mechanical results are immutable metadata-only and reach maker evidence", 
   });
   const agent = await store.get("agents", "A7");
   const evidence = await svc.collectImprovementEvidence("A7", agent);
+  // Canned plumbing rows are excluded from maker signals.
+  assert.equal(
+    evidence.defectSignals.some((s) => String(s).startsWith("mechanical:")),
+    false,
+    "canned mechanical failures must not reach the maker",
+  );
+
+  // Live rows with the same failures do reach the maker.
+  await store.append("mechanicalResults", {
+    ...leftRec,
+    id: undefined,
+    outputSource: "live",
+    timestamp: new Date().toISOString(),
+  });
+  const liveEvidence = await svc.collectImprovementEvidence("A7", agent);
   assert.ok(
-    evidence.defectSignals.some((s) =>
+    liveEvidence.defectSignals.some((s) =>
       String(s).startsWith("mechanical:"),
     ),
-    `expected mechanical defect signals, got ${JSON.stringify(evidence.defectSignals)}`,
+    `expected live mechanical defect signals, got ${JSON.stringify(liveEvidence.defectSignals)}`,
   );
   assert.ok(rightRec.id);
 });

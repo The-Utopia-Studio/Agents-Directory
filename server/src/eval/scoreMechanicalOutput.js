@@ -19,6 +19,11 @@ import {
   SOURCE_GROUNDING_FAMILY,
   runSourceGroundingChecks,
 } from "./sourceGrounding.js";
+import {
+  checkSetEntriesFromInputs,
+  computeCheckSetId,
+} from "./checkSetId.js";
+import { evaluateGuardrailGate } from "./guardrailGate.js";
 
 export const STYLE_FAMILY = "style";
 export const HISTORICAL_STYLE_FAMILY = "style-historical";
@@ -558,6 +563,10 @@ export function scoreMechanicalOutput({
   declaredChecks = [],
   sourceGroundingRules = [],
   sourceText = "",
+  guardrails = [],
+  rulerVersion = null,
+  // Legacy field kept on the wire for older readers; never used for
+  // comparability. Prefer checkSetId + artifactVersion.
   checkSetVersion = null,
 }) {
   const { results: styleResults } = scoreStyleChecks(output, declaredChecks);
@@ -591,13 +600,24 @@ export function scoreMechanicalOutput({
   const mechanicalCheckScore = grounding.passRate;
   const scoreableCount = grounding.scoreableCount;
 
-  const resolvedCheckSetVersion =
-    checkSetVersion || artifactVersion || null;
+  const checkSetId = computeCheckSetId(
+    checkSetEntriesFromInputs(declaredChecks, sourceGroundingRules),
+  );
+
+  // Binary gate — never folded into mechanicalCheckScore / pass rates.
+  const guardrailGate = evaluateGuardrailGate({
+    output,
+    guardrails,
+    groundingResults,
+  });
 
   return {
     artifactVersion,
     artifactDigest,
-    checkSetVersion: resolvedCheckSetVersion,
+    checkSetId,
+    // Legacy alias only; comparability uses checkSetId.
+    checkSetVersion: checkSetVersion || null,
+    ...(rulerVersion ? { rulerVersion } : {}),
     checkResults,
     passed,
     failed,
@@ -611,6 +631,7 @@ export function scoreMechanicalOutput({
     scoreableCount,
     stylePassRate: style.passRate,
     styleScoreableCount: style.scoreableCount,
+    guardrailGate,
   };
 }
 

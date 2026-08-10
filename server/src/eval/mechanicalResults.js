@@ -144,7 +144,10 @@ export function buildMechanicalResultRecord({
     artifactVersion: score.artifactVersion,
     artifactDigest: score.artifactDigest,
     artifactDigestAlgorithm: "sha256",
-    checkSetVersion: score.checkSetVersion || score.artifactVersion || null,
+    checkSetId: score.checkSetId || null,
+    // Legacy field — never used for comparability once checkSetId is present.
+    checkSetVersion: score.checkSetVersion || null,
+    ...(score.rulerVersion ? { rulerVersion: score.rulerVersion } : {}),
     outputSource: canonicalSource,
     ...(resolvedExperiment ? { experiment: resolvedExperiment } : {}),
     passed: [...(score.passed || [])],
@@ -154,6 +157,17 @@ export function buildMechanicalResultRecord({
       grounding: cloneCategorySummary(score.byCategory?.grounding),
       style: cloneCategorySummary(score.byCategory?.style),
     },
+    guardrailGate: score.guardrailGate
+      ? {
+          passed: Boolean(score.guardrailGate.passed),
+          results: (score.guardrailGate.results || []).map((row) => ({
+            id: row.id,
+            passed: row.passed,
+            why: row.why == null ? null : String(row.why),
+            source: row.source || null,
+          })),
+        }
+      : null,
     // Headline = grounding pass rate only.
     mechanicalCheckScore: score.mechanicalCheckScore,
     scoreableCount: score.scoreableCount,
@@ -200,7 +214,9 @@ export function mechanicalFailuresAsDefectSignals(score) {
 /** True when a stored record has the post-category-split schema. */
 export function isModernMechanicalRecord(rec) {
   if (!rec || typeof rec !== "object") return false;
-  if (!rec.checkSetVersion) return false;
+  // Prefer checkSetId; legacy rows with only checkSetVersion still hydrate UI
+  // but are non-comparable for deltas.
+  if (!rec.checkSetId && !rec.checkSetVersion) return false;
   if (rec.outputSource !== "live" && rec.outputSource !== "canned") return false;
   if (!Array.isArray(rec.checkResults) || !rec.checkResults.length) return false;
   return rec.checkResults.every(

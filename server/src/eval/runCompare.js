@@ -26,18 +26,24 @@ function scoreWith({
   scoringArtifact,
   sourceGroundingRules,
   sourceText,
-  scoreLabelVersion,
+  generatingArtifact = null,
+  rulerVersion = null,
 }) {
-  // scoreLabelVersion is what we stamp on the result for provenance when the
-  // scoring check set comes from the ruler rather than the generating artifact.
+  // When a ruler scores another artifact's output:
+  //   artifactVersion/digest = generating prompt (never the ruler)
+  //   checks / checkSetId / guardrails = scoring (ruler) artifact
+  //   rulerVersion = identity of the shared check set source
+  const generating = generatingArtifact || scoringArtifact;
   return scoreMechanicalOutput({
     output,
-    artifactVersion: scoreLabelVersion || scoringArtifact.artifactVersion,
-    artifactDigest: scoringArtifact.artifactDigest,
+    artifactVersion: generating.artifactVersion,
+    artifactDigest: generating.artifactDigest,
     declaredChecks: scoringArtifact.checks,
     sourceGroundingRules,
     sourceText,
-    checkSetVersion: scoringArtifact.artifactVersion,
+    guardrails: scoringArtifact.guardrails || [],
+    rulerVersion,
+    checkSetVersion: null,
   });
 }
 
@@ -111,7 +117,10 @@ export async function runMechanicalScore({
     artifactVersion: artifact.artifactVersion,
     artifactDigest: artifact.artifactDigest,
     artifactDigestAlgorithm: "sha256",
+    checkSetId: score.checkSetId,
     checkSetVersion: score.checkSetVersion,
+    rulerVersion: score.rulerVersion || null,
+    guardrailGate: score.guardrailGate,
     declaredChecks: [...artifact.checks],
     mechanicalCheckScore: score.mechanicalCheckScore,
     scoreableCount: score.scoreableCount,
@@ -297,21 +306,18 @@ export async function runOutputQualityCompare({
     scoringArtifact: ruler,
     sourceGroundingRules: golden.sourceGroundingRules,
     sourceText: golden.input,
-    scoreLabelVersion: ruler.artifactVersion,
+    generatingArtifact: leftArtifact,
+    rulerVersion: ruler.artifactVersion,
   });
-  // Stamp generating artifact digests separately from scoring provenance.
-  left.generatingArtifactVersion = leftArtifact.artifactVersion;
-  left.generatingArtifactDigest = leftArtifact.artifactDigest;
 
   const right = scoreWith({
     output: rightOutput,
     scoringArtifact: ruler,
     sourceGroundingRules: golden.sourceGroundingRules,
     sourceText: golden.input,
-    scoreLabelVersion: ruler.artifactVersion,
+    generatingArtifact: rightArtifact,
+    rulerVersion: ruler.artifactVersion,
   });
-  right.generatingArtifactVersion = rightArtifact.artifactVersion;
-  right.generatingArtifactDigest = rightArtifact.artifactDigest;
 
   const result = buildOutputQualityResult({
     caseId,
@@ -347,11 +353,12 @@ export async function runMechanicalCompare(store, opts) {
 
   if (store) {
     const leftScore = {
-      artifactVersion:
-        result.left.generatingArtifactVersion || result.left.artifactVersion,
-      artifactDigest:
-        result.left.generatingArtifactDigest || result.left.artifactDigest,
+      artifactVersion: result.left.artifactVersion,
+      artifactDigest: result.left.artifactDigest,
+      checkSetId: result.left.checkSetId,
       checkSetVersion: result.left.checkSetVersion,
+      rulerVersion: result.left.rulerVersion || result.rulerVersion || null,
+      guardrailGate: result.left.guardrailGate,
       passed: result.left.passed,
       failed: result.left.failed,
       notScoreable: result.left.notScoreable,
@@ -363,11 +370,12 @@ export async function runMechanicalCompare(store, opts) {
       checkResults: result.left.checkResults,
     };
     const rightScore = {
-      artifactVersion:
-        result.right.generatingArtifactVersion || result.right.artifactVersion,
-      artifactDigest:
-        result.right.generatingArtifactDigest || result.right.artifactDigest,
+      artifactVersion: result.right.artifactVersion,
+      artifactDigest: result.right.artifactDigest,
+      checkSetId: result.right.checkSetId,
       checkSetVersion: result.right.checkSetVersion,
+      rulerVersion: result.right.rulerVersion || result.rulerVersion || null,
+      guardrailGate: result.right.guardrailGate,
       passed: result.right.passed,
       failed: result.right.failed,
       notScoreable: result.right.notScoreable,

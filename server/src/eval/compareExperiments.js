@@ -10,9 +10,9 @@
 //                     Measures whether the prompt change helped.
 //                     This is the only experiment that answers "did improvement help".
 //
-// Deltas are only produced when both sides ran the identical check set.
-// Otherwise the result carries an explicit non-comparable state — never null,
-// never a number that pretends to be a quality change.
+// Deltas are only produced when both sides share the same checkSetId (and, when
+// a ruler is involved, the same rulerVersion). Nothing overwrites a recorded
+// version to manufacture comparability.
 
 import { loadHistoricalArtifact } from "./historicalArtifacts.js";
 
@@ -23,6 +23,9 @@ export const EXPERIMENTS = Object.freeze([
   EXPERIMENT_CHECK_COVERAGE,
   EXPERIMENT_OUTPUT_QUALITY,
 ]);
+
+export const REASON_PRE_CHECKSET_VERSIONING =
+  "recorded before check-set versioning";
 
 function refuse(message, status = 400) {
   throw Object.assign(new Error(message), { status });
@@ -45,48 +48,72 @@ export function checkSetsEqual(leftChecks = [], rightChecks = []) {
   return a.every((id, i) => id === b[i]);
 }
 
-function scoreableCheckIds(score) {
-  return (score.checkResults || [])
-    .filter((r) => r.passed === true || r.passed === false || r.status === "pass" || r.status === "fail")
-    .map((r) => r.id || r.checkId)
-    .sort();
+function scoreableCheckCount(score) {
+  return (score.checkResults || []).filter(
+    (r) =>
+      r.passed === true ||
+      r.passed === false ||
+      r.status === "pass" ||
+      r.status === "fail",
+  ).length;
 }
 
 /**
  * Explicit delta state — never a bare null.
- * @returns {{
- *   comparable: boolean,
- *   value?: number,
- *   reason?: string,
- *   leftCheckCount?: number,
- *   rightCheckCount?: number,
- *   leftCheckSetVersion?: string|null,
- *   rightCheckSetVersion?: string|null,
- * }}
+ * Comparability is checkSetId (and optional rulerVersion), never artifactVersion.
+ *
+ * @param {object} left
+ * @param {object} right
+ * @param {{ requireRulerMatch?: boolean }} [opts]
  */
-export function groundingScoreDelta(left, right) {
-  const leftVersion = left.checkSetVersion || left.artifactVersion || null;
-  const rightVersion = right.checkSetVersion || right.artifactVersion || null;
-  const leftIds = scoreableCheckIds(left);
-  const rightIds = scoreableCheckIds(right);
-  const leftCount = leftIds.length;
-  const rightCount = rightIds.length;
-  const sameIds =
-    leftCount === rightCount && leftIds.every((id, i) => id === rightIds[i]);
-  const sameVersion =
-    leftVersion != null &&
-    rightVersion != null &&
-    leftVersion === rightVersion;
+export function groundingScoreDelta(left, right, opts = {}) {
+  const requireRulerMatch = Boolean(opts.requireRulerMatch);
+  const leftCount = scoreableCheckCount(left);
+  const rightCount = scoreableCheckCount(right);
+  const leftId = left.checkSetId || null;
+  const rightId = right.checkSetId || null;
+  const leftRuler = left.rulerVersion || null;
+  const rightRuler = right.rulerVersion || null;
 
-  if (!sameIds || leftCount !== rightCount || !sameVersion) {
+  if (!leftId || !rightId) {
+    return {
+      comparable: false,
+      reason: REASON_PRE_CHECKSET_VERSIONING,
+      leftCheckCount: leftCount,
+      rightCheckCount: rightCount,
+      leftCheckSetId: leftId,
+      rightCheckSetId: rightId,
+      leftRulerVersion: leftRuler,
+      rightRulerVersion: rightRuler,
+    };
+  }
+
+  if (leftId !== rightId) {
     return {
       comparable: false,
       reason: `check set changed: ${leftCount} checks → ${rightCount} checks`,
       leftCheckCount: leftCount,
       rightCheckCount: rightCount,
-      leftCheckSetVersion: leftVersion,
-      rightCheckSetVersion: rightVersion,
+      leftCheckSetId: leftId,
+      rightCheckSetId: rightId,
+      leftRulerVersion: leftRuler,
+      rightRulerVersion: rightRuler,
     };
+  }
+
+  if (requireRulerMatch || leftRuler || rightRuler) {
+    if (!leftRuler || !rightRuler || leftRuler !== rightRuler) {
+      return {
+        comparable: false,
+        reason: "ruler version mismatch",
+        leftCheckCount: leftCount,
+        rightCheckCount: rightCount,
+        leftCheckSetId: leftId,
+        rightCheckSetId: rightId,
+        leftRulerVersion: leftRuler,
+        rightRulerVersion: rightRuler,
+      };
+    }
   }
 
   const leftScore = left.byCategory?.grounding?.passRate;
@@ -97,8 +124,10 @@ export function groundingScoreDelta(left, right) {
       reason: "grounding pass rate missing on one or both sides",
       leftCheckCount: leftCount,
       rightCheckCount: rightCount,
-      leftCheckSetVersion: leftVersion,
-      rightCheckSetVersion: rightVersion,
+      leftCheckSetId: leftId,
+      rightCheckSetId: rightId,
+      leftRulerVersion: leftRuler,
+      rightRulerVersion: rightRuler,
     };
   }
 
@@ -107,8 +136,10 @@ export function groundingScoreDelta(left, right) {
     value: Math.round((rightScore - leftScore) * 10) / 10,
     leftCheckCount: leftCount,
     rightCheckCount: rightCount,
-    leftCheckSetVersion: leftVersion,
-    rightCheckSetVersion: rightVersion,
+    leftCheckSetId: leftId,
+    rightCheckSetId: rightId,
+    leftRulerVersion: leftRuler,
+    rightRulerVersion: rightRuler,
   };
 }
 
@@ -201,16 +232,10 @@ export function buildOutputQualityResult({
   const rightArtifact = loadHistoricalArtifact(rightArtifactVersion);
   const comparability = comparabilityForVersions(leftArtifact, rightArtifact);
 
-  // Both sides scored with the same ruler → stamp identical checkSetVersion.
-  const leftForDelta = {
-    ...left,
-    checkSetVersion: rulerVersion,
-  };
-  const rightForDelta = {
-    ...right,
-    checkSetVersion: rulerVersion,
-  };
-  const delta = groundingScoreDelta(leftForDelta, rightForDelta);
+  // Ruler is part of comparison identity — never overwrite recorded fields to
+  // force a match. Both sides must already carry the same checkSetId and
+  // rulerVersion from scoring under that ruler.
+  const delta = groundingScoreDelta(left, right, { requireRulerMatch: true });
 
   const isLive = outputSource === "live";
   const isCanned = outputSource === "canned";
@@ -247,8 +272,6 @@ export function buildOutputQualityResult({
       ...summarizeScore(left, leftArtifact),
       artifactVersion: leftArtifact.artifactVersion,
       artifactDigest: leftArtifact.artifactDigest,
-      checkSetVersion: rulerVersion,
-      scoredWith: rulerVersion,
       outputSource,
       ...(leftGeneration
         ? {
@@ -268,8 +291,6 @@ export function buildOutputQualityResult({
       ...summarizeScore(right, rightArtifact),
       artifactVersion: rightArtifact.artifactVersion,
       artifactDigest: rightArtifact.artifactDigest,
-      checkSetVersion: rulerVersion,
-      scoredWith: rulerVersion,
       outputSource,
       ...(rightGeneration
         ? {
@@ -293,7 +314,10 @@ function summarizeScore(score, artifact) {
   return {
     artifactVersion: score.artifactVersion,
     artifactDigest: score.artifactDigest,
-    checkSetVersion: score.checkSetVersion || score.artifactVersion || null,
+    checkSetId: score.checkSetId || null,
+    checkSetVersion: score.checkSetVersion || null,
+    rulerVersion: score.rulerVersion || null,
+    scoredWith: score.rulerVersion || score.artifactVersion || null,
     declaredChecks: [...(artifact.checks || [])],
     mechanicalCheckScore: score.mechanicalCheckScore,
     scoreableCount: score.scoreableCount,
@@ -303,6 +327,17 @@ function summarizeScore(score, artifact) {
       ? {
           grounding: { ...score.byCategory.grounding },
           style: { ...score.byCategory.style },
+        }
+      : null,
+    guardrailGate: score.guardrailGate
+      ? {
+          passed: score.guardrailGate.passed,
+          results: (score.guardrailGate.results || []).map((row) => ({
+            id: row.id,
+            passed: row.passed,
+            why: row.why == null ? null : row.why,
+            source: row.source,
+          })),
         }
       : null,
     passed: [...score.passed],
