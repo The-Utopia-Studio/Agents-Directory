@@ -35,7 +35,7 @@ async function agentWithModes(t, modes) {
 
 test("A8 is registered at the verified UX/QA commit", () => {
   assert.equal(hasHandoffArtifact("A8"), true);
-  assert.equal(FIXTURE.repoUrl, "https://github.com/aiden150/ux-qa-agent");
+  assert.equal(FIXTURE.repoUrl, "https://github.com/The-Utopia-Studio/ux-qa-agent");
   assert.equal(
     FIXTURE.commitSha,
     "2a8f2b9562c4d4569c156e2ae7559ab04a54b883",
@@ -144,9 +144,9 @@ test("a registered entry produces a pinned brief, not a skill file", () => {
   assert.doesNotMatch(brief, /You are UX&QA/);
   assert.doesNotMatch(brief, /Open the agent in Codex/);
 
-  assert.match(brief, /Repository: https:\/\/github\.com\/aiden150\/ux-qa-agent/);
+  assert.match(brief, /Repository: https:\/\/github\.com\/The-Utopia-Studio\/ux-qa-agent/);
   assert.match(brief, new RegExp(`Pinned commit: \`${FIXTURE.commitSha}\``));
-  assert.match(brief, /Pinned tree: https:\/\/github\.com\/aiden150\/ux-qa-agent\/tree\//);
+  assert.match(brief, /Pinned tree: https:\/\/github\.com\/The-Utopia-Studio\/ux-qa-agent\/tree\//);
   assert.match(
     brief,
     /quote this when returning a result: `ux-qa-handoff-v0\.1\.0`/,
@@ -170,15 +170,15 @@ test("a registered entry produces a pinned brief, not a skill file", () => {
   );
   assert.match(
     brief,
-    /- AGENT\.md — https:\/\/github\.com\/aiden150\/ux-qa-agent\/blob\/2a8f2b9562c4d4569c156e2ae7559ab04a54b883\/AGENT\.md — core instructions/,
+    /- AGENT\.md — https:\/\/github\.com\/The-Utopia-Studio\/ux-qa-agent\/blob\/2a8f2b9562c4d4569c156e2ae7559ab04a54b883\/AGENT\.md — core instructions/,
   );
   assert.match(
     brief,
-    /- README\.md — https:\/\/github\.com\/aiden150\/ux-qa-agent\/blob\/2a8f2b9562c4d4569c156e2ae7559ab04a54b883\/README\.md$/m,
+    /- README\.md — https:\/\/github\.com\/The-Utopia-Studio\/ux-qa-agent\/blob\/2a8f2b9562c4d4569c156e2ae7559ab04a54b883\/README\.md$/m,
   );
   assert.match(
     brief,
-    /- templates\/remediation-handoff\.md — https:\/\/github\.com\/aiden150\/ux-qa-agent\/blob\/2a8f2b9562c4d4569c156e2ae7559ab04a54b883\/templates\/remediation-handoff\.md$/m,
+    /- templates\/remediation-handoff\.md — https:\/\/github\.com\/The-Utopia-Studio\/ux-qa-agent\/blob\/2a8f2b9562c4d4569c156e2ae7559ab04a54b883\/templates\/remediation-handoff\.md$/m,
   );
   // Inventory must not depend on markdown link syntax — that loses filenames on copy.
   assert.doesNotMatch(

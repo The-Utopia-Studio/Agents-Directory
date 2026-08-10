@@ -265,7 +265,7 @@ describe("Phase 2.5B narrow canonical import", () => {
     expect(a8Version.artifact).toBeUndefined();
     expect(a8Version.sourcePin).toEqual({
       kind: "git-commit",
-      repoUrl: "https://github.com/aiden150/ux-qa-agent",
+      repoUrl: "https://github.com/The-Utopia-Studio/ux-qa-agent",
       commitSha: "2a8f2b9562c4d4569c156e2ae7559ab04a54b883",
       isContentDigest: false,
     });

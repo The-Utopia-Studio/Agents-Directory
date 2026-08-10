@@ -138,7 +138,7 @@ export const SEED_AGENTS = [
   { id: "A8", name: "UX&QA", objective: "Run an independent UX and QA round against an approved non-production build and return a severity-ranked issue register with evidence per finding.", version: "0.1.0",
     invocation: { type: "link" },
     usabilityModes: ["prepared-handoff"],
-    repoUrl: "https://github.com/aiden150/ux-qa-agent",
+    repoUrl: "https://github.com/The-Utopia-Studio/ux-qa-agent",
     when: "When a build is marked Ready for QA and needs verification independent of the product team's own testing.",
     sop: "Copy the engagement brief, complete its 12-item setup checklist, then hand over. The brief pins the commit to run and the protocol for returning results.",
     skills: [], tools: [], context: [],

@@ -178,7 +178,7 @@ export const MERGED_REIMPORT_SPEC = {
             { key: "prohibitedOrHighRiskActions", required: true },
           ],
           runnerConfig: [
-            { key: "repoUrl", value: "https://github.com/aiden150/ux-qa-agent" },
+            { key: "repoUrl", value: "https://github.com/The-Utopia-Studio/ux-qa-agent" },
             { key: "pinnedGitCommitSha", value: "2a8f2b9562c4d4569c156e2ae7559ab04a54b883" },
             { key: "pinType", value: "git-commit-not-content-digest" },
           ],
@@ -236,13 +236,13 @@ export const MERGED_REIMPORT_SPEC = {
           { label: "prior findings and issue register" },
           { label: "reset and replay instructions" },
         ],
-        repoUrl: "https://github.com/aiden150/ux-qa-agent",
+        repoUrl: "https://github.com/The-Utopia-Studio/ux-qa-agent",
       },
       version: {
         version: "0.1.0",
         sourcePin: {
           kind: "git-commit",
-          repoUrl: "https://github.com/aiden150/ux-qa-agent",
+          repoUrl: "https://github.com/The-Utopia-Studio/ux-qa-agent",
           commitSha: "2a8f2b9562c4d4569c156e2ae7559ab04a54b883",
           isContentDigest: false,
         },

@@ -109,7 +109,7 @@ const HANDOFF_ARTIFACTS = Object.freeze(
   Object.fromEntries(
     Object.entries({
       A8: {
-        repoUrl: "https://github.com/aiden150/ux-qa-agent",
+        repoUrl: "https://github.com/The-Utopia-Studio/ux-qa-agent",
         commitSha: "2a8f2b9562c4d4569c156e2ae7559ab04a54b883",
         briefVersion: "ux-qa-handoff-v0.1.0",
         version: "0.1.0",

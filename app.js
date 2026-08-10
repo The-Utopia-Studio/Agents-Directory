@@ -170,7 +170,7 @@ const SEED_AGENTS=[
     sop:"1. Copy the engagement brief from this directory\n2. Complete its 12-item setup checklist\n3. Hand over in Codex at the pinned commit\n4. Return the issue register, scenario matrix, commit SHA, rating, and build identifier",
     inputs:["Completed 12-item setup checklist","Approved non-production URL and build identifier"],outputs:["Severity-ranked issue register","Scenario matrix as executed","Rating and notes attributed to the pinned commit"],
     skills:[],tools:[],context:[],
-    accessUrl:"",repoUrl:"https://github.com/aiden150/ux-qa-agent",evalHistory:[],
+    accessUrl:"",repoUrl:"https://github.com/The-Utopia-Studio/ux-qa-agent",evalHistory:[],
     changelog:[{version:"0.1.0",date:"2026-08-02",note:"Registered as a prepared handoff against a pinned commit."}],
     proposedImprovements:[]}
 ];

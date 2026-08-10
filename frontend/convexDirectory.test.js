@@ -77,14 +77,14 @@ const governedRows = [
       skills: [],
       tools: [],
       context: [],
-      repoUrl: "https://github.com/aiden150/ux-qa-agent",
+      repoUrl: "https://github.com/The-Utopia-Studio/ux-qa-agent",
     },
     version: {
       version: "0.1.0",
       state: "draft",
       sourcePin: {
         kind: "git-commit",
-        repoUrl: "https://github.com/aiden150/ux-qa-agent",
+        repoUrl: "https://github.com/The-Utopia-Studio/ux-qa-agent",
         commitSha: a8Commit,
         isContentDigest: false,
       },
@@ -132,7 +132,7 @@ describe("Phase 5 Convex-only directory", () => {
     expect(a8.convexGovernance.artifact).toBeNull();
     expect(a8.convexGovernance.sourcePin).toEqual({
       kind: "git-commit",
-      repoUrl: "https://github.com/aiden150/ux-qa-agent",
+      repoUrl: "https://github.com/The-Utopia-Studio/ux-qa-agent",
       commitSha: a8Commit,
       isContentDigest: false,
     });
@@ -242,7 +242,7 @@ describe("Phase 5 Convex-only directory", () => {
       context.capabilityIdentityMatches(a8, {
         handoff: {
           available: true,
-          repoUrl: "https://github.com/aiden150/ux-qa-agent",
+          repoUrl: "https://github.com/The-Utopia-Studio/ux-qa-agent",
           commitSha: a8Commit,
         },
       }),

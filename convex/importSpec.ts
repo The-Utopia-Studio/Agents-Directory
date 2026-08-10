@@ -195,7 +195,7 @@ export const APPROVED_IMPORT_SPEC = {
           runnerConfig: [
             {
               key: "repoUrl",
-              value: "https://github.com/aiden150/ux-qa-agent",
+              value: "https://github.com/The-Utopia-Studio/ux-qa-agent",
             },
             {
               key: "pinnedGitCommitSha",
@@ -250,7 +250,7 @@ export const APPROVED_IMPORT_SPEC = {
         skills: [],
         tools: [],
         context: [],
-        repoUrl: "https://github.com/aiden150/ux-qa-agent",
+        repoUrl: "https://github.com/The-Utopia-Studio/ux-qa-agent",
       },
       version: {
         version: "0.1.0",
@@ -258,7 +258,7 @@ export const APPROVED_IMPORT_SPEC = {
         artifact: null,
         sourcePin: {
           kind: "git-commit",
-          repoUrl: "https://github.com/aiden150/ux-qa-agent",
+          repoUrl: "https://github.com/The-Utopia-Studio/ux-qa-agent",
           commitSha: "2a8f2b9562c4d4569c156e2ae7559ab04a54b883",
           isContentDigest: false,
         },
