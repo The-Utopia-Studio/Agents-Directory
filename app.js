@@ -1871,6 +1871,15 @@ function reconstructMechPayloadFromStored(rows){
         findingKind:outputSource==="live"?"prompt_comparison":"plumbing_verification",
         scoreDelta,
         mechanicalCheckScoreDelta:scoreDelta,
+        promotionEligible:outputSource==="live"&&scoreDelta.comparable===true,
+        promotionEligibility:outputSource==="live"
+          ?(scoreDelta.comparable
+            ?{eligible:true,reason:null}
+            :{eligible:false,reason:scoreDelta.reason||"grounding delta not comparable"})
+          :{
+              eligible:false,
+              reason:'Comparable delta is real but not promotion-eligible — outputSource is "canned"; only "live" may support promotion.',
+            },
         left,
         right,
         changed:left.legacyIncomplete||right.legacyIncomplete?[]:mechChangedFromSides(left,right),
@@ -2135,6 +2144,32 @@ function renderMechCoverageHeadline(left,right,outputSource){
   </div>`;
 }
 
+function renderGuardrailGateLine(gate){
+  if(!gate||typeof gate!=="object")return"";
+  const cov=gate.coverage;
+  const summary=cov&&cov.summary
+    ?cov.summary
+    :gate.passed
+      ?"guardrails passed (coverage not recorded)"
+      :"guardrails failed";
+  const tone=gate.passed?"mech-guardrail-pass":"mech-guardrail-fail";
+  return`<div class="mech-guardrail-line ${tone}"><strong>Guardrails:</strong> ${escHtml(summary)}</div>`;
+}
+
+function renderPromotionEligibilityNote(r){
+  const elig=r&&r.promotionEligibility;
+  if(!elig)return"";
+  if(elig.eligible){
+    return`<div class="mech-promotion-elig mech-promotion-elig-ok"><strong>Promotion evidence:</strong> live comparable delta — may support a promotion decision (human approval still required).</div>`;
+  }
+  const delta=mechNormalizeScoreDelta(r.scoreDelta||r.mechanicalCheckScoreDelta);
+  const comparable=delta.comparable===true;
+  if(comparable&&r.outputSource==="canned"){
+    return`<div class="mech-promotion-elig mech-promotion-elig-block"><strong>Comparable, not promotable.</strong> ${escHtml(elig.reason||'Delta is real; outputSource is "canned" so it cannot support promotion.')}</div>`;
+  }
+  return`<div class="mech-promotion-elig mech-promotion-elig-block"><strong>Not promotion-eligible:</strong> ${escHtml(elig.reason||"missing live comparable evidence")}</div>`;
+}
+
 function renderMechQualityDeltaChip(delta,{allowDirection=true}={}){
   const d=mechNormalizeScoreDelta(delta);
   if(!d.comparable){
@@ -2275,6 +2310,7 @@ function renderMechanicalScoreResult(r){
   }).join("");
   return `${renderMechHeadlineCard(r,src)}
     <div class="mech-caption">Single-version score · ${escHtml(src==="unknown"?"output source not yet checked":src+" outputs")} · grounding headline · style separate</div>
+    ${renderGuardrailGateLine(r.guardrailGate)}
     <div class="mech-meta">${escHtml(r.findingKind||"")} · does not feed fleet health · not written to evalHistory</div>
     <details class="mech-checks-details"><summary>Show all ${(r.checkResults||[]).length} checks</summary>
       <div class="mech-table-wrap"><table class="mech-table"><thead><tr><th>Check id</th><th>Result</th></tr></thead><tbody>${rows}</tbody></table></div>
@@ -2316,6 +2352,8 @@ function renderMechanicalCompareResult(r){
         ${renderMechHeadlineCard(r.right,r.outputSource,{semantic:"quality"})}
       </div>
       ${note}
+      ${renderPromotionEligibilityNote(r)}
+      ${renderGuardrailGateLine(r.right?.guardrailGate||r.left?.guardrailGate)}
       ${r.checkSetsDiffer?`<div class="mech-note">${escHtml(r.checkSetNote||"Artifact check sets differ; both outputs scored with the ruler.")}</div>`:""}
       ${renderMechExperimentCaption(r,{
         experimentLabel:isFinding?"Experiment B · live":"Experiment B · plumbing",

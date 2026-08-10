@@ -125,6 +125,48 @@ export function runnerForGuardrailProse(prose, index) {
 }
 
 /**
+ * Summarize frontmatter guardrail executable coverage.
+ * Skips (unmapped prose) do not fail the gate — they are reported here so
+ * "passed" is never mistaken for "fully evaluated".
+ */
+export function summarizeGuardrailCoverage(results = [], frontmatterTotal = 0) {
+  const frontmatter = results.filter(
+    (row) =>
+      row.source === "frontmatter" || row.source === "frontmatter-unmapped",
+  );
+  const total =
+    typeof frontmatterTotal === "number" && frontmatterTotal >= 0
+      ? frontmatterTotal
+      : frontmatter.length;
+  const evaluated = frontmatter.filter((row) => row.passed !== null).length;
+  const skipped = frontmatter.filter((row) => row.passed === null).length;
+  const passed = frontmatter.filter((row) => row.passed === true).length;
+  const failed = frontmatter.filter((row) => row.passed === false).length;
+
+  let summary;
+  if (total === 0) {
+    summary = "0 of 0 evaluated (no frontmatter guardrails declared)";
+  } else if (evaluated === total && failed === 0) {
+    summary = `${total} of ${total} evaluated, all passed`;
+  } else if (evaluated === 0) {
+    summary = `0 of ${total} evaluated, ${skipped} not executable`;
+  } else if (failed === 0) {
+    summary = `${evaluated} of ${total} evaluated, ${passed} passed, ${skipped} not executable`;
+  } else {
+    summary = `${evaluated} of ${total} evaluated, ${passed} passed, ${failed} failed, ${skipped} not executable`;
+  }
+
+  return {
+    total,
+    evaluated,
+    skipped,
+    passed,
+    failed,
+    summary,
+  };
+}
+
+/**
  * @param {{
  *   output: string,
  *   guardrails?: string[],
@@ -133,6 +175,7 @@ export function runnerForGuardrailProse(prose, index) {
  * @returns {{
  *   passed: boolean,
  *   results: { id: string, passed: boolean|null, why: string|null, source: string }[],
+ *   coverage: { total: number, evaluated: number, skipped: number, passed: number, failed: number, summary: string },
  * }}
  */
 export function evaluateGuardrailGate({
@@ -186,9 +229,11 @@ export function evaluateGuardrailGate({
 
   // Only explicit failures block. Unmapped (null) does not.
   const passed = results.every((row) => row.passed !== false);
+  const coverage = summarizeGuardrailCoverage(results, guardrails.length);
 
   return {
     passed,
     results,
+    coverage,
   };
 }

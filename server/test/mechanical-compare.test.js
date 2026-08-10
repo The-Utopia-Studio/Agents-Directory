@@ -120,6 +120,9 @@ test("canned output_quality is plumbing verification, not a prompt finding", asy
   assert.equal(result.scoreDelta.comparable, true);
   assert.ok(result.scoreDelta.value > 0);
   assert.equal(result.mechanicalCheckScoreDelta.comparable, true);
+  assert.equal(result.promotionEligible, false);
+  assert.equal(result.promotionEligibility.eligible, false);
+  assert.match(result.promotionEligibility.reason, /canned/);
 });
 
 test("output_quality without ruler refuses", async () => {

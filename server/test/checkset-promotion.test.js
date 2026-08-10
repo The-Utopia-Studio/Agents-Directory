@@ -107,11 +107,38 @@ test("guardrail gate is binary and separate from score arithmetic", () => {
   });
   assert.ok(score.guardrailGate);
   assert.equal(score.guardrailGate.passed, false);
+  assert.ok(score.guardrailGate.coverage);
+  assert.equal(score.guardrailGate.coverage.total, 2);
+  assert.equal(score.guardrailGate.coverage.evaluated, 2);
+  assert.equal(score.guardrailGate.coverage.skipped, 0);
+  assert.match(score.guardrailGate.coverage.summary, /2 of 2 evaluated/);
   assert.ok(
     score.guardrailGate.results.some((row) => row.passed === false),
   );
   // Gate is its own field — never folded into the headline score object.
   assert.notEqual(score.mechanicalCheckScore, score.guardrailGate);
+});
+
+test("guardrail coverage reports skips without failing the gate", () => {
+  const gate = evaluateGuardrailGate({
+    output: "### LinkedIn About\nClean prose with a CTA by email.\n\nOpen to chat.\n\n### Spoken event introduction\nHello\n\n### Suggested headline\nDesigner",
+    guardrails: [
+      "Never fabricate or alter a metric, achievement, employer relationship.",
+      "Do not use an em dash or a double hyphen as an em-dash substitute.",
+      "If a supplied quote is not grounded clearly enough to attribute, omit it.",
+    ],
+    groundingResults: [
+      { id: "source_preserves_intern_near_helix", passed: true },
+    ],
+  });
+  assert.equal(gate.passed, true);
+  assert.equal(gate.coverage.total, 3);
+  assert.equal(gate.coverage.evaluated, 1);
+  assert.equal(gate.coverage.skipped, 2);
+  assert.equal(
+    gate.coverage.summary,
+    "1 of 3 evaluated, 1 passed, 2 not executable",
+  );
 });
 
 test("grounding failure fails the guardrail gate without changing how style is counted", () => {

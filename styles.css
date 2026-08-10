@@ -506,6 +506,12 @@ input[type="date"] { color-scheme: dark; }
 .loop-promotion-gate { font-size: 12px; line-height: 1.5; border-left: 3px solid var(--warning-border); padding: 8px 10px; margin: 12px 0; background: rgb(215 122 89 / 8%); }
 .loop-promotion-gate ul { margin: 6px 0 0; padding-left: 18px; }
 .loop-promotion-gate code { font-size: 11px; }
+.mech-guardrail-line { font-size: 12px; line-height: 1.45; margin: 8px 0; }
+.mech-guardrail-pass { color: var(--foreground-muted); }
+.mech-guardrail-fail { color: var(--foreground); border-left: 3px solid var(--warning-border); padding-left: 8px; }
+.mech-promotion-elig { font-size: 12px; line-height: 1.45; margin: 8px 0; padding: 8px 10px; border-left: 3px solid var(--border); }
+.mech-promotion-elig-ok { border-left-color: rgb(86 156 111 / 80%); }
+.mech-promotion-elig-block { border-left-color: var(--warning-border); background: rgb(215 122 89 / 8%); }
 .loop-actions { display: flex; gap: 8px; }
 .loop-verdict { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
 .loop-verdict-why { font-size: 12px; color: var(--foreground-subtle); }

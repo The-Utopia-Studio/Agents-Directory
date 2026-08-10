@@ -166,6 +166,9 @@ export function buildMechanicalResultRecord({
             why: row.why == null ? null : String(row.why),
             source: row.source || null,
           })),
+          coverage: score.guardrailGate.coverage
+            ? { ...score.guardrailGate.coverage }
+            : null,
         }
       : null,
     // Headline = grounding pass rate only.

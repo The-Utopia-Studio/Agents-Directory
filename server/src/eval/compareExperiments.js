@@ -268,6 +268,24 @@ export function buildOutputQualityResult({
     outputQualityComparable: delta.comparable,
     scoreDelta: delta,
     mechanicalCheckScoreDelta: delta,
+    // Comparable plumbing deltas are real numbers; they are not promotion
+    // evidence. Callers must not show a delta beside a silent promotion block.
+    promotionEligible: isLive && delta.comparable,
+    promotionEligibility: isLive
+      ? delta.comparable
+        ? {
+            eligible: true,
+            reason: null,
+          }
+        : {
+            eligible: false,
+            reason: delta.reason || "grounding delta not comparable",
+          }
+      : {
+          eligible: false,
+          reason:
+            'Comparable delta is real but not promotion-eligible — outputSource is "canned"; only "live" may support promotion.',
+        },
     left: {
       ...summarizeScore(left, leftArtifact),
       artifactVersion: leftArtifact.artifactVersion,
@@ -338,6 +356,9 @@ function summarizeScore(score, artifact) {
             why: row.why == null ? null : row.why,
             source: row.source,
           })),
+          coverage: score.guardrailGate.coverage
+            ? { ...score.guardrailGate.coverage }
+            : null,
         }
       : null,
     passed: [...score.passed],
