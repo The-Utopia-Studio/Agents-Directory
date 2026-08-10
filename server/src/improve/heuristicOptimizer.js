@@ -1,7 +1,7 @@
 // Heuristic optimizer. Fully offline, no external calls, no cost.
-// It can only emit changes for defect classes it explicitly understands.
-// Unknown prose is refused rather than copied into a generic prompt template:
-// classifying feedback into prompt/check/runtime edits is a reasoning task.
+// Check-id defects are derived from the closed check registry (same ids the
+// scorer emits). Feedback prose still uses a small keyword catalogue. Unknown
+// failureReason tokens are recorded as unclassified:<id>, never dropped.
 //
 // It is deliberately the same INTERFACE as the GEPA adapter, so the loop is
 // exercisable today and you can flip OPTIMIZER=gepa without touching callers.
@@ -17,6 +17,13 @@
 // proposal carries an Approve button and must never be backed by a sentence
 // the optimizer wrote about itself.
 
+import {
+  CHECK_SET_CATEGORY_GROUNDING,
+  parseFailureReasonTokens,
+  resolveCheckDefect,
+} from "./checkDefectRegistry.js";
+import { isPostProcessedCheckId } from "../invoke/postProcessDraft.js";
+
 const BIOCRAFT_ARTIFACT = "server/src/artifacts/biocraft/SKILL.md";
 
 /**
@@ -28,14 +35,16 @@ const BIOCRAFT_ARTIFACT = "server/src/artifacts/biocraft/SKILL.md";
  * cut is a Method step. A change now names the section it actually edits.
  */
 function promptTarget(agent, section) {
-  return agent.id === "A7"
-    ? `${BIOCRAFT_ARTIFACT}#${section}`
+  return agent.id === "A7" || agent.id === "A10"
+    ? `${agent.id === "A10" ? "server/src/artifacts/biocraft-gapfill/SKILL.md" : BIOCRAFT_ARTIFACT}#${section}`
     : `server/src/scripts/seed.js#SEED_AGENTS ${agent.id} ${section}`;
 }
 
 function classifiedSignalKey(reason) {
   if (/voice mismatch/i.test(reason)) return "voice";
   if (/aggressive cta/i.test(reason)) return "aggressive";
+  const tokens = parseFailureReasonTokens(reason);
+  if (tokens.length === 1) return tokens[0];
   if (/^[a-z0-9_]+$/.test(reason)) return reason;
   return null;
 }
@@ -47,27 +56,13 @@ function normalizedArtifact(text) {
 }
 
 /**
- * Defect catalogue. Each entry is INDEPENDENT.
+ * Feedback-note catalogue. Each entry is INDEPENDENT.
  *
- * The previous version computed `asksForPrompt` / `asksForCheck` once for the
- * whole note and used them to gate unrelated branches. One sentence mentioning
- * a guardrail therefore suppressed the em-dash finding entirely — the reviewer's
- * main defect was matched and then discarded by a flag set elsewhere in the same
- * note. Routing is per-defect here: `matches` decides whether THIS defect is
- * present, and nothing else can veto it.
+ * Check-id defects from traces do NOT go through this list — they are resolved
+ * from checkDefectRegistry so the maker vocabulary cannot drift from the scorer.
  *
- * `alreadyInArtifact` is the honesty gate. It is checked against the real
- * server-owned artifact bytes, so the optimizer cannot assert a `current` state
- * for a file it never opened.
- *
- * LIMITATION, deliberately not papered over: `alreadyInArtifact` proves the
- * artifact already covers a rule. It does NOT establish polarity. A note saying
- * "no fabricated character counts" (praise) and one saying "fabricated counts
- * again" (defect) are indistinguishable to keyword matching, and no regex will
- * separate them. This gate happens to suppress the praise case because the rule
- * is present; it would NOT suppress false praise about a rule that is absent.
- * Reading intent from prose is a reasoning task and remains the argument for a
- * model-backed maker. Do not assume polarity is handled.
+ * `alreadyInArtifact` is the honesty gate for reviewer prose: do not re-propose
+ * registering a check the artifact already declares.
  */
 const FEEDBACK_DEFECTS = [
   {
@@ -185,13 +180,51 @@ function artifactView(artifact) {
   };
 }
 
-function collectDefects(agent, evidence, artifact) {
+function descriptionFromCheckResults(checkId, checkResults = []) {
+  const matches = checkResults.filter((row) => row?.checkId === checkId);
+  const sections = [
+    ...new Set(matches.map((row) => row.section).filter(Boolean)),
+  ];
+  const registered = resolveCheckDefect(checkId);
+  const base =
+    registered?.description ||
+    `Check "${checkId}" failed on a live run.`;
+  if (!sections.length) return base;
+  return `${base} Observed in: ${sections.join("; ")}.`;
+}
+
+function changeForCheckDefect(agent, checkId, category, description) {
+  const grounding = category === CHECK_SET_CATEGORY_GROUNDING;
+  const section = grounding ? "method" : "guardrails";
+  return {
+    surface: "prompt",
+    target: promptTarget(agent, section),
+    current: `Live runs fail mechanical check ${checkId}.`,
+    proposed: `Strengthen the artifact so ${checkId} stops failing on hosted runs. Defect: ${description}`,
+    rationale: description,
+  };
+}
+
+function changeForUnclassified(agent, token) {
+  return {
+    surface: "prompt",
+    target: promptTarget(agent, "guardrails"),
+    current: `Runtime emitted failure reason "${token}" which is not in the check registry.`,
+    proposed: `Reconcile the check registry with the runtime: either register "${token}" as a known check id with a category and description, or stop emitting it from hosted runs.`,
+    rationale: `unclassified: ${token}`,
+  };
+}
+
+/**
+ * Collect classifiable defects from traces + feedback.
+ * Check ids are the vocabulary; unknown tokens become unclassified:<id>.
+ * @returns {{ key: string, category?: string, description?: string, unclassified?: boolean, source: string, change: object, evidence: string[] }[]}
+ */
+export function collectDefects(agent, evidence, artifact) {
   const view = artifactView(artifact);
   const found = new Map();
 
-  function record(definition, source, evidenceIds) {
-    // Verify before asserting. Without the live artifact the optimizer cannot
-    // honestly describe `current`, so it emits nothing rather than guessing.
+  function recordFeedback(definition, source, evidenceIds) {
     if (!view.available) return;
     if (definition.alreadyInArtifact(view)) return;
     const existing = found.get(definition.key);
@@ -207,20 +240,98 @@ function collectDefects(agent, evidence, artifact) {
     });
   }
 
-  const byReason = new Map();
-  for (const trace of evidence.failingTraces || []) {
-    const reason = String(trace.failureReason || "").trim();
-    if (!reason || !trace.id) continue;
-    if (!byReason.has(reason)) byReason.set(reason, []);
-    byReason.get(reason).push(trace.id);
-  }
-  for (const [reason, traceIds] of byReason) {
-    for (const definition of TRACE_DEFECTS) {
-      if (definition.matches(reason)) record(definition, "trace", traceIds);
+  function recordCheckOrUnclassified(token, source, evidenceIds, checkResults) {
+    if (!view.available) return;
+    // Deterministic host post-processing owns these checks — never propose
+    // a prompt edit for a rule the host already enforces on every run.
+    if (isPostProcessedCheckId(token)) return;
+    const registered = resolveCheckDefect(token);
+    if (registered) {
+      const key = registered.id;
+      const description = descriptionFromCheckResults(key, checkResults);
+      const existing = found.get(key);
+      if (existing) {
+        existing.evidence = [...new Set([...existing.evidence, ...evidenceIds])];
+        if (description.length > (existing.description || "").length) {
+          existing.description = description;
+          existing.change = {
+            ...changeForCheckDefect(
+              agent,
+              key,
+              registered.category,
+              description,
+            ),
+            evidence: [...existing.evidence],
+          };
+        }
+        return;
+      }
+      found.set(key, {
+        key,
+        category: registered.category,
+        description,
+        source,
+        change: {
+          ...changeForCheckDefect(agent, key, registered.category, description),
+          evidence: [...evidenceIds],
+        },
+        evidence: [...evidenceIds],
+      });
+      return;
     }
-    // A mechanical check id alone proves a detector fired, not whether the
-    // draft or the detector is wrong. Without reviewer judgement there is no
-    // honest exact edit, so unmatched reasons emit nothing.
+
+    const key = `unclassified:${token}`;
+    const existing = found.get(key);
+    if (existing) {
+      existing.evidence = [...new Set([...existing.evidence, ...evidenceIds])];
+      return;
+    }
+    found.set(key, {
+      key,
+      category: "style",
+      description: `unclassified: ${token}`,
+      unclassified: true,
+      source,
+      change: {
+        ...changeForUnclassified(agent, token),
+        evidence: [...evidenceIds],
+      },
+      evidence: [...evidenceIds],
+    });
+  }
+
+  for (const trace of evidence.failingTraces || []) {
+    if (!trace?.id) continue;
+    const checkResults = Array.isArray(trace.checkResults)
+      ? trace.checkResults
+      : [];
+    const tokens = [
+      ...parseFailureReasonTokens(trace.failureReason),
+      ...checkResults.map((row) => String(row?.checkId || "").trim()).filter(Boolean),
+    ];
+    const unique = [...new Set(tokens)];
+    // Legacy prose reasons (seed / old mocks) that are not check ids.
+    if (!unique.length) {
+      const reason = String(trace.failureReason || "").trim();
+      if (!reason) continue;
+      for (const definition of TRACE_DEFECTS) {
+        if (definition.matches(reason)) {
+          recordFeedback(definition, "trace", [trace.id]);
+        }
+      }
+      continue;
+    }
+    for (const token of unique) {
+      recordCheckOrUnclassified(token, "trace", [trace.id], checkResults);
+    }
+  }
+
+  for (const signal of evidence.defectSignals || []) {
+    const text = String(signal || "").trim();
+    if (!text.startsWith("mechanical:")) continue;
+    for (const token of parseFailureReasonTokens(text)) {
+      recordCheckOrUnclassified(token, "mechanical", [`mechanical:${token}`], []);
+    }
   }
 
   for (const feedbackRecord of evidence.feedback || []) {
@@ -228,7 +339,7 @@ function collectDefects(agent, evidence, artifact) {
     if (!note || !feedbackRecord.id) continue;
     for (const definition of FEEDBACK_DEFECTS) {
       if (definition.matches(note)) {
-        record(definition, "feedback", [feedbackRecord.id]);
+        recordFeedback(definition, "feedback", [feedbackRecord.id]);
       }
     }
   }
@@ -271,7 +382,7 @@ export function createHeuristicOptimizer() {
       if (!defects.length) {
         throw Object.assign(
           new Error(
-            "Heuristic optimizer found evidence but every classified defect is already addressed by the live artifact, or could not be classified into an exact prompt, check, or runtime change — refusing rather than echoing reviewer text",
+            "Heuristic optimizer found evidence but every classified feedback defect is already addressed by the live artifact, and no check-id failureReason was present to classify — refusing rather than echoing reviewer text",
           ),
           { status: 422 },
         );
@@ -297,8 +408,15 @@ export function createHeuristicOptimizer() {
         status: "proposed",
         date: new Date().toISOString().slice(0, 10),
         defectKey: defect.key,
-        summary: `${defect.change.surface} change for ${defect.change.target}`,
-        detail: `Reviewed ${sources}. This proposal is one defect with one change; approving it records a decision on that change alone and edits no artifact.`,
+        ...(defect.category ? { defectCategory: defect.category } : {}),
+        ...(defect.description ? { defectDescription: defect.description } : {}),
+        ...(defect.unclassified ? { unclassified: true } : {}),
+        summary: defect.unclassified
+          ? `Unclassified failure reason: ${defect.key.replace(/^unclassified:/, "")}`
+          : `${defect.change.surface} change for ${defect.change.target}`,
+        detail: defect.description
+          ? `${defect.description} Reviewed ${sources}. This proposal is one defect with one change; approving it records a decision on that change alone and edits no artifact.`
+          : `Reviewed ${sources}. This proposal is one defect with one change; approving it records a decision on that change alone and edits no artifact.`,
         changes: [defect.change],
         expectedGain: Math.min(
           25,
@@ -313,9 +431,14 @@ export function createHeuristicOptimizer() {
           references: [...defect.change.evidence],
           signalKeys: [
             ...new Set(
-              failingTraces
-                .map((trace) => classifiedSignalKey(trace.failureReason || ""))
-                .filter(Boolean),
+              [
+                defect.key,
+                ...failingTraces
+                  .flatMap((trace) =>
+                    parseFailureReasonTokens(trace.failureReason || ""),
+                  )
+                  .map((token) => classifiedSignalKey(token) || token),
+              ].filter(Boolean),
             ),
           ],
           changeTargets: [`${defect.change.surface}:${defect.change.target}`],
@@ -324,3 +447,4 @@ export function createHeuristicOptimizer() {
     },
   };
 }
+

@@ -31,12 +31,23 @@ export const KNOWN_CHECK_IDS = Object.freeze([
   // Host-raised from source markers (Uses X / X Hackathon / "(tool)"), not
   // frontmatter-declared. Same class as about_section_present.
   "source_no_employer_frame_for_marked_non_employer",
+  // LLM grounding checker (additive). Digests only on traces — never raw spans.
+  "source_claim_tenure_years",
+  "source_claim_role_title",
+  "source_claim_employer_frame",
+  "source_claim_metric",
+  "source_claim_credential",
+  "source_claim_quote",
+  "source_claim_other",
 ]);
 
 /** Non-check failures. Codes only — never a provider or model message. */
 export const KNOWN_FAILURE_CODES = Object.freeze([
   "empty_output",
   "gap_response_unparseable",
+  // Status was fail/error but every check id / message was stripped or absent.
+  // Keeps the maker from seeing a silent fail with no cause.
+  "uncategorized_failure",
 ]);
 
 const ALLOWED_REASONS = new Set([...KNOWN_CHECK_IDS, ...KNOWN_FAILURE_CODES]);
@@ -75,6 +86,18 @@ const SECTION_VALUES = new Set([
   "Suggested headline",
 ]);
 
+const CLAIM_KIND_VALUES = new Set([
+  "tenure_years",
+  "role_title",
+  "employer_frame",
+  "metric",
+  "credential",
+  "quote",
+  "other",
+]);
+
+const DIGEST_HEX = /^[a-f0-9]{64}$/;
+
 /**
  * Keep a checker verdict only if every field is provably shape.
  * Unknown keys are dropped rather than trusted.
@@ -97,6 +120,23 @@ export function sanitizeCheckResults(value) {
         clean[key] = raw;
       } else if (key === "section" && SECTION_VALUES.has(raw)) {
         clean[key] = raw;
+      } else if (key === "claimKind" && CLAIM_KIND_VALUES.has(raw)) {
+        clean[key] = raw;
+      } else if (
+        (key === "claimSpanDigest" || key === "sourceSpanDigest") &&
+        typeof raw === "string" &&
+        DIGEST_HEX.test(raw)
+      ) {
+        clean[key] = raw;
+      } else if (
+        key === "category" &&
+        (raw === "style" || raw === "grounding")
+      ) {
+        clean[key] = raw;
+      } else if (key === "family" && typeof raw === "string" && raw.length < 64) {
+        clean[key] = raw;
+      } else if (key === "status" && (raw === "fail" || raw === "pass")) {
+        clean[key] = raw;
       }
       // Anything else — messages, excerpts, matched text — is dropped.
     }
@@ -118,4 +158,28 @@ export function sanitizeFailureReason(value) {
     return null;
   }
   return tokens.join(", ");
+}
+
+/**
+ * After closed-vocabulary sanitization, a fail/error must still name a cause.
+ * Prefer surviving check ids; otherwise stamp uncategorized_failure so a
+ * silent fail cannot be written.
+ */
+export function ensureFailureCause(status, failureReason, checkResults = []) {
+  const checks = Array.isArray(checkResults) ? checkResults : [];
+  let reason =
+    typeof failureReason === "string" && failureReason.trim()
+      ? failureReason.trim()
+      : null;
+  if (!reason && checks.length) {
+    reason = sanitizeFailureReason(checks.map((row) => row.checkId).join(", "));
+  }
+  if (
+    !reason &&
+    !checks.length &&
+    (status === "fail" || status === "error")
+  ) {
+    reason = "uncategorized_failure";
+  }
+  return { failureReason: reason, checkResults: checks };
 }

@@ -114,17 +114,14 @@ test("a check failure reaches the maker, which refuses an ambiguous edit", async
   assert.equal(evidence.failingTraces.length, 1);
   assert.deepEqual(evidence.defectSignals, ["about_closing_has_cta"]);
 
-  // The mechanically-generated signal reaches the optimizer, but three false
-  // detector booleans cannot tell it whether the draft or checker is wrong.
-  // Refusal is safer than inventing a prompt/check edit.
-  await assert.rejects(
-    () => svc.runImprovement("A7"),
-    (error) => {
-      assert.equal(error.status, 422);
-          assert.match(error.message, /could not be classified into an exact/);
-      return true;
-    },
-  );
+  // Check-id failureReasons are first-class defects. The maker proposes a
+  // prompt strengthening change keyed by the same id the scorer emitted.
+  const proposals = await svc.runImprovement("A7");
+  assert.equal(proposals.length, 1);
+  assert.equal(proposals[0].defectKey, "about_closing_has_cta");
+  assert.equal(proposals[0].defectCategory, "style");
+  assert.match(proposals[0].defectDescription, /CTA/i);
+  assert.equal(proposals[0].changes[0].surface, "prompt");
 });
 
 test("the trace boundary is a closed vocabulary, not a shape check", () => {
@@ -177,6 +174,23 @@ test("the trace boundary is a closed vocabulary, not a shape check", () => {
 
   assert.deepEqual(sanitizeCheckResults([{ checkId: "Not A Check Id" }]), []);
   assert.deepEqual(sanitizeCheckResults("nope"), []);
+});
+
+test("a fail without surviving check ids records uncategorized_failure", async () => {
+  const { ensureFailureCause } = await import("../src/core/traceSafety.js");
+  assert.deepEqual(
+    ensureFailureCause("fail", null, []),
+    { failureReason: "uncategorized_failure", checkResults: [] },
+  );
+  assert.deepEqual(
+    ensureFailureCause("ok", null, []),
+    { failureReason: null, checkResults: [] },
+  );
+  assert.equal(
+    ensureFailureCause("fail", null, [{ checkId: "draft_has_no_em_dash" }])
+      .failureReason,
+    "draft_has_no_em_dash",
+  );
 });
 
 test("the trace vocabulary does not drift from the declarable checks", async () => {
