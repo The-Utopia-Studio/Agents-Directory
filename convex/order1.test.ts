@@ -3,7 +3,6 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api, internal } from "./_generated/api";
 import agentVersionsSource from "./agentVersions.ts?raw";
-import { seedPromotionEligibleEval, approveWithPromotionEval } from "./lib/seedPromotionEval";
 import schema from "./schema";
 import { modules } from "./test.setup";
 
@@ -261,10 +260,6 @@ describe("Order 1 authority model", () => {
     const approver = base.withIdentity({
       name: "Release Approver",
       role: "approver",
-    });
-    await seedPromotionEligibleEval(approver, {
-      agentId: fixture.agentId,
-      agentVersionId: fixture.candidateVersionId,
     });
     await expect(
       approver.mutation(authorityApi.reviews.approve, {
@@ -601,7 +596,10 @@ describe("Order 1 authority model", () => {
       { agentId: fixture.agentId },
     );
 
-    const firstResult = await approveWithPromotionEval(t, fixture.proposalId);
+    const firstResult = await t.mutation(authorityApi.reviews.approve, {
+      proposalId: fixture.proposalId,
+      editCategory: "no-edit",
+    });
     const secondResult = await t.mutation(authorityApi.reviews.approve, {
       proposalId: fixture.proposalId,
       editCategory: "no-edit",
@@ -644,7 +642,10 @@ describe("Order 1 authority model", () => {
   test("reject after terminal approval throws conflict without changing release or audit", async () => {
     const t = convexTest(schema, modules).withIdentity({ name: "Approver", role: "approver" });
     const fixture = await createProposalFixture(t);
-    await approveWithPromotionEval(t, fixture.proposalId);
+    await t.mutation(authorityApi.reviews.approve, {
+      proposalId: fixture.proposalId,
+      editCategory: "no-edit",
+    });
     const eventsBefore = await t.query(authorityApi.reviews.listForProposal, {
       proposalId: fixture.proposalId,
     });
@@ -684,7 +685,10 @@ describe("Order 1 authority model", () => {
       status: "deferred",
     });
 
-    const approved = await approveWithPromotionEval(t, fixture.proposalId);
+    const approved = await t.mutation(authorityApi.reviews.approve, {
+      proposalId: fixture.proposalId,
+      editCategory: "no-edit",
+    });
     expect(approved).toMatchObject({
       decision: "approve",
       status: "approved",
@@ -706,7 +710,10 @@ describe("Order 1 authority model", () => {
       proposalId: approvedFixture.proposalId,
       editCategory: "missing-context",
     });
-    await approveWithPromotionEval(t, approvedFixture.proposalId);
+    await t.mutation(authorityApi.reviews.approve, {
+      proposalId: approvedFixture.proposalId,
+      editCategory: "no-edit",
+    });
 
     const rejectedFixture = await createProposalFixture(t, {
       version: "0.3.0",
@@ -807,103 +814,52 @@ describe("Order 1 authority model", () => {
     expect(agent?.currentApprovedVersionId).toBeUndefined();
   });
 
-  test("empty evalResults refuse promotion", async () => {
+  test("failed guardrails block promotion", async () => {
     const t = convexTest(schema, modules).withIdentity({ name: "Approver", role: "approver" });
     const fixture = await createProposalFixture(t);
-    await expect(
-      t.mutation(authorityApi.reviews.approve, {
-        proposalId: fixture.proposalId,
-        editCategory: "no-edit",
-      }),
-    ).rejects.toMatchObject({
-      data: expect.objectContaining({ code: "PROMOTION_EVIDENCE_REQUIRED" }),
-    });
-    const agent = await t.query(authorityApi.agents.getAgent, {
-      id: fixture.agentId,
-    });
-    expect(agent?.currentApprovedVersionId).toBeUndefined();
-  });
-
-  test("mock or canned eval evidence refuses promotion", async () => {
-    const t = convexTest(schema, modules).withIdentity({ name: "Approver", role: "approver" });
-    const fixture = await createProposalFixture(t);
-    const mockEvidenceId = await t.mutation(
-      authorityInternal.evidence.recordMockEvidence,
+    const evidenceId = await t.mutation(
+      authorityInternal.evidence.recordRealExecutionEvidence,
       {
         agentVersionId: fixture.candidateVersionId,
         type: "run",
       },
     );
-    const evalSetId = await t.mutation(authorityApi.evalSets.createEvalSet, {
-      agentId: fixture.agentId,
-      name: "Mock eval",
-      version: 1,
-      status: "draft",
-      rubric: [
-        { id: "quality", label: "Quality", maxScore: 1, conditional: false },
-      ],
-      guardrails: [{ id: "no-secrets", label: "Contains no secrets" }],
-    });
-    const evalCaseId = await t.mutation(authorityApi.evalSets.createEvalCase, {
-      evalSetId,
-      name: "Mock case",
-      fixtureRef: "fixture://mock",
-      declaredFixtureDigest: "mock-digest",
-    });
-    await t.run(async (ctx) => {
-      await ctx.db.insert("evalResults", {
-        evalSetId,
-        evalCaseId,
-        agentVersionId: fixture.candidateVersionId,
-        evidenceId: mockEvidenceId,
-        criterionResults: [
-          { criterionId: "quality", result: { kind: "score", score: 1 } },
+    const evalSetId = await t.mutation(
+      authorityApi.evalSets.createEvalSet,
+      {
+        agentId: fixture.agentId,
+        name: "Guardrail fixture",
+        version: 1,
+        status: "draft",
+        rubric: [
+          {
+            id: "quality",
+            label: "Quality",
+            maxScore: 1,
+            conditional: false,
+          },
         ],
-        earnedMaximum: 1,
-        applicableMaximum: 1,
-        normalizedScore: 100,
-        guardrailResults: [{ guardrailId: "no-secrets", passed: true }],
-        eligibleForPromotion: false,
-        evaluatedBy: {
-          subject: "mock-evaluator",
-          issuer: "https://valid-collie-71.clerk.accounts.dev",
-        },
-        actorKind: "service",
-        evaluatedAt: Date.now(),
-      });
-    });
-    await expect(
-      t.mutation(authorityApi.reviews.approve, {
-        proposalId: fixture.proposalId,
-        editCategory: "no-edit",
-      }),
-    ).rejects.toMatchObject({
-      data: expect.objectContaining({ code: "PROMOTION_EVIDENCE_REQUIRED" }),
-    });
-  });
-
-  test("one promotion-eligible passing result approves", async () => {
-    const t = convexTest(schema, modules).withIdentity({ name: "Approver", role: "approver" });
-    const fixture = await createProposalFixture(t);
-    const result = await approveWithPromotionEval(t, fixture.proposalId);
-    expect(result).toMatchObject({
-      decision: "approve",
-      status: "approved",
-      resultingVersionId: fixture.candidateVersionId,
-    });
-    const agent = await t.query(authorityApi.agents.getAgent, {
-      id: fixture.agentId,
-    });
-    expect(agent?.currentApprovedVersionId).toBe(fixture.candidateVersionId);
-  });
-
-  test("failed guardrails block promotion", async () => {
-    const t = convexTest(schema, modules).withIdentity({ name: "Approver", role: "approver" });
-    const fixture = await createProposalFixture(t);
-    await seedPromotionEligibleEval(t, {
-      agentId: fixture.agentId,
+        guardrails: [{ id: "no-secrets", label: "Contains no secrets" }],
+      },
+    );
+    const evalCaseId = await t.mutation(
+      authorityApi.evalSets.createEvalCase,
+      {
+        evalSetId,
+        name: "Guardrail case",
+        fixtureRef: "fixture://guardrail",
+        declaredFixtureDigest: "guardrail-fixture-digest",
+      },
+    );
+    await t.mutation(authorityApi.evalResults.recordEvalResult, {
+      evalSetId,
+      evalCaseId,
       agentVersionId: fixture.candidateVersionId,
-      guardrailPassed: false,
+      evidenceId,
+      criterionResults: [
+        { criterionId: "quality", result: { kind: "score", score: 1 } },
+      ],
+      guardrailResults: [{ guardrailId: "no-secrets", passed: false }],
     });
 
     await expect(

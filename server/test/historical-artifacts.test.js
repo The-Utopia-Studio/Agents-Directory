@@ -16,9 +16,6 @@ const V5 = "biocraft-singleshot-v5";
 const V6 = "biocraft-singleshot-v6";
 const V7 = "biocraft-singleshot-v7";
 const V9 = "biocraft-singleshot-v9";
-const V10 = "biocraft-singleshot-v10";
-const V10_DIGEST =
-  "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1";
 const V9_DIGEST =
   "e229c64f44bcf3b6e8f57ea7dc74c868b7987ddfc7f92379ad4723761fa4314e";
 const V5_DIGEST =
@@ -64,25 +61,17 @@ test("loadHistoricalArtifact reads committed fixtures and verifies digests", () 
   assert.match(v7.content, /Compare every\s+company relationship and role title/);
   assert.notEqual(v6.artifactDigest, v7.artifactDigest);
 
-  // v9 is now history: its fixture holds the bytes Convex approved, which are
-  // NOT the working tree. Editing the live file cannot redefine what v9 was.
   const v9 = loadHistoricalArtifact(V9);
   assert.equal(v9.artifactDigest, V9_DIGEST);
   assert.equal(v9.artifactVersion, V9);
-
-  // v10 is the live incumbent: its fixture must match the working tree byte
-  // for byte, because that is the artifact the runtime actually executes.
-  const v10 = loadHistoricalArtifact(V10);
-  assert.equal(v10.artifactDigest, V10_DIGEST);
-  assert.equal(v10.artifactVersion, V10);
+  // Live digest must match the registered fixture (incumbent scoring path).
   const liveBytes = readFileSync(
     fileURLToPath(new URL("../src/artifacts/biocraft/SKILL.md", import.meta.url)),
   );
   assert.equal(
     createHash("sha256").update(liveBytes).digest("hex"),
-    V10_DIGEST,
+    V9_DIGEST,
   );
-  assert.notEqual(V9_DIGEST, V10_DIGEST);
 });
 
 test("fixture bytes on disk match declared digests", () => {
@@ -145,7 +134,7 @@ test("listHistoricalArtifactVersions scopes to A7", () => {
     listHistoricalArtifactVersions("A7")
       .map((row) => row.artifactVersion)
       .sort(),
-    [V5, V6, V7, V9, V10].sort(),
+    [V5, V6, V7, V9].sort(),
   );
   assert.equal(listHistoricalArtifactVersions("A8").length, 0);
 });

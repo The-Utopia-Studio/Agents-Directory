@@ -140,19 +140,6 @@ export const config = {
   github: {
     loopToken: String(env.GITHUB_LOOP_TOKEN || "").trim(),
     loopRepo: "The-Utopia-Studio/utopia-agents",
-    // HMAC secret for the merge webhook. Unset = the webhook refuses every
-    // delivery. It is the only authentication on a route that can move
-    // currentApprovedVersionId, so there is no unverified mode.
-    webhookSecret: String(env.GITHUB_WEBHOOK_SECRET || "").trim(),
-    // TEMPORARY authority mechanism — see docs/merged-pr-release.md.
-    // Comma-separated GitHub logins permitted to release by merging a loop/ PR.
-    // Unset/empty/whitespace-only refuses every release; empty is never
-    // permissive. Intended end state is a GitHub → Clerk approver mapping so
-    // one approver set governs both the UI and the merge path.
-    releaseApprovers: String(env.LOOP_RELEASE_APPROVERS || "")
-      .split(",")
-      .map((entry) => entry.trim())
-      .filter(Boolean),
   },
 
   // The Context pillar — agent memory / knowledge with semantic recall.

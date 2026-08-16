@@ -253,13 +253,8 @@ export const MERGED_REIMPORT_SPEC = {
 
 // SHA-256(stableStringify(MERGED_REIMPORT_SPEC)); tests bind this literal to
 // the exact approved spec so an edited merge cannot execute silently.
-//
-// Re-sealed for the same reason as APPROVED_IMPORT_MANIFEST_DIGEST: 0c9a7d9
-// corrected A7's platform/model here (Claude → OpenAI/gpt-5.6-terra) and did
-// not re-bless the seal, so this test has been red since. The spec is correct;
-// the constant was stale.
 export const MERGED_REIMPORT_MANIFEST_DIGEST =
-  "c5e3f344679aa0736fc56fa25c75a89df1c715f62c043993e09fdf40306083f1";
+  "50b687997f719850796cb2bcc702eca18160b3e9832d25c55e42732f4ae09dae";
 
 export const A7_V6_RELEASE_SPEC = {
   agentDisplayId: "A7",
@@ -548,64 +543,3 @@ export const A10_V3_RELEASE_SPEC = {
 // the exact release contract before the approver mutation may create v3.
 export const A10_V3_RELEASE_MANIFEST_DIGEST =
   "81db0f635550d3dd94aae5c536121b31fe1c32dc0a7321566b508cdda5613b81";
-
-// ── v10 / gapfill-v4: the SKILL.md edits of 2026-08-16 ───────────────────────
-//
-// The tier work (scored / named_hit / advisory) and the four widened style
-// detectors changed the governed bytes of both artifacts. Convex still holds
-// the pre-edit digests, so Run and download answer 409 GOVERNED_RUNTIME_MISMATCH
-// until these release.
-//
-// These are NEW versions, not re-pins. An earlier attempt edited
-// A7_V9_RELEASE_SPEC's declaredDigest in place; that is what a version being
-// immutable forbids, and executeApprovedA7V9Release would have refused it at
-// assertExact. Changed bytes are always a new version chained to the old one.
-
-export const A7_V10_RELEASE_SPEC = {
-  agentDisplayId: "A7",
-  priorVersion: "biocraft-singleshot-v9",
-  priorArtifactSha256:
-    "e229c64f44bcf3b6e8f57ea7dc74c868b7987ddfc7f92379ad4723761fa4314e",
-  version: {
-    version: "biocraft-singleshot-v10",
-    state: "candidate",
-    artifact: {
-      scheme: "git",
-      locator: "server/src/artifacts/biocraft/SKILL.md",
-      declaredDigest:
-        "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1",
-      declaredDigestAlgorithm: "sha256",
-    },
-  },
-  proposalSummary:
-    "Biocraft v10 makes check tiers first-class (scored / named_hit / advisory) and widens four style detectors that the false-pass matrix defeated: en dash as an em-dash substitute, inflected and near-variant cliches, / as a keyword delimiter, and a non-CTA closing passing on a sentence-initial imperative. checkSetId changes, so no score recorded under v9 is comparable to v10.",
-} as const;
-
-// SHA-256(stableStringify(A7_V10_RELEASE_SPEC)). A test binds this literal to
-// the exact release contract before the approver mutation may create v10.
-export const A7_V10_RELEASE_MANIFEST_DIGEST =
-  "f892dad7392ff31657d375d20ee532c1c2a0bcf726af4ed21ec4565ab17cfd18";
-
-export const A10_V4_RELEASE_SPEC = {
-  agentDisplayId: "A10",
-  priorVersion: "biocraft-gapfill-v3",
-  priorArtifactSha256:
-    "8ccee5f24ac47dc16643954020309b85602109ca824a34cb54655bfaabd40fb4",
-  version: {
-    version: "biocraft-gapfill-v4",
-    state: "candidate",
-    artifact: {
-      scheme: "git",
-      locator: "server/src/artifacts/biocraft-gapfill/SKILL.md",
-      declaredDigest:
-        "7a3e5bc0a1531e34d04f33249c2e53c332a1d4f4e3f6fc7f9849242637b0bd11",
-      declaredDigestAlgorithm: "sha256",
-    },
-  },
-  proposalSummary:
-    "Biocraft gap-fill v4 carries the same tier model and widened style detectors as A7 v10, so both governed artifacts score under one check vocabulary. Convex A9 (Con) stays untouched. checkSetId changes, so no score recorded under gapfill-v3 is comparable to v4.",
-} as const;
-
-// SHA-256(stableStringify(A10_V4_RELEASE_SPEC)).
-export const A10_V4_RELEASE_MANIFEST_DIGEST =
-  "a066599a997a1cbbd7de373e946b9efe44859acc8afdcad26be1b4c3c9c1cd4f";

@@ -22,7 +22,6 @@ import {
   resolveRuntimeInputs,
   validateRuntimeArtifactOutput,
 } from "../src/invoke/runtimeArtifacts.js";
-import { isBlockingCheckResult } from "../src/eval/checkTiers.js";
 import { SEED_AGENTS } from "../src/scripts/seed.js";
 import { createStore } from "../src/core/store.js";
 import { buildApp } from "../src/http/server.js";
@@ -49,21 +48,6 @@ Test Fellow builds grounded workflow systems for venture teams.
 ### Suggested headline
 
 Agentic workflow builder for venture teams`;
-
-function liveResults(output) {
-  return validateRuntimeArtifactOutput("A7", output);
-}
-
-function liveBlocking(output) {
-  return liveResults(output).filter(isBlockingCheckResult);
-}
-
-function keywordRunFailureOutput() {
-  return VALID_BIOCRAFT_OUTPUT.replace(
-    "One delivery validated 167 acceptance criteria across five working screens.",
-    "n8n · AI automation · Agentic systems · LLMs",
-  );
-}
 
 test("HTTP invocation rejects local, encoded, private, and metadata targets", async () => {
   assert.deepEqual(SAFE_INVOCATION_HEADERS, {
@@ -365,14 +349,11 @@ test("single-shot inputs resolve by contract alias, not by editable record label
   );
 });
 
-test("Biocraft mechanical checks reject hook, keyword-run, and report CTA as advisory", () => {
-  assert.equal(liveBlocking(VALID_BIOCRAFT_OUTPUT).length, 0);
-  const validCta = liveResults(VALID_BIOCRAFT_OUTPUT).find(
-    (row) => row.checkId === "about_closing_has_cta",
+test("Biocraft mechanical checks reject hook, keyword-run, and CTA regressions", () => {
+  assert.deepEqual(
+    validateRuntimeArtifactOutput("A7", VALID_BIOCRAFT_OUTPUT),
+    [],
   );
-  assert.equal(validCta.status, "observation");
-  assert.equal(validCta.passed, null);
-  assert.equal(validCta.tier, "advisory");
 
   const longHook = VALID_BIOCRAFT_OUTPUT.replace(
     "I help venture teams turn complex ideas into practical tools.",
@@ -428,20 +409,14 @@ test("Biocraft mechanical checks reject hook, keyword-run, and report CTA as adv
     "Test Fellow builds grounded workflow systems for venture teams.",
     "Test Fellow builds grounded workflow systems for venture teams. Reach out.",
   );
-  const cta = liveResults(noAboutCta).find(
-    (row) => row.checkId === "about_closing_has_cta",
-  );
-  assert.equal(cta.checkId, "about_closing_has_cta");
-  assert.equal(cta.status, "observation");
-  assert.equal(cta.passed, null);
-  assert.equal(cta.tier, "advisory");
-  assert.equal(isBlockingCheckResult(cta), false);
+  const ctaFailure = validateRuntimeArtifactOutput("A7", noAboutCta)[0];
+  assert.equal(ctaFailure.checkId, "about_closing_has_cta");
   // The three signals are recorded, so "model omitted a CTA" is separable
   // from "detector missed a CTA that is present".
-  assert.equal(cta.hasContactChannel, false);
-  assert.equal(cta.hasImperativeOpener, false);
-  assert.equal(cta.hasInvitationFrame, false);
-  assert.ok(cta.windowParagraphs >= 2);
+  assert.equal(ctaFailure.hasContactChannel, false);
+  assert.equal(ctaFailure.hasImperativeOpener, false);
+  assert.equal(ctaFailure.hasInvitationFrame, false);
+  assert.ok(ctaFailure.windowParagraphs >= 2);
 });
 
 test("v6 scopes delimiter-separated keyword runs to the LinkedIn About", () => {
@@ -480,19 +455,15 @@ test("the CTA check accepts real CTAs that a phrase list rejected", () => {
       "If your venture team needs a clearer path from idea to build, reach out.",
       closing,
     );
-    assert.equal(
-      liveBlocking(output).length,
-      0,
-      `${name}: "${closing}" must not block; CTA is advisory`,
+    assert.deepEqual(
+      validateRuntimeArtifactOutput("A7", output),
+      [],
+      `${name}: "${closing}" is a valid CTA and must not fail the check`,
     );
-    const obs = liveResults(output).find(
-      (row) => row.checkId === "about_closing_has_cta",
-    );
-    assert.equal(obs.status, "observation");
-    assert.equal(obs.passed, null);
   }
 
-  // Advisory still records that the heuristic did not fire. It does not fail.
+  // It must still catch the real v2 regression: a closing with no invitation,
+  // no imperative, and no channel.
   const noCta = VALID_BIOCRAFT_OUTPUT.replace(
     "If your venture team needs a clearer path from idea to build, reach out.",
     "The work stays grounded in the supplied evidence.",
@@ -500,12 +471,7 @@ test("the CTA check accepts real CTAs that a phrase list rejected", () => {
     "Test Fellow builds grounded workflow systems for venture teams.",
     "Test Fellow builds grounded workflow systems for venture teams. Reach out.",
   );
-  assert.equal(liveBlocking(noCta).length, 0);
-  const noCtaObs = liveResults(noCta).find(
-    (row) => row.checkId === "about_closing_has_cta",
-  );
-  assert.equal(noCtaObs.status, "observation");
-  assert.equal(noCtaObs.hasInvitationFrame, false);
+  assert.equal(validateRuntimeArtifactOutput("A7", noCta).length, 1);
 });
 
 test("v6 rejects em dashes and double-hyphen substitutes in every generated section", () => {
@@ -531,8 +497,8 @@ test("v6 rejects registered multi-word AI cliche phrases in every generated sect
     ["Suggested headline", "Agentic workflow builder for venture teams"],
   ]) {
     const output = VALID_BIOCRAFT_OUTPUT.replace(line, "This work sits at the intersection of AI and product development.");
-    const failure = liveResults(output).find(
-      (candidate) => candidate.checkId === "draft_registered_ai_cliche_lemma",
+    const failure = validateRuntimeArtifactOutput("A7", output).find(
+      (candidate) => candidate.checkId === "draft_has_no_ai_cliche_phrase",
     );
     assert.equal(failure?.section, section);
   }
@@ -541,40 +507,32 @@ test("v6 rejects registered multi-word AI cliche phrases in every generated sect
     "This work maps intersections between AI and product development.",
   );
   assert.equal(
-    liveResults(nearMiss).some(
-      (failure) => failure.checkId === "draft_registered_ai_cliche_lemma",
+    validateRuntimeArtifactOutput("A7", nearMiss).some(
+      (failure) => failure.checkId === "draft_has_no_ai_cliche_phrase",
     ),
     false,
   );
 });
 
-test("v6 matches inflections of registered AI cliche terms and ignores longer unrelated words", () => {
+test("v6 retains exact-word matching for registered single AI cliche terms", () => {
   const output = VALID_BIOCRAFT_OUTPUT.replace(
     "I help venture teams turn complex ideas into practical tools.",
     "I leverage practical systems for venture teams.",
   );
   assert.deepEqual(
-    liveBlocking(output).map((failure) => failure.checkId),
-    ["draft_registered_ai_cliche_lemma"],
+    validateRuntimeArtifactOutput("A7", output).map((failure) => failure.checkId),
+    ["draft_has_no_ai_cliche_phrase"],
   );
-  const inflected = VALID_BIOCRAFT_OUTPUT.replace(
-    "I help venture teams turn complex ideas into practical tools.",
-    "I am leveraging practical systems for venture teams.",
-  );
-  const inflectedHit = liveResults(inflected).find(
-    (failure) => failure.checkId === "draft_registered_ai_cliche_lemma",
-  );
-  assert.equal(inflectedHit?.registeredPhrase, "leverage");
   const nonMatch = VALID_BIOCRAFT_OUTPUT.replace(
     "I help venture teams turn complex ideas into practical tools.",
-    "I study elevator motors and practical systems.",
+    "I study leveraged buyouts and practical systems.",
   );
   assert.equal(
-    liveResults(nonMatch).some(
-      (failure) => failure.checkId === "draft_registered_ai_cliche_lemma",
+    validateRuntimeArtifactOutput("A7", nonMatch).some(
+      (failure) => failure.checkId === "draft_has_no_ai_cliche_phrase",
     ),
     false,
-    "inflection matching must not reject a longer unrelated word",
+    "exact-word matching must not reject a longer unrelated word",
   );
 });
 
@@ -600,18 +558,20 @@ Test Fellow builds grounded workflow systems for venture teams.
 
 Agentic workflow builder for venture teams`;
 
-  const cta = liveResults(midTextCta).find(
-    (row) => row.checkId === "about_closing_has_cta",
-  );
-  assert.equal(cta.status, "observation");
-  assert.equal(cta.passed, null);
-  assert.equal(isBlockingCheckResult(cta), false);
-  assert.equal(cta.windowParagraphs, 2);
-  assert.equal(cta.paragraphCount, 4);
+  const [failure] = validateRuntimeArtifactOutput("A7", midTextCta);
+  assert.equal(failure.checkId, "about_closing_has_cta");
+  assert.equal(failure.windowParagraphs, 2);
+  assert.equal(failure.paragraphCount, 4);
 });
 
 test("a failed check returns the output it was billed for, marked", async () => {
-  const failing = keywordRunFailureOutput();
+  const failing = VALID_BIOCRAFT_OUTPUT.replace(
+    "If your venture team needs a clearer path from idea to build, reach out.",
+    "The work stays grounded in supplied evidence.",
+  ).replace(
+    "Test Fellow builds grounded workflow systems for venture teams.",
+    "Test Fellow builds grounded workflow systems for venture teams. Reach out.",
+  );
   const invoker = runtimeInvoker(
     runtimeConfig({
       fetch: async () => ({
@@ -639,7 +599,8 @@ test("a failed check returns the output it was billed for, marked", async () => 
     inputTokens: 900,
     outputTokens: 400,
   }));
-  assert.ok(result.checkResults.some((r) => r.checkId === "about_has_no_delimiter_separated_keyword_run" && r.status === "fail"));
+  assert.equal(result.checkResults.length, 1);
+  assert.equal(result.checkResults[0].checkId, "about_closing_has_cta");
 });
 
 test("single-shot run forwards only contract fields to OpenAI Responses", async () => {
@@ -850,7 +811,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     ["LinkedIn URL", "Google Drive folder or pitch deck", "Local file path"],
   );
   assert.equal(installArtifact.available, true);
-  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v10");
+  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v9");
   assert.match(installArtifact.artifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(installArtifact.artifactDigestAlgorithm, "sha256");
 
@@ -900,7 +861,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(run.via, "runtime");
   assert.equal(run.mode, "single-shot");
   assert.equal(run.agentVersion, "1.0");
-  assert.equal(run.artifactVersion, "biocraft-singleshot-v10");
+  assert.equal(run.artifactVersion, "biocraft-singleshot-v9");
   assert.equal(
     run.artifactDigest,
     createHash("sha256").update(request.body.instructions).digest("hex"),
@@ -937,7 +898,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(trace.metadata.via, "runtime");
   assert.equal(trace.metadata.mode, "single-shot");
   assert.equal(trace.agentVersion, "1.0");
-  assert.equal(trace.artifactVersion, "biocraft-singleshot-v10");
+  assert.equal(trace.artifactVersion, "biocraft-singleshot-v9");
   assert.equal(trace.artifactDigest, run.artifactDigest);
   assert.equal(trace.artifactDigestAlgorithm, "sha256");
   assert.equal("agentVersionId" in trace, false);
@@ -1073,7 +1034,13 @@ test("feedback notes gate off rejects notes but still accepts the rating", async
 test("a failed-check run reaches the caller and the store as fail, not error", async (t) => {
   const dir = await mkdtemp(join(tmpdir(), "adir-run-checkfail-"));
   const store = createStore(dir);
-  const failing = keywordRunFailureOutput();
+  const failing = VALID_BIOCRAFT_OUTPUT.replace(
+    "If your venture team needs a clearer path from idea to build, reach out.",
+    "The work stays grounded in supplied evidence.",
+  ).replace(
+    "Test Fellow builds grounded workflow systems for venture teams.",
+    "Test Fellow builds grounded workflow systems for venture teams. Reach out.",
+  );
   const app = await buildApp({
     store,
     config: runtimeConfig({
@@ -1097,19 +1064,17 @@ test("a failed-check run reaches the caller and the store as fail, not error", a
   assert.equal(res.status, 201);
   const run = await res.json();
   assert.equal(run.status, "checks_failed");
-  assert.deepEqual(run.failedChecks, ["about_has_no_delimiter_separated_keyword_run"]);
+  assert.deepEqual(run.failedChecks, ["about_closing_has_cta"]);
   assert.equal(run.output, failing);
-  assert.equal(run.checkFailures[0].tier, "scored");
-  assert.match(run.checkFailures[0].message, /delimiter-separated keyword run/);
-  assert.ok(run.observations?.some((row) => row.checkId === "about_closing_has_cta"));
+  // Detector language: the check reports that nothing fired, never that the
+  // model omitted a CTA. Three false booleans cannot prove omission.
+  assert.match(run.checkFailures[0].message, /No CTA detected in the closing/);
+  assert.doesNotMatch(run.checkFailures[0].message, /has no|omitted|missing/i);
 
   const [trace] = await store.all("traces");
   assert.equal(trace.status, "fail");
-  assert.equal(trace.failureReason, "about_has_no_delimiter_separated_keyword_run");
-  const ctaTrace = trace.checkResults.find((row) => row.checkId === "about_closing_has_cta");
-  assert.equal(ctaTrace.status, "observation");
-  assert.equal(ctaTrace.tier, "advisory");
-  assert.equal(ctaTrace.passed, null);
+  assert.equal(trace.failureReason, "about_closing_has_cta");
+  assert.equal(trace.checkResults[0].hasInvitationFrame, false);
   assert.equal(trace.totalTokens, 1300);
   // The output itself is still never persisted — only its digest.
   assert.equal("output" in trace, false);

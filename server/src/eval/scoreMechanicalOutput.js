@@ -15,31 +15,15 @@
 // historicalImplementation. Silent remapping to the v6 About-only runner is
 // refused — that would score v5 with v6's implementation.
 
-import { createHash } from "node:crypto";
 import {
   SOURCE_GROUNDING_FAMILY,
   runSourceGroundingChecks,
 } from "./sourceGrounding.js";
 import {
-  ctaSignals,
-  findAllAiCliches,
-  findDelimiterKeywordRun,
-  hasClauseBreakDash,
-} from "./styleDetectors.js";
-import {
   checkSetEntriesFromInputs,
   computeCheckSetId,
 } from "./checkSetId.js";
 import { evaluateGuardrailGate } from "./guardrailGate.js";
-import {
-  TIER_ADVISORY,
-  TIER_NAMED_HIT,
-  TIER_SCORED,
-  contributesToMechanicalScore,
-  isBlockingCheckResult,
-  isClicheCheckId,
-  tierForCheck,
-} from "./checkTiers.js";
 
 export const STYLE_FAMILY = "style";
 export const HISTORICAL_STYLE_FAMILY = "style-historical";
@@ -58,8 +42,21 @@ const GENERATED_SECTIONS = Object.freeze([
   "Spoken event introduction",
   "Suggested headline",
 ]);
+const EM_DASH_OR_DOUBLE_HYPHEN = /—|--/;
+const AI_CLICHE_SINGLE_TERMS = Object.freeze([
+  "utilize", "leverage", "facilitate", "innovative", "robust", "seamless",
+  "cutting-edge", "unlock", "elevate", "passionate", "synergy", "game-changer",
+  "revolutionize", "revolutionary",
+]);
+const AI_CLICHE_PHRASES = Object.freeze(["sits at the intersection of"]);
 
 const CTA_WINDOW_PARAGRAPHS = 2;
+const CONTACT_CHANNEL =
+  /(?:[\w.+-]+@[\w-]+\.[\w.]{2,}|https?:\/\/\S+|\b(?:www|linkedin|calendly|substack|github)\.[\w./-]+)/i;
+const IMPERATIVE_OPENER =
+  /^(?:book|email|message|call|reach|contact|connect|send|visit|schedule|join|drop|ping|write|follow|apply|subscribe|hire|explore|start|get|say|tell)\b|^(?:let'?s\b|feel free\b)/i;
+const INVITATION_FRAME =
+  /\b(?:available (?:for|to)|open (?:to|for)|currently taking on|taking on new|now booking|accepting|happy to|looking to|reach out|get in touch|contact me|connect with me|(?:i )?would like to connect|email me|message me|send me|dm me|drop me|write to me|say hello|let'?s (?:connect|talk|chat)|work with me|hear from you|find me at|book a|schedule a)\b/i;
 
 /** Checks the live A7 runtime still executes. */
 const LIVE_STYLE_CHECKS = new Set([
@@ -70,7 +67,6 @@ const LIVE_STYLE_CHECKS = new Set([
   "about_closing_has_cta",
   "draft_has_no_em_dash",
   "draft_has_no_ai_cliche_phrase",
-  "draft_registered_ai_cliche_lemma",
 ]);
 
 /** About-scoped live checks — not scoreable when the About section is missing. */
@@ -114,6 +110,23 @@ function trailingWindow(paragraphs) {
   return { text: visibleText(picked.join("\n\n")), paragraphs: picked.length };
 }
 
+function ctaSignals(windowText) {
+  const sentences = windowText
+    .split(/(?<=[.!?])\s+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return {
+    hasContactChannel: CONTACT_CHANNEL.test(windowText),
+    hasImperativeOpener: sentences.some((s) => IMPERATIVE_OPENER.test(s)),
+    hasInvitationFrame: INVITATION_FRAME.test(windowText),
+  };
+}
+
+function hasCompletePhrase(content, phrase) {
+  const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, "i").test(content);
+}
+
 function categoryForFamily(family) {
   return family === SOURCE_GROUNDING_FAMILY
     ? CATEGORY_GROUNDING
@@ -139,9 +152,7 @@ export function toCheckResult(row) {
     else passed = null;
   }
   const why =
-    passed === false ||
-    row.status === "observation" ||
-    row.status === "no_hit"
+    passed === false
       ? row.why != null
         ? row.why
         : row.message != null
@@ -174,7 +185,6 @@ export function toCheckResult(row) {
     family: row.family || (category === CATEGORY_GROUNDING
       ? SOURCE_GROUNDING_FAMILY
       : STYLE_FAMILY),
-    tier: row.tier || tierForCheck(id),
     ...facts,
   };
 }
@@ -199,32 +209,6 @@ function failResult(checkId, family, why, facts = {}) {
   });
 }
 
-function observationResult(checkId, family, why, facts = {}) {
-  return toCheckResult({
-    checkId,
-    family,
-    status: "observation",
-    passed: null,
-    why,
-    severity: null,
-    tier: TIER_ADVISORY,
-    ...facts,
-  });
-}
-
-function namedHitMissResult(checkId, family, facts = {}) {
-  return toCheckResult({
-    checkId,
-    family,
-    status: "no_hit",
-    passed: null,
-    why: null,
-    severity: null,
-    tier: TIER_NAMED_HIT,
-    ...facts,
-  });
-}
-
 function notScoreableResult(checkId, family, why, facts = {}) {
   return toCheckResult({
     checkId,
@@ -242,33 +226,14 @@ export function categoryPassRate(passedCount, scoreableCount) {
   return Math.round((passedCount / scoreableCount) * 1000) / 10;
 }
 
-/**
- * Identity of the check id set a rate was computed over.
- *
- * A rate is only meaningful next to the checks that produced it. When two
- * checks were retiered out of the style pool, the style pass rate rose from
- * 57.1 to 80 on byte-identical output with identical defects — a denominator
- * change wearing the shape of an improvement. Carrying the ids makes that
- * detectable instead of plausible.
- */
-export function rateBasisDigest(checkIds = []) {
-  const sorted = [...checkIds].sort();
-  if (!sorted.length) return null;
-  return createHash("sha256").update(sorted.join("\n")).digest("hex");
-}
-
 export function summarizeCategory(checkResults, category) {
   const rows = checkResults.filter((r) => r.category === category);
-  const scoredRows = rows.filter(contributesToMechanicalScore);
-  const passed = scoredRows.filter((r) => r.passed === true).map((r) => r.id);
-  const failed = scoredRows.filter((r) => r.passed === false).map((r) => r.id);
+  const passed = rows.filter((r) => r.passed === true).map((r) => r.id);
+  const failed = rows.filter((r) => r.passed === false).map((r) => r.id);
   const notScoreable = rows
     .filter((r) => r.passed === null || r.status === "not_scoreable")
-    .filter((r) => r.status !== "observation" && r.status !== "no_hit")
     .map((r) => r.id);
   const scoreableCount = passed.length + failed.length;
-  // The exact ids this rate was computed over — its denominator, itemised.
-  const basisCheckIds = [...passed, ...failed].sort();
   return {
     category,
     passed,
@@ -276,8 +241,6 @@ export function summarizeCategory(checkResults, category) {
     notScoreable,
     scoreableCount,
     passRate: categoryPassRate(passed.length, scoreableCount),
-    basisCheckIds,
-    basisDigest: rateBasisDigest(basisCheckIds),
   };
 }
 
@@ -422,15 +385,15 @@ function scoreStyleChecks(output, declaredChecks) {
 
     if (checkId === "about_has_no_delimiter_separated_keyword_run") {
       scored.push(checkId);
-      const match = findDelimiterKeywordRun(about);
+      const match = about.match(KEYWORD_RUN);
       const facts = {
         section: "LinkedIn About",
         sectionFound: true,
         paragraphCount: paragraphs.length,
         ...(match
           ? {
-              delimiter: match.delimiter,
-              segmentCount: match.segmentCount,
+              delimiter: match[1],
+              segmentCount: match[0].split(match[1]).filter(Boolean).length,
             }
           : {}),
       };
@@ -489,7 +452,7 @@ function scoreStyleChecks(output, declaredChecks) {
       scored.push(checkId);
       const window = trailingWindow(paragraphs);
       const signals = ctaSignals(window.text);
-      const fired =
+      const ok =
         signals.hasContactChannel ||
         signals.hasImperativeOpener ||
         signals.hasInvitationFrame;
@@ -501,14 +464,14 @@ function scoreStyleChecks(output, declaredChecks) {
         ...signals,
       };
       results.push(
-        observationResult(
-          checkId,
-          STYLE_FAMILY,
-          fired
-            ? "Advisory CTA heuristic fired in the closing. This is not a scored pass."
-            : "Advisory: no CTA heuristic fired in the LinkedIn About closing (trailing two paragraphs). This is not a scored fail.",
-          facts,
-        ),
+        ok
+          ? passResult(checkId, STYLE_FAMILY, facts)
+          : failResult(
+              checkId,
+              STYLE_FAMILY,
+              "LinkedIn About closing has no detectable CTA (contact channel, imperative opener, or invitation frame).",
+              facts,
+            ),
       );
       continue;
     }
@@ -519,7 +482,7 @@ function scoreStyleChecks(output, declaredChecks) {
       for (const section of GENERATED_SECTIONS) {
         const content =
           section === "LinkedIn About" ? about : markdownSection(output, section);
-        if (content && hasClauseBreakDash(content)) {
+        if (content && EM_DASH_OR_DOUBLE_HYPHEN.test(content)) {
           failedSection = section;
           break;
         }
@@ -529,7 +492,7 @@ function scoreStyleChecks(output, declaredChecks) {
           ? failResult(
               checkId,
               STYLE_FAMILY,
-              `${failedSection} contains a dash used as a clause break (em dash, en dash, horizontal bar, double hyphen, or spaced hyphen).`,
+              `${failedSection} contains an em dash or double-hyphen substitute.`,
               {
                 section: failedSection,
                 sectionFound: true,
@@ -540,52 +503,34 @@ function scoreStyleChecks(output, declaredChecks) {
       continue;
     }
 
-    if (isClicheCheckId(checkId)) {
+    if (checkId === "draft_has_no_ai_cliche_phrase") {
       scored.push(checkId);
-      // Scan every section and report every hit. Stopping at the first one
-      // hid the count, and the count is what the maker uses to choose which
-      // defect to attack — one cliche and four cliches must not look alike.
-      const hits = [];
+      let failedSection = null;
       for (const section of GENERATED_SECTIONS) {
         const content =
           section === "LinkedIn About" ? about : markdownSection(output, section);
-        if (!content) continue;
-        for (const hit of findAllAiCliches(content)) {
-          hits.push({
-            section,
-            registeredPhrase: hit.registeredPhrase,
-            surface: hit.surface,
-          });
+        const hit =
+          content &&
+          [...AI_CLICHE_SINGLE_TERMS, ...AI_CLICHE_PHRASES].some((phrase) =>
+            hasCompletePhrase(content, phrase),
+          );
+        if (hit) {
+          failedSection = section;
+          break;
         }
       }
-      const lemmas = [...new Set(hits.map((h) => h.registeredPhrase))];
       results.push(
-        hits.length
+        failedSection
           ? failResult(
               checkId,
               STYLE_FAMILY,
-              `${hits.length} registered AI cliche hit${hits.length === 1 ? "" : "s"} ` +
-                `across ${new Set(hits.map((h) => h.section)).size} section(s): ` +
-                `${lemmas.join(", ")}. This is a named hit against a closed list, ` +
-                `not a certification that the draft is free of AI voice.`,
+              `${failedSection} contains a registered AI cliche term or phrase.`,
               {
-                // First hit keeps its historical field names so existing
-                // readers keep working; the full list sits beside them.
-                section: hits[0].section,
+                section: failedSection,
                 sectionFound: true,
-                registeredPhrase: hits[0].registeredPhrase,
-                hitCount: hits.length,
-                registeredPhrases: lemmas,
-                hits,
-                tier: TIER_NAMED_HIT,
               },
             )
-          : namedHitMissResult(checkId, STYLE_FAMILY, {
-              sectionFound: true,
-              hitCount: 0,
-              registeredPhrases: [],
-              hits: [],
-            }),
+          : passResult(checkId, STYLE_FAMILY, { sectionFound: true }),
       );
       continue;
     }
@@ -608,10 +553,8 @@ function scoreStyleChecks(output, declaredChecks) {
  * Score one output against an artifact's declared checks + optional
  * source-grounding rules.
  *
- * Returns two separately named rates — `groundingPassRate` and
- * `stylePassRate` — and never a combined one. There is no single field here
- * that means "how good is the agent"; asking that question requires reading
- * both, with their denominators.
+ * Headline mechanicalCheckScore is the grounding pass rate only (never a
+ * cross-category average). Style is reported under byCategory.style.
  */
 export function scoreMechanicalOutput({
   output,
@@ -644,23 +587,18 @@ export function scoreMechanicalOutput({
   const style = summarizeCategory(checkResults, CATEGORY_STYLE);
 
   const passed = checkResults
-    .filter((r) => (r.tier || tierForCheck(r.id)) === TIER_SCORED && r.passed === true)
+    .filter((r) => r.passed === true)
     .map((r) => r.id);
   const failed = checkResults
-    .filter((r) => isBlockingCheckResult(r))
+    .filter((r) => r.passed === false)
     .map((r) => r.id);
   const notScoreable = checkResults
-    .filter((r) => r.status === "not_scoreable")
-    .map((r) => r.id);
-  const observations = checkResults
-    .filter((r) => r.status === "observation" || (r.tier || tierForCheck(r.id)) === TIER_ADVISORY)
+    .filter((r) => r.passed === null || r.status === "not_scoreable")
     .map((r) => r.id);
 
-  // Two separately named rates. There is deliberately no combined number and
-  // no field a reader can mistake for whole-agent quality: `groundingPassRate`
-  // says what it measures in its name, and style is reported beside it.
-  const groundingPassRate = grounding.passRate;
-  const groundingScoreableCount = grounding.scoreableCount;
+  // Headline number = grounding only. Do not average with style.
+  const mechanicalCheckScore = grounding.passRate;
+  const scoreableCount = grounding.scoreableCount;
 
   const checkSetId = computeCheckSetId(
     checkSetEntriesFromInputs(declaredChecks, sourceGroundingRules),
@@ -684,55 +622,17 @@ export function scoreMechanicalOutput({
     passed,
     failed,
     notScoreable,
-    observations,
     byCategory: {
       grounding,
       style,
     },
-    // Grounding pass rate among scored grounding checks. named_hit / advisory
-    // never enter it, and style never enters it. NOT whole-agent quality.
-    groundingPassRate,
-    groundingScoreableCount,
-    groundingBasisCheckIds: grounding.basisCheckIds,
-    groundingBasisDigest: grounding.basisDigest,
-    // Reported beside grounding, never averaged with it.
+    // Grounding headline (labelled by callers as grounding, not overall quality).
+    mechanicalCheckScore,
+    scoreableCount,
     stylePassRate: style.passRate,
     styleScoreableCount: style.scoreableCount,
-    styleBasisCheckIds: style.basisCheckIds,
-    styleBasisDigest: style.basisDigest,
     guardrailGate,
   };
-}
-
-/**
- * Read a grounding pass rate from a score or a stored row.
- *
- * `mechanicalCheckScore` is the historical key for this number. Nothing writes
- * it any more; rows persisted before the rename still carry it, so reads fall
- * back rather than silently reporting "not measured" for real history.
- */
-export function readGroundingPassRate(row) {
-  if (!row || typeof row !== "object") return null;
-  if (typeof row.groundingPassRate === "number") return row.groundingPassRate;
-  if (typeof row.byCategory?.grounding?.passRate === "number") {
-    return row.byCategory.grounding.passRate;
-  }
-  // Historical alias only.
-  if (typeof row.mechanicalCheckScore === "number") return row.mechanicalCheckScore;
-  return null;
-}
-
-/** Denominator for a grounding rate, with the same historical fallback. */
-export function readGroundingScoreableCount(row) {
-  if (!row || typeof row !== "object") return null;
-  if (typeof row.groundingScoreableCount === "number") {
-    return row.groundingScoreableCount;
-  }
-  if (typeof row.byCategory?.grounding?.scoreableCount === "number") {
-    return row.byCategory.grounding.scoreableCount;
-  }
-  if (typeof row.scoreableCount === "number") return row.scoreableCount;
-  return null;
 }
 
 /**
@@ -759,10 +659,8 @@ export function compareMechanicalScores(left, right) {
   return {
     leftVersion: left.artifactVersion,
     rightVersion: right.artifactVersion,
-    leftGroundingPassRate: readGroundingPassRate(left),
-    rightGroundingPassRate: readGroundingPassRate(right),
-    leftStylePassRate: left.stylePassRate ?? null,
-    rightStylePassRate: right.stylePassRate ?? null,
+    leftScore: left.mechanicalCheckScore,
+    rightScore: right.mechanicalCheckScore,
     changed,
   };
 }

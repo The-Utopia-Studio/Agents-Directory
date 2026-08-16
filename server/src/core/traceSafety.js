@@ -28,7 +28,6 @@ export const KNOWN_CHECK_IDS = Object.freeze([
   "about_closing_has_cta",
   "draft_has_no_em_dash",
   "draft_has_no_ai_cliche_phrase",
-  "draft_registered_ai_cliche_lemma",
   // Host-raised from source markers (Uses X / X Hackathon / "(tool)"), not
   // frontmatter-declared. Same class as about_section_present.
   "source_no_employer_frame_for_marked_non_employer",
@@ -83,10 +82,6 @@ const NUMERIC_FACTS = new Set([
   "limit",
   "markedNonEmployerCount",
   "framedNonEmployerCount",
-  // How many distinct registered cliche lemmas fired. A count, not content.
-  // It travels because the maker chooses which defect to attack from it, and
-  // a scanner that reported only "at least one" under-reported by design.
-  "hitCount",
 ]);
 
 /** Did a detector fire? Enough to separate a parse miss from a real omission. */
@@ -99,21 +94,8 @@ const BOOLEAN_FACTS = new Set([
   "employerFramed",
 ]);
 
-/**
- * The closed cliche registry, as lemmas. Kept as membership rather than a
- * pattern so a future token derived from model output cannot pass by looking
- * plausible. Mirrors AI_CLICHE_SINGLE_TERMS + AI_CLICHE_PHRASE_VARIANTS in
- * eval/styleDetectors.js; a test asserts the two never drift.
- */
-const REGISTERED_CLICHE_LEMMAS = new Set([
-  "utilize", "leverage", "facilitate", "innovative", "robust", "seamless",
-  "cutting-edge", "unlock", "elevate", "passionate", "synergy", "game-changer",
-  "revolutionize", "revolutionary",
-  "sits at the intersection of",
-]);
-
 /** Punctuation only. A delimiter character is not content about anyone. */
-const DELIMITER_VALUES = new Set(["·", "|", "•", "/"]);
+const DELIMITER_VALUES = new Set(["·", "|", "•"]);
 const SECTION_VALUES = new Set([
   "LinkedIn About",
   "Spoken event introduction",
@@ -169,35 +151,7 @@ export function sanitizeCheckResults(value) {
         clean[key] = raw;
       } else if (key === "family" && typeof raw === "string" && raw.length < 64) {
         clean[key] = raw;
-      } else if (
-        key === "tier" &&
-        (raw === "scored" || raw === "named_hit" || raw === "advisory")
-      ) {
-        clean[key] = raw;
-      } else if (
-        key === "status" &&
-        (raw === "fail" ||
-          raw === "pass" ||
-          raw === "observation" ||
-          raw === "no_hit" ||
-          raw === "not_scoreable")
-      ) {
-        clean[key] = raw;
-      } else if (key === "registeredPhrase" && typeof raw === "string" && raw.length < 80) {
-        clean[key] = raw;
-      } else if (
-        key === "registeredPhrases" &&
-        Array.isArray(raw) &&
-        raw.length <= 32 &&
-        raw.every(
-          (item) => typeof item === "string" && REGISTERED_CLICHE_LEMMAS.has(item),
-        )
-      ) {
-        // Membership, not shape: every entry must be a lemma from the closed
-        // registry. `hits[].surface` is deliberately NOT allowed through — it
-        // is matched text from model output, which is material about a fellow.
-        clean[key] = [...raw];
-      } else if (key === "passed" && (raw === true || raw === false || raw === null)) {
+      } else if (key === "status" && (raw === "fail" || raw === "pass")) {
         clean[key] = raw;
       }
       // Anything else — messages, excerpts, matched text — is dropped.
@@ -234,15 +188,7 @@ export function ensureFailureCause(status, failureReason, checkResults = []) {
       ? failureReason.trim()
       : null;
   if (!reason && checks.length) {
-    const blocking = checks.filter(
-      (row) =>
-        row.status !== "observation" &&
-        row.tier !== "advisory" &&
-        row.status !== "no_hit",
-    );
-    reason = sanitizeFailureReason(
-      blocking.map((row) => row.checkId).join(", "),
-    );
+    reason = sanitizeFailureReason(checks.map((row) => row.checkId).join(", "));
   }
   if (
     !reason &&

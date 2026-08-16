@@ -166,19 +166,7 @@ describe("Phase 5 Convex-only directory", () => {
     ]) {
       expect(appSource).not.toContain(forbidden);
     }
-    // No CATALOGUE persistence. The one permitted write is the mechanical
-    // last-result display cache, which is keyed by mechLastResultKey(), is
-    // rendered with an explicit "last run on this browser · <timestamp>"
-    // caption, loses to a fresher server row, and is purged when the server
-    // store is empty. Enumerating the call sites rather than allowing a
-    // prefix keeps a future catalogue write from slipping in beside it.
-    const localStorageWrites = [
-      ...appSource.matchAll(/localStorage\.(?:setItem|removeItem)\(([^,)]*)/g),
-    ].map((m) => m[1].trim());
-    expect(localStorageWrites.length).toBeGreaterThan(0);
-    for (const keyExpression of localStorageWrites) {
-      expect(keyExpression).toMatch(/^mechLastResultKey\(/);
-    }
+    expect(appSource).not.toMatch(/localStorage\.(setItem|removeItem)\(/);
     expect(appSource).toContain("LEGACY_STORE_KEY");
     expect(appSource).toContain("readBrowserMigrationSnapshot(localStorage,LEGACY_STORE_KEY)");
   });
@@ -225,15 +213,43 @@ describe("Phase 5 Convex-only directory", () => {
     expect(reject).toContain("Reject unavailable");
   });
 
-  test("Railway affordances render the server governedRuntime verdict", () => {
-    expect(appSource).not.toContain("function capabilityIdentityMatches");
-    const load = sliceSource("async function loadRunCapability", "function showCapabilityFailure");
-    expect(load).toContain("governedRuntimeRefused(capability)");
-    expect(load).toContain("governedRuntimeReason(capability)");
-    expect(load).not.toMatch(/artifactDigest!==expected/);
-    const helpers = sliceSource("function governedRuntimeRefused", "async function loadRunCapability");
-    expect(helpers).toContain("capability.governedRuntime.matched===false");
-    expect(helpers).toContain("capability.governedRuntime.reason");
+  test("Railway affordances require the governed artifact or source pin", () => {
+    const context = createContext({
+      hasUsabilityMode: (agent, mode) => agent.usabilityModes.includes(mode),
+      canInstall: (agent) => agent.usabilityModes.includes("download-install"),
+      canHandoff: (agent) => agent.usabilityModes.includes("prepared-handoff"),
+    });
+    runInContext(
+      sliceSource("const GOVERNED_RUNTIME_MISMATCH", "async function loadRunCapability"),
+      context,
+    );
+    const [a7, a8] = mapGovernedDirectoryRows(governedRows);
+    const a7Capability = {
+      installArtifact: {
+        available: true,
+        artifactVersion: "biocraft-singleshot-v5",
+        artifactDigest: a7Digest,
+        artifactDigestAlgorithm: "sha256",
+      },
+    };
+    expect(context.capabilityIdentityMatches(a7, a7Capability)).toBe(true);
+    expect(
+      context.capabilityIdentityMatches(a7, {
+        installArtifact: { ...a7Capability.installArtifact, artifactDigest: "b".repeat(64) },
+      }),
+    ).toBe(false);
+    expect(
+      context.capabilityIdentityMatches(a8, {
+        handoff: {
+          available: true,
+          repoUrl: "https://github.com/The-Utopia-Studio/ux-qa-agent",
+          commitSha: a8Commit,
+        },
+      }),
+    ).toBe(true);
+    expect(appSource).toContain(
+      "Runtime version does not match the governed version. Deployment or approval is incomplete.",
+    );
   });
 
   test("required live affordances remain present", () => {

@@ -1,14 +1,8 @@
 import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
-import {
-  internalMutation,
-  mutation,
-  query,
-  type MutationCtx,
-} from "./_generated/server";
+import { mutation, query, type MutationCtx } from "./_generated/server";
 import { requireApprover } from "./lib/auth";
-import { assertServiceReviewIdentity } from "./lib/serviceActor";
-import { actorIdentity, editCategory, releaseTrigger } from "./lib/validators";
+import { editCategory } from "./lib/validators";
 
 type TerminalDecision = "approve" | "reject";
 
@@ -108,68 +102,6 @@ async function loadDecisionTarget(
   return { proposal, agent, candidate };
 }
 
-/**
- * Every gate between a candidate and the pointer. Shared verbatim by the human
- * UI path and the merged-PR service path so the two can never drift: the
- * promotion-evidence requirement is the only thing standing between a merged
- * PR and a live version, and it is applied here once.
- */
-async function assertReleasableCandidate(
-  ctx: MutationCtx,
-  {
-    proposal,
-    agent,
-    candidate,
-  }: {
-    proposal: Doc<"proposals">;
-    agent: Doc<"agents">;
-    candidate: Doc<"agentVersions">;
-  },
-): Promise<void> {
-  if (agent.currentApprovedVersionId !== proposal.priorApprovedVersionId) {
-    decisionConflict(
-      "Proposal was based on a different approved version and cannot be released",
-    );
-  }
-  if (
-    !candidate.artifact ||
-    !candidate.artifact.locator.trim() ||
-    !candidate.artifact.declaredDigest.trim()
-  ) {
-    throw new Error(
-      "Unchanged approval requires an immutable artifact reference and declared digest",
-    );
-  }
-
-  const evalResults = await ctx.db
-    .query("evalResults")
-    .withIndex("by_agentVersionId", (q) =>
-      q.eq("agentVersionId", candidate._id),
-    )
-    .collect();
-  const evidenceRows = await Promise.all(
-    evalResults.map((result) => ctx.db.get(result.evidenceId)),
-  );
-  const hasPromotionEligibleEvidence = evidenceRows.some(
-    (evidence) => evidence?.eligibleForPromotion === true,
-  );
-  if (!hasPromotionEligibleEvidence) {
-    throw new ConvexError({
-      code: "PROMOTION_EVIDENCE_REQUIRED",
-      status: 409,
-      message:
-        "PROMOTION_EVIDENCE_REQUIRED: candidate has no evalResult whose evidence is eligibleForPromotion",
-    });
-  }
-  if (
-    evalResults.some((result) =>
-      result.guardrailResults.some((guardrail) => !guardrail.passed),
-    )
-  ) {
-    throw new Error("Promotion blocked by a failed guardrail");
-  }
-}
-
 export const approve = mutation({
   args: {
     proposalId: v.id("proposals"),
@@ -187,7 +119,34 @@ export const approve = mutation({
     const canonical = await terminalResultOrConflict(ctx, proposal, "approve");
     if (canonical) return canonical;
 
-    await assertReleasableCandidate(ctx, { proposal, agent, candidate });
+    if (agent.currentApprovedVersionId !== proposal.priorApprovedVersionId) {
+      decisionConflict(
+        "Proposal was based on a different approved version and cannot be released",
+      );
+    }
+    if (
+      !candidate.artifact ||
+      !candidate.artifact.locator.trim() ||
+      !candidate.artifact.declaredDigest.trim()
+    ) {
+      throw new Error(
+        "Unchanged approval requires an immutable artifact reference and declared digest",
+      );
+    }
+
+    const evalResults = await ctx.db
+      .query("evalResults")
+      .withIndex("by_agentVersionId", (q) =>
+        q.eq("agentVersionId", candidate._id),
+      )
+      .collect();
+    if (
+      evalResults.some((result) =>
+        result.guardrailResults.some((guardrail) => !guardrail.passed),
+      )
+    ) {
+      throw new Error("Promotion blocked by a failed guardrail");
+    }
 
     await ctx.db.patch(agent._id, {
       currentApprovedVersionId: candidate._id,
@@ -197,7 +156,6 @@ export const approve = mutation({
       proposalId: proposal._id,
       decision: "approve",
       actor,
-      actorKind: "human",
       editCategory: args.editCategory,
       priorApprovedVersionId: proposal.priorApprovedVersionId,
       resultingVersionId: candidate._id,
@@ -211,148 +169,6 @@ export const approve = mutation({
       priorApprovedVersionId: proposal.priorApprovedVersionId,
       resultingVersionId: candidate._id,
     };
-  },
-});
-
-/**
- * Release triggered by a merged loop/ PR on utopia-agents.
- *
- * Called by the loop service with the Convex deploy key — there is no Clerk
- * session and none is fabricated. The row records the loop principal as
- * `actor` with actorKind "service" and the merging GitHub human as
- * `onBehalfOf`; both are always present on an approval or the write is
- * refused. The merge event travels on `releaseTrigger` as primary evidence.
- *
- * This does NOT check the approver allowlist — Railway does that before
- * calling, because a rejected login must never reach a mutation that can move
- * the pointer. What this enforces is that the allowlist in force was recorded.
- */
-export const releaseFromMergedLoopPr = internalMutation({
-  args: {
-    proposalId: v.id("proposals"),
-    onBehalfOf: actorIdentity,
-    releaseTrigger,
-  },
-  handler: async (ctx, args): Promise<DecisionResult> => {
-    const { actor, onBehalfOf } = assertServiceReviewIdentity({
-      decision: "approve",
-      onBehalfOf: args.onBehalfOf,
-    });
-    if (!onBehalfOf) {
-      // Unreachable: assertServiceReviewIdentity throws first. Kept so a
-      // future edit cannot quietly drop the human and still typecheck.
-      throw new Error("Merged-PR release lost its onBehalfOf identity");
-    }
-    if (!args.releaseTrigger.approverAllowlist.length) {
-      throw new ConvexError({
-        code: "RELEASE_ALLOWLIST_EMPTY",
-        status: 403,
-        message:
-          "RELEASE_ALLOWLIST_EMPTY: an empty approver allowlist is never permissive; refusing the release",
-      });
-    }
-    if (!args.releaseTrigger.mergeCommitSha.trim()) {
-      throw new ConvexError({
-        code: "RELEASE_TRIGGER_INCOMPLETE",
-        status: 400,
-        message:
-          "RELEASE_TRIGGER_INCOMPLETE: merge commit SHA is the primary evidence and is missing",
-      });
-    }
-    if (!args.releaseTrigger.headRef.startsWith("loop/")) {
-      throw new ConvexError({
-        code: "RELEASE_BRANCH_NOT_LOOP",
-        status: 403,
-        message: `RELEASE_BRANCH_NOT_LOOP: ${args.releaseTrigger.headRef} is not a loop/ branch`,
-      });
-    }
-
-    const { proposal, agent, candidate } = await loadDecisionTarget(
-      ctx,
-      args.proposalId,
-    );
-    const canonical = await terminalResultOrConflict(ctx, proposal, "approve");
-    if (canonical) return canonical;
-
-    await assertReleasableCandidate(ctx, { proposal, agent, candidate });
-
-    await ctx.db.patch(agent._id, {
-      currentApprovedVersionId: candidate._id,
-    });
-    await ctx.db.patch(proposal._id, { status: "approved" });
-    const reviewEventId = await ctx.db.insert("reviewEvents", {
-      proposalId: proposal._id,
-      decision: "approve",
-      actor,
-      actorKind: "service",
-      onBehalfOf,
-      releaseTrigger: args.releaseTrigger,
-      editCategory: "no-edit",
-      priorApprovedVersionId: proposal.priorApprovedVersionId,
-      resultingVersionId: candidate._id,
-      timestamp: Date.now(),
-    });
-    return {
-      proposalId: proposal._id,
-      reviewEventId,
-      decision: "approve",
-      status: "approved",
-      priorApprovedVersionId: proposal.priorApprovedVersionId,
-      resultingVersionId: candidate._id,
-    };
-  },
-});
-
-/**
- * A merged loop/ PR asked for a release and did not get one.
- *
- * Separate mutation because Convex mutations are transactional: a refusal
- * recorded inside the failing release would roll back with it and leave no
- * trace. The caller catches the failure and calls this. Non-terminal — the
- * proposal keeps its status and the pointer stays where it is.
- *
- * `onBehalfOf` is omitted only when identity resolution is itself what failed.
- */
-export const recordReleaseRefusal = internalMutation({
-  args: {
-    proposalId: v.id("proposals"),
-    refusalCode: v.string(),
-    refusalMessage: v.string(),
-    onBehalfOf: v.optional(actorIdentity),
-    releaseTrigger,
-  },
-  handler: async (ctx, args): Promise<{ reviewEventId: Id<"reviewEvents"> }> => {
-    const { actor, onBehalfOf } = assertServiceReviewIdentity({
-      decision: "release-refused",
-      onBehalfOf: args.onBehalfOf ?? null,
-    });
-    if (!args.refusalCode.trim() || !args.refusalMessage.trim()) {
-      throw new Error(
-        "A release refusal requires a code and a message — a refusal with no reason is a silent skip",
-      );
-    }
-    const proposal = await ctx.db.get(args.proposalId);
-    if (!proposal) throw new Error(`Proposal ${args.proposalId} not found`);
-
-    console.warn(
-      `[reviews] RELEASE REFUSED ${args.refusalCode} for proposal ${args.proposalId} ` +
-        `(PR #${args.releaseTrigger.pullRequestNumber} ${args.releaseTrigger.headRef}): ${args.refusalMessage}`,
-    );
-
-    const reviewEventId = await ctx.db.insert("reviewEvents", {
-      proposalId: proposal._id,
-      decision: "release-refused",
-      actor,
-      actorKind: "service",
-      ...(onBehalfOf ? { onBehalfOf } : {}),
-      releaseTrigger: args.releaseTrigger,
-      refusalCode: args.refusalCode.trim(),
-      refusalMessage: args.refusalMessage.trim(),
-      editCategory: "no-edit",
-      priorApprovedVersionId: proposal.priorApprovedVersionId,
-      timestamp: Date.now(),
-    });
-    return { reviewEventId };
   },
 });
 

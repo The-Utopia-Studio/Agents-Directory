@@ -5,7 +5,6 @@ import {
   requireClerkApprover,
   requireClerkIdentity,
 } from "../auth/clerkJwt.js";
-import { verifyGithubSignature } from "../github/webhookSignature.js";
 
 /**
  * Bulk metadata export is the one read that hands over the whole catalogue at
@@ -201,60 +200,6 @@ export function registerRoutes(router, svc, engine, config = {}) {
   router.get("/api/agents/:id/traces/:traceId/grounding-evidence", async ({ params, req }) => {
     const actor = await requireClerkApprover(req, config.clerk);
     return svc.getGroundingEvidence(params.id, params.traceId, actor);
-  });
-
-  // Approver-only: link the Convex proposal a loop branch releases on merge.
-  router.post("/api/agents/:id/improvements/:pid/link-convex-proposal", async ({ params, body, req }) => {
-    await requireClerkApprover(req, config.clerk);
-    return reply(
-      200,
-      await svc.linkConvexProposal(
-        params.id,
-        params.pid === "current" ? null : params.pid,
-        (body && body.convexProposalId) || "",
-      ),
-    );
-  });
-
-  // ── Merged loop/ PR → Convex release ──
-  //
-  // The only route on this service that can move currentApprovedVersionId
-  // without a signed-in human. It is exempt from the API_TOKEN gate (GitHub
-  // cannot send our bearer token) and authenticated by HMAC over the raw body
-  // instead — see SELF_AUTHENTICATED_PATHS in router.js.
-  //
-  // Refusals answer with their code and a reason. A delivery this endpoint is
-  // not for answers 200 with an explicit `reason`, so an ignore is still
-  // reported rather than looking like a success.
-  router.post("/api/github/webhook", async ({ body, req }) => {
-    verifyGithubSignature({
-      rawBody: req.rawBody,
-      signatureHeader: req.headers["x-hub-signature-256"],
-      secret: config?.github?.webhookSecret || "",
-    });
-    const eventName = String(req.headers["x-github-event"] || "");
-    const delivery = String(req.headers["x-github-delivery"] || "");
-    try {
-      const result = await svc.releaseFromMergedLoopPullRequest({
-        eventName,
-        payload: body || {},
-      });
-      return reply(200, { delivery, ...result });
-    } catch (err) {
-      // Refusals are answers, not crashes. Return the code and the reason so
-      // the GitHub delivery log shows exactly why the pointer did not move.
-      return reply(err?.status || 500, {
-        delivery,
-        released: false,
-        error: err?.message || String(err),
-        code: err?.code || "loop_release_failed",
-        pointerMoved: false,
-        ...(err?.refusalEvent ? { refusalEvent: err.refusalEvent } : {}),
-        ...(err?.refusalRecordError
-          ? { refusalRecordError: err.refusalRecordError }
-          : {}),
-      });
-    }
   });
 }
 

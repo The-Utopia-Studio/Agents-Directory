@@ -114,14 +114,14 @@ test("A7 copy export is byte-for-byte the system artifact runtime executes", asy
   assert.equal(exported.kind, "single-shot");
   assert.equal(exported.artifactDigest, expectedDigest);
   assert.equal(exported.artifactDigestAlgorithm, "sha256");
-  assert.equal(exported.artifactVersion, "biocraft-singleshot-v10");
+  assert.equal(exported.artifactVersion, "biocraft-singleshot-v9");
   assert.equal(
     exported.filename,
-    `A7-biocraft-singleshot-v10-${expectedDigest.slice(0, 7)}-SKILL.md`,
+    `A7-biocraft-singleshot-v9-${expectedDigest.slice(0, 7)}-SKILL.md`,
   );
   assert.match(
     exported.content,
-    /^artifact_version: biocraft-singleshot-v10$/m,
+    /^artifact_version: biocraft-singleshot-v9$/m,
   );
   assert.doesNotMatch(exported.content, /artifact-(?:commit|digest):/);
   assert.match(exported.content, /## Mode boundary/);
@@ -201,7 +201,7 @@ test("A7 ZIP contains the runtime folder and follows the evaluated version", asy
   assert.equal(response.headers.get("x-artifact-digest"), expectedDigest);
   assert.equal(
     response.headers.get("content-disposition"),
-    `attachment; filename="A7-biocraft-singleshot-v10-${expectedDigest.slice(0, 7)}.zip"`,
+    `attachment; filename="A7-biocraft-singleshot-v9-${expectedDigest.slice(0, 7)}.zip"`,
   );
   const manifest = files.get("MANIFEST.md").toString();
   assert.match(manifest, /Agent name: Biocraft single-shot draft/);
@@ -212,7 +212,7 @@ test("A7 ZIP contains the runtime folder and follows the evaluated version", asy
   // appears only as a cross-reference, in prose that says so.
   assert.match(
     manifest,
-    /\*\*Artifact version — quote this when returning a result:\*\*\n`biocraft-singleshot-v10`/,
+    /\*\*Artifact version — quote this when returning a result:\*\*\n`biocraft-singleshot-v9`/,
   );
   assert.match(
     manifest,
@@ -254,7 +254,7 @@ test("A7 ZIP contains the runtime folder and follows the evaluated version", asy
   assert.match(skill, /headline_max_220_characters/);
   assert.match(skill, /about_has_no_delimiter_separated_keyword_run/);
   assert.match(skill, /draft_has_no_em_dash/);
-  assert.match(skill, /draft_registered_ai_cliche_lemma/);
+  assert.match(skill, /draft_has_no_ai_cliche_phrase/);
   assert.match(skill, /about_closing_has_cta/);
 
   // The count in the sentence must match the list it introduces.

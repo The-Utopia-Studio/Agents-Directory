@@ -5,11 +5,6 @@ I help clinics ship clearer intake tools — without waiting on a perfect data r
 At Helix Labs I learned how product design actually ships. At Factory, I shipped
 an MVP for Dextrum. I also did product strategy at the Snoonu Hackathon.
 
-My work has always been sitting at the crossroads of design and delivery – the
-part most teams skip.
-
-Focus areas: product design / service design / health operations / intake systems
-
 One delivery cut prior-auth turnaround from 11 days to 4 across 38 clinics.
 
 ### Spoken event introduction

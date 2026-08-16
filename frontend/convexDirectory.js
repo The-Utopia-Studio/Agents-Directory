@@ -9,12 +9,6 @@ const registerAgentMutation = makeFunctionReference("agents:registerAgent");
 const updateAgentMutation = makeFunctionReference("agents:updateAgent");
 const createRequestMutation = makeFunctionReference("requests:createRequest");
 const updateRequestMutation = makeFunctionReference("requests:updateRequest");
-// The only public path to promotion-eligible evidence. Called by the BROWSER
-// as the signed-in human — that is what makes actorKind "human". Routing it
-// through Railway would make it a service write and defeat the point.
-const recordVerifiedHumanRunEvidenceMutation = makeFunctionReference(
-  "evidence:recordVerifiedHumanRunEvidence",
-);
 
 function labels(items) {
   return Array.isArray(items)
@@ -175,24 +169,6 @@ export function createConvexDirectoryClient({ url, clientFactory } = {}) {
     },
     async updateRequest(args) {
       return await client.mutation(updateRequestMutation, args);
-    },
-    /**
-     * Record that this signed-in human witnessed a hosted run.
-     *
-     * `artifactDigest` MUST be the digest the run actually served, taken from
-     * the run response — never the digest we expected. Attesting to the
-     * expected bytes when different bytes ran is the fabrication this whole
-     * path exists to prevent.
-     *
-     * Does NOT create an evalResult. That is a separate deliberate act on a
-     * separate surface; if one action produced both, the separation would be
-     * decorative.
-     */
-    async recordVerifiedHumanRunEvidence({ displayId, artifactDigest }) {
-      return await client.mutation(recordVerifiedHumanRunEvidenceMutation, {
-        displayId,
-        artifactDigest,
-      });
     },
     async listRequests() {
       const rows = await client.query(authenticatedRequestsQuery, {});
