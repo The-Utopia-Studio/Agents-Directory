@@ -79,7 +79,7 @@ test("forbid-employer-frame fails canned bad and passes canned improved", () => 
 
 test("A10 live artifact keeps A7 mechanical checks and scores Mira gap-fill golden", () => {
   const live = getRuntimeArtifactDescriptor("A10");
-  assert.equal(live.artifactVersion, "biocraft-gapfill-v3");
+  assert.equal(live.artifactVersion, "biocraft-gapfill-v4");
   assert.ok(live.checks.includes("about_hook_max_200_characters"));
   assert.ok(live.checks.includes("draft_has_no_em_dash"));
   assert.ok(
@@ -91,7 +91,8 @@ test("A10 live artifact keeps A7 mechanical checks and scores Mira gap-fill gold
   assert.ok(score.failed.includes("source_no_employer_frame_for_snoonu"));
   assert.ok(score.failed.includes("source_no_founding_verb_near_dextrum"));
   assert.ok(score.failed.includes("draft_has_no_em_dash"));
-  assert.ok(score.failed.includes("about_closing_has_cta"));
+  assert.equal(score.failed.includes("about_closing_has_cta"), false);
+  assert.ok(score.observations?.includes("about_closing_has_cta"));
   assert.ok(
     score.checkResults
       .filter((r) => r.checkId.startsWith("source_"))

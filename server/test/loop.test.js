@@ -2,6 +2,20 @@
 // (offline) providers. No network, no keys.
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { getRuntimeArtifactDescriptor } from "../src/invoke/runtimeArtifacts.js";
+
+// The maker's noise gate only accepts defects observed on the artifact running
+// now. These fixtures are about maker CLASSIFICATION, not liveness, so they pin
+// to the live digest — an unpinned fixture trace is exactly the stale evidence
+// the gate exists to reject.
+const LIVE_A7 = getRuntimeArtifactDescriptor("A7");
+const liveTrace = (fields) => ({
+  artifactVersion: LIVE_A7.artifactVersion,
+  artifactDigest: LIVE_A7.artifactDigest,
+  artifactDigestAlgorithm: "sha256",
+  outputSource: "live",
+  ...fields,
+});
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -132,13 +146,13 @@ async function seedLivePromotionEvidence(store, agentId, {
  */
 async function serviceWithA7Feedback(feedback) {
   const { svc, store } = await freshServiceWithStore();
-  const trace = await store.append("traces", {
+  const trace = await store.append("traces", liveTrace({
     agentId: "A7",
     status: "ok",
     source: "real",
     ts: new Date().toISOString(),
     metadata: { via: "runtime" },
-  });
+  }));
   await svc.recordFeedback("A7", trace.id, feedback);
   return svc;
 }
@@ -222,23 +236,23 @@ test("reviewer feedback notes count as evidence without any failing trace", asyn
   // intern feedback alone is suppressed. Voice mismatch is still open and is
   // delivered here as a failing-trace signal that does not need a low rating.
   const { svc, store } = await freshServiceWithStore();
-  await store.append("traces", {
+  await store.append("traces", liveTrace({
     agentId: "A7",
     status: "fail",
     source: "real",
     failureReason: "voice mismatch",
     ts: new Date().toISOString(),
     metadata: { via: "runtime" },
-  });
+  }));
   // Four-star feedback alone would not be a low rating; the failing trace is
   // the defect signal. Attach feedback so averageRating is still populated.
-  const okTrace = await store.append("traces", {
+  const okTrace = await store.append("traces", liveTrace({
     agentId: "A7",
     status: "ok",
     source: "real",
     ts: new Date().toISOString(),
     metadata: { via: "runtime" },
-  });
+  }));
   await svc.recordFeedback("A7", okTrace.id, {
     rating: 4,
     notes: "tone felt slightly off but no specific grounding miss",
@@ -265,7 +279,13 @@ test("the maker verifies current state against the artifact before claiming it",
   // maker must refuse rather than re-propose closed gaps.
   await assert.rejects(
     () => svc.runImprovement("A7"),
-    (e) => e.status === 422 && /already addressed/i.test(e.message),
+    // The noise gate now fires before the optimizer reaches its
+    // already-addressed check: feedback prose alone, with no live run
+    // carrying a check id, is not a classified defect. Still a refusal.
+    (e) =>
+      e.status === 422 &&
+      (/already addressed/i.test(e.message) ||
+        /not a classified defect/i.test(e.message)),
   );
 
   const artifact = await readFile(
@@ -286,7 +306,13 @@ test("praise about a registered check does not create a duplicate proposal", asy
   });
   await assert.rejects(
     () => svc.runImprovement("A7"),
-    (e) => e.status === 422 && /already addressed/i.test(e.message),
+    // The noise gate now fires before the optimizer reaches its
+    // already-addressed check: feedback prose alone, with no live run
+    // carrying a check id, is not a classified defect. Still a refusal.
+    (e) =>
+      e.status === 422 &&
+      (/already addressed/i.test(e.message) ||
+        /not a classified defect/i.test(e.message)),
   );
 });
 
@@ -294,21 +320,21 @@ test("a registered checker defect is suppressed while an unresolved prompt defec
   // Phrase-list feedback would have proposed a cliche check; that check is
   // registered in v7. Pair it with a still-open voice-mismatch failing trace.
   const { svc, store } = await freshServiceWithStore();
-  const okTrace = await store.append("traces", {
+  const okTrace = await store.append("traces", liveTrace({
     agentId: "A7",
     status: "ok",
     source: "real",
     ts: new Date().toISOString(),
     metadata: { via: "runtime" },
-  });
-  await store.append("traces", {
+  }));
+  await store.append("traces", liveTrace({
     agentId: "A7",
     status: "fail",
     source: "real",
     failureReason: "voice mismatch",
     ts: new Date().toISOString(),
     metadata: { via: "runtime" },
-  });
+  }));
   await svc.recordFeedback("A7", okTrace.id, {
     rating: 3,
     notes:
@@ -328,16 +354,16 @@ test("a registered checker defect is suppressed while an unresolved prompt defec
 
 test("a proposal records the artifact it was derived against", async () => {
   const { svc, store } = await freshServiceWithStore();
-  await store.append("traces", {
+  await store.append("traces", liveTrace({
     agentId: "A7",
     status: "fail",
     source: "real",
     failureReason: "voice mismatch",
     ts: new Date().toISOString(),
     metadata: { via: "runtime" },
-  });
+  }));
   const [proposal] = await svc.runImprovement("A7");
-  assert.equal(proposal.targetArtifactVersion, "biocraft-singleshot-v9");
+  assert.equal(proposal.targetArtifactVersion, "biocraft-singleshot-v10");
   assert.match(proposal.targetArtifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(proposal.targetArtifactDigestAlgorithm, "sha256");
   assert.equal(proposal.targetAgentVersion, (await svc.getAgent("A7")).version);
@@ -345,14 +371,14 @@ test("a proposal records the artifact it was derived against", async () => {
 
 test("approval is refused when the targeted artifact has moved", async () => {
   const { svc, store } = await freshServiceWithStore();
-  await store.append("traces", {
+  await store.append("traces", liveTrace({
     agentId: "A7",
     status: "fail",
     source: "real",
     failureReason: "voice mismatch",
     ts: new Date().toISOString(),
     metadata: { via: "runtime" },
-  });
+  }));
   const [proposal] = await svc.runImprovement("A7");
 
   const agent = await svc.getAgent("A7");
@@ -369,7 +395,7 @@ test("approval is refused when the targeted artifact has moved", async () => {
     () => svc.approveImprovement("A7", proposal.id, TEST_APPROVER),
     (e) => {
       assert.equal(e.status, 409);
-      assert.match(e.message, /but the live artifact is biocraft-singleshot-v9/);
+      assert.match(e.message, /but the live artifact is biocraft-singleshot-v10/);
       return true;
     },
   );

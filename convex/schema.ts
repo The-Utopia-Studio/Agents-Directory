@@ -25,6 +25,7 @@ import {
   proposalStatus,
   proposalVerdict,
   providerCost,
+  releaseTrigger,
   requestPriority,
   requestStatus,
   reviewDecision,
@@ -130,7 +131,27 @@ export default defineSchema({
     eligibleForPromotion: v.boolean(),
     runBy: actorIdentity,
     // Optional: absent = UNKNOWN (legacy), never implied human. See actorKind.
+    // actorKind is WHO WROTE THE ROW and nothing else. It is deliberately not
+    // overloaded to mean "a human was involved" — that question is answered by
+    // runBy + executedBy together.
     actorKind: v.optional(actorKind),
+    // Who performed the execution, when that is not who wrote the row. On a
+    // human-witnessed hosted run the browser writes the row (runBy = the
+    // signed-in human, actorKind "human") while Railway performed the call —
+    // recorded here as the loop service principal. Same two-identity shape as
+    // reviewEvents actor/onBehalfOf, with each field naming its own role.
+    executedBy: v.optional(actorIdentity),
+    // Set only when a row's eligibility was corrected after the fact by a rule
+    // change. Evidence is insert-only, so a correction is recorded, never a
+    // silent rewrite of what the row originally claimed.
+    eligibilityCorrection: v.optional(
+      v.object({
+        previousEligibleForPromotion: v.boolean(),
+        reason: v.string(),
+        correctedBy: actorIdentity,
+        correctedAt: v.number(),
+      }),
+    ),
     occurredAt: v.number(),
     cost: v.optional(providerCost),
     feedbackForEvidenceId: v.optional(v.id("evidence")),
@@ -163,7 +184,21 @@ export default defineSchema({
   reviewEvents: defineTable({
     proposalId: v.id("proposals"),
     decision: reviewDecision,
+    // Who wrote the row. On the merged-PR release path this is the loop
+    // service principal, never the human — a service act is recorded as a
+    // service act. Absent = UNKNOWN (legacy rows), never implied human.
     actor: actorIdentity,
+    actorKind: v.optional(actorKind),
+    // The human the service acted for. Optional in the validator only because
+    // legacy rows predate it; assertServiceReviewIdentity in lib/serviceActor
+    // REQUIRES it on every service-written approval and refuses the write
+    // otherwise. Never derive an approver from `actor` alone on a service row.
+    onBehalfOf: v.optional(actorIdentity),
+    // The merge event itself — the primary evidence the identity came from.
+    releaseTrigger: v.optional(releaseTrigger),
+    // Set only on decision "release-refused": why the pointer did not move.
+    refusalCode: v.optional(v.string()),
+    refusalMessage: v.optional(v.string()),
     editCategory,
     priorApprovedVersionId: v.optional(v.id("agentVersions")),
     resultingVersionId: v.optional(v.id("agentVersions")),

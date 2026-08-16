@@ -1,7 +1,9 @@
 // Orchestrate mechanical compare experiments. See compareExperiments.js.
 
-import { loadHistoricalArtifact } from "./historicalArtifacts.js";
-import { getGoldenCase } from "./goldenCases.js";
+import { loadHistoricalArtifact, HISTORICAL_ARTIFACT_REGISTRY } from "./historicalArtifacts.js";
+import { getGoldenCase, listGoldenCases } from "./goldenCases.js";
+import { getRuntimeArtifactDescriptor } from "../invoke/runtimeArtifacts.js";
+import { holdoutSplitForCase, scoresByHoldout } from "./holdout.js";
 import { scoreMechanicalOutput } from "./scoreMechanicalOutput.js";
 import {
   EXPERIMENT_CHECK_COVERAGE,
@@ -19,6 +21,37 @@ import {
 
 function refuse(message, status = 400) {
   throw Object.assign(new Error(message), { status });
+}
+
+function loadScoringArtifact(agentId, artifactVersion) {
+  if (artifactVersion && HISTORICAL_ARTIFACT_REGISTRY[artifactVersion]) {
+    return loadHistoricalArtifact(artifactVersion);
+  }
+  const live = getRuntimeArtifactDescriptor(agentId);
+  if (live?.checks?.length) {
+    if (
+      !artifactVersion ||
+      artifactVersion === "live" ||
+      artifactVersion === live.artifactVersion
+    ) {
+      return {
+        agentId,
+        artifactVersion: live.artifactVersion,
+        artifactDigest: live.artifactDigest,
+        artifactDigestAlgorithm: live.artifactDigestAlgorithm || "sha256",
+        checks: [...live.checks],
+        guardrails: [...(live.guardrails || [])],
+        source: "live-runtime",
+      };
+    }
+  }
+  refuse(
+    `No scoring artifact for ${agentId} version ${artifactVersion || "live"}. ` +
+      (live
+        ? `Live artifact is ${live.artifactVersion}.`
+        : "No runtime artifact with a checks: block."),
+    400,
+  );
 }
 
 function scoreWith({
@@ -62,16 +95,22 @@ export async function runMechanicalScore({
 }) {
   const golden = getGoldenCase(caseId);
   if (!golden) refuse(`Unknown golden case: ${caseId}`, 404);
+  if (golden.agentId && agentId && golden.agentId !== agentId) {
+    refuse(
+      `Golden case ${caseId} belongs to ${golden.agentId}, not ${agentId}`,
+      400,
+    );
+  }
 
   let artifact;
   try {
-    artifact = loadHistoricalArtifact(artifactVersion);
+    artifact = loadScoringArtifact(agentId, artifactVersion);
   } catch (error) {
     return {
       ok: false,
       verification: "failed",
       label: "mechanical_check_score",
-      artifactVersion,
+      artifactVersion: artifactVersion || null,
       error: error.message,
       feedsFleetHealth: false,
       writesEvalHistory: false,
@@ -108,6 +147,8 @@ export async function runMechanicalScore({
     experiment: null,
     caseId,
     agentId,
+    sealed: golden.sealed === true,
+    holdout: holdoutSplitForCase(caseId),
     outputSource,
     outputProvenance:
       outputSource === "live" ? "live_generation" : "canned_fixtures",
@@ -122,14 +163,17 @@ export async function runMechanicalScore({
     rulerVersion: score.rulerVersion || null,
     guardrailGate: score.guardrailGate,
     declaredChecks: [...artifact.checks],
-    mechanicalCheckScore: score.mechanicalCheckScore,
-    scoreableCount: score.scoreableCount,
+    groundingPassRate: score.groundingPassRate,
+    groundingScoreableCount: score.groundingScoreableCount,
+    groundingBasisCheckIds: score.groundingBasisCheckIds,
     stylePassRate: score.stylePassRate,
     styleScoreableCount: score.styleScoreableCount,
+    styleBasisCheckIds: score.styleBasisCheckIds,
     byCategory: score.byCategory,
     passed: [...score.passed],
     failed: [...score.failed],
     notScoreable: [...score.notScoreable],
+    observations: [...(score.observations || [])],
     checkResults: score.checkResults.map((row) => ({
       id: row.id,
       checkId: row.id,
@@ -138,6 +182,7 @@ export async function runMechanicalScore({
       severity: row.severity,
       category: row.category,
       status: row.status,
+      tier: row.tier,
       family: row.family,
       ...(row.historicalImplementation
         ? { historicalImplementation: true }
@@ -168,12 +213,48 @@ export async function runMechanicalScore({
         score,
         outputSource,
         generation,
+        sealed: golden.sealed === true,
       }),
     );
     result.recordedId = recorded.id;
   }
 
   return result;
+}
+
+/**
+ * Score every golden case for an agent. Sealed and unsealed are reported as
+ * separate lists — never averaged into one number.
+ */
+export async function runMechanicalScoresByHoldout(opts) {
+  const { agentId, artifactVersion, outputSource = "canned", config, store } = opts;
+  const cases = listGoldenCases(agentId);
+  const results = [];
+  for (const golden of cases) {
+    results.push(
+      await runMechanicalScore({
+        caseId: golden.id,
+        artifactVersion,
+        outputSource,
+        agentId,
+        config,
+        store,
+      }),
+    );
+  }
+  const split = scoresByHoldout(results);
+  return {
+    ok: results.every((r) => r.ok),
+    label: "mechanical_check_scores_by_holdout",
+    agentId,
+    artifactVersion: artifactVersion || null,
+    outputSource,
+    unsealed: split.unsealed,
+    sealed: split.sealed,
+    averaged: false,
+    feedsFleetHealth: false,
+    writesEvalHistory: false,
+  };
 }
 
 /**
@@ -363,10 +444,12 @@ export async function runMechanicalCompare(store, opts) {
       passed: result.left.passed,
       failed: result.left.failed,
       notScoreable: result.left.notScoreable,
-      mechanicalCheckScore: result.left.mechanicalCheckScore,
-      scoreableCount: result.left.scoreableCount,
+      groundingPassRate: result.left.groundingPassRate,
+      groundingScoreableCount: result.left.groundingScoreableCount,
+      groundingBasisCheckIds: result.left.groundingBasisCheckIds,
       stylePassRate: result.left.stylePassRate,
       styleScoreableCount: result.left.styleScoreableCount,
+      styleBasisCheckIds: result.left.styleBasisCheckIds,
       byCategory: result.left.byCategory,
       checkResults: result.left.checkResults,
     };
@@ -380,10 +463,12 @@ export async function runMechanicalCompare(store, opts) {
       passed: result.right.passed,
       failed: result.right.failed,
       notScoreable: result.right.notScoreable,
-      mechanicalCheckScore: result.right.mechanicalCheckScore,
-      scoreableCount: result.right.scoreableCount,
+      groundingPassRate: result.right.groundingPassRate,
+      groundingScoreableCount: result.right.groundingScoreableCount,
+      groundingBasisCheckIds: result.right.groundingBasisCheckIds,
       stylePassRate: result.right.stylePassRate,
       styleScoreableCount: result.right.styleScoreableCount,
+      styleBasisCheckIds: result.right.styleBasisCheckIds,
       byCategory: result.right.byCategory,
       checkResults: result.right.checkResults,
     };

@@ -215,12 +215,36 @@ export const proposalVerdict = v.object({
   reasons: v.array(v.string()),
 });
 
+/**
+ * `release-refused` is NOT terminal. It records that a merged loop/ PR asked
+ * for a release and was denied, so the refusal is visible in Convex rather
+ * than only in a Railway log. The proposal stays open and the pointer stays
+ * put. Only approve/reject remain terminal decisions.
+ */
 export const reviewDecision = v.union(
   v.literal("approve"),
   v.literal("approve-with-edit"),
   v.literal("reject"),
   v.literal("defer"),
+  v.literal("release-refused"),
 );
+
+/**
+ * The merge event that triggered a release attempt — the primary evidence.
+ * The GitHub identity in `onBehalfOf` is reconstructable from these; the
+ * reverse is not true, so these are recorded even when identity resolution
+ * failed. `approverAllowlist` is the rule that was in force at release time,
+ * so widening the env var later cannot rewrite what governed a past release.
+ */
+export const releaseTrigger = v.object({
+  kind: v.literal("merged-loop-pull-request"),
+  repo: v.string(),
+  pullRequestNumber: v.number(),
+  headRef: v.string(),
+  mergeCommitSha: v.string(),
+  approverAllowlist: v.array(v.string()),
+  observedAt: v.number(),
+});
 
 export const editCategory = v.union(
   v.literal("no-edit"),

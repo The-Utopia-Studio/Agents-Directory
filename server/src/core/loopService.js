@@ -18,6 +18,13 @@ import {
   loadHandoffBriefing,
 } from "../handoff/handoffArtifacts.js";
 import { sanitizeCheckResults, sanitizeFailureReason, ensureFailureCause, sanitizeLlmGroundingStatus } from "./traceSafety.js";
+import { isAdvisoryResult, isBlockingCheckResult } from "../eval/checkTiers.js";
+import { assertMechanicalCheckCapability } from "../eval/mechanicalCapability.js";
+import {
+  assertNoSealedGoldenCasesForMaker,
+  isSealedGoldenCaseId,
+  mechanicalResultsForMaker,
+} from "../eval/holdout.js";
 import { LLM_GROUNDING_STATUS } from "../eval/llmGroundingCheck.js";
 import {
   GROUNDING_CALIBRATION_COLLECTION,
@@ -31,6 +38,7 @@ import {
   systematicFalsePositiveChecks,
 } from "../eval/groundingCalibration.js";
 import { validateProposal } from "../improve/proposalContract.js";
+import { assertMakerDefectGate } from "../improve/makerNoiseGate.js";
 import { readProposals, writeProposals, selectProposal } from "./proposals.js";
 import { buildServiceMigrationSnapshot } from "../migration/export.js";
 import { createConvexAuthorityClient } from "../convex/authorityClient.js";
@@ -38,6 +46,11 @@ import {
   LoopPullRequestError,
   openLoopPullRequest,
 } from "../github/loopPullRequest.js";
+import { handleMergedLoopPullRequest } from "../github/loopMergeRelease.js";
+import {
+  GOVERNED_RUNTIME_MISMATCH,
+  governedRuntimeVerdict,
+} from "./governedRuntime.js";
 
 function outputDigest(output) {
   return createHash("sha256").update(String(output)).digest("hex");
@@ -60,6 +73,108 @@ function approvedChangePatch(proposal) {
     `# Rationale: ${change.rationale}`,
     `# Evidence: ${(change.evidence || []).join(", ")}`,
   ].join("\n");
+}
+
+/**
+ * Independent sealed-holdout assertion for the release path.
+ *
+ * The P3 guard runs where the maker assembles evidence. This one runs on what
+ * is actually being released, because the release path reaches the proposal by
+ * a different route (merge webhook → branch → stored proposal) and an assertion
+ * that only guards the maker's input does not cover it.
+ *
+ * Checks three ways sealed material could ride along: the case id, the case's
+ * verbatim source text, and its canned bad output. Any hit refuses the release.
+ */
+export function assertProposalCarriesNoSealedMaterial(proposal, sealedCases = []) {
+  if (!proposal) return;
+  // Structural: evidence-shaped fields go through the shared holdout guard.
+  assertNoSealedGoldenCasesForMaker({
+    mechanicalResults: proposal.makerMechanicalResults || [],
+    goldenCaseIds: proposal.goldenCaseIds || [],
+    goldenCases: proposal.goldenCases || [],
+    goldenCaseId: proposal.goldenCaseId,
+    goldenCase: proposal.goldenCase,
+  });
+
+  // Every string the proposal carries, however deeply nested. Walking the
+  // values rather than JSON.stringify on purpose: serialising escapes newlines,
+  // so a verbatim multi-line span of a sealed bio would slip a substring match.
+  const strings = collectStrings(proposal);
+  const hits = [];
+
+  // Any evidence id that names a sealed case, wherever it is nested.
+  for (const change of proposal.changes || []) {
+    for (const id of change.evidence || []) {
+      if (isSealedGoldenCaseId(id)) hits.push(`evidence id ${id}`);
+    }
+  }
+
+  for (const sealedCase of sealedCases) {
+    if (!sealedCase?.id) continue;
+    if (strings.some((value) => value.includes(sealedCase.id))) {
+      hits.push(`sealed case id ${sealedCase.id}`);
+    }
+    // Verbatim spans of the sealed source or its canned bad output. Sampled in
+    // 64-char windows: shorter matches are ordinary English, longer ones are
+    // the case text itself. Same threshold the feedback-inlining guard uses.
+    for (const [label, text] of [
+      ["source", String(sealedCase.input || "")],
+      ["canned bad output", safeCannedBadOutput(sealedCase)],
+    ]) {
+      const normalizedText = normalizeForLeakScan(text);
+      if (normalizedText.length < 64) continue;
+      const haystack = strings.map(normalizeForLeakScan);
+      for (let i = 0; i <= normalizedText.length - 64; i += 32) {
+        const window = normalizedText.slice(i, i + 64);
+        if (haystack.some((value) => value.includes(window))) {
+          hits.push(`verbatim ${label} of sealed case ${sealedCase.id}`);
+          break;
+        }
+      }
+    }
+  }
+
+  const unique = [...new Set(hits)];
+  if (unique.length) {
+    throw Object.assign(
+      new Error(
+        `Sealed holdout material reached the release path: ${unique.join(", ")}. Refusing to release.`,
+      ),
+      { status: 422, code: "sealed_material_in_release" },
+    );
+  }
+}
+
+function safeCannedBadOutput(sealedCase) {
+  try {
+    return String(sealedCase.getCannedBadOutput?.() || "");
+  } catch {
+    return "";
+  }
+}
+
+/** Every string value in an arbitrarily nested structure. */
+function collectStrings(value, out = [], seen = new Set()) {
+  if (typeof value === "string") {
+    out.push(value);
+    return out;
+  }
+  if (!value || typeof value !== "object" || seen.has(value)) return out;
+  seen.add(value);
+  for (const child of Array.isArray(value) ? value : Object.values(value)) {
+    collectStrings(child, out, seen);
+  }
+  return out;
+}
+
+/**
+ * Collapse whitespace before comparing. Sealed material that has been
+ * re-wrapped or re-indented on its way into a proposal is still sealed
+ * material; an exact-bytes comparison would miss it.
+ */
+function normalizeForLeakScan(text) {
+  return String(text).replace(/\s+/g, " ").trim();
 }
 
 function assertVerifiedApprover(actor) {
@@ -147,12 +262,67 @@ export function createLoopService({
   verifier,
   config,
   openLoopPullRequest: openLoopPullRequestFn = openLoopPullRequest,
+  getGovernedRuntimePin: getGovernedRuntimePinFn,
 }) {
   const ns = (agentId) => `agent:${agentId}`;
   const convexAuthority = createConvexAuthorityClient({
     url: config?.convex?.url || "",
     deployKey: config?.convex?.deployKey || "",
   });
+  const resolveGovernedRuntimePin =
+    getGovernedRuntimePinFn ||
+    (async (displayId) => {
+      if (!convexAuthority.enabled()) return null;
+      return convexAuthority.getGovernedRuntimePin(displayId);
+    });
+
+  async function liveInstallDigest(agent) {
+    const install = await getInstallArtifactCapability(agent);
+    if (install?.available && install.artifactDigest) {
+      return {
+        digest: install.artifactDigest,
+        algorithm: install.artifactDigestAlgorithm || "sha256",
+        install,
+      };
+    }
+    const runtime = getRuntimeArtifactDescriptor(agent.id);
+    if (runtime?.artifactDigest) {
+      return {
+        digest: runtime.artifactDigest,
+        algorithm: runtime.artifactDigestAlgorithm || "sha256",
+        install: null,
+      };
+    }
+    return { digest: null, algorithm: null, install };
+  }
+
+  async function governedRuntimeFor(agent) {
+    const live = await liveInstallDigest(agent);
+    if (!live.digest) {
+      return {
+        skipped: true,
+        matched: true,
+        expectedDigest: null,
+        actualDigest: null,
+      };
+    }
+    const pin = await resolveGovernedRuntimePin(agent.id);
+    return governedRuntimeVerdict({
+      pin,
+      actualDigest: live.digest,
+      actualAlgorithm: live.algorithm,
+    });
+  }
+
+  async function assertGovernedRuntime(agent) {
+    const verdict = await governedRuntimeFor(agent);
+    if (verdict.skipped || verdict.matched) return verdict;
+    throw httpError(409, verdict.reason, {
+      code: GOVERNED_RUNTIME_MISMATCH,
+      expectedDigest: verdict.expectedDigest,
+      actualDigest: verdict.actualDigest,
+    });
+  }
 
   async function recordHostedRunEvidenceBestEffort(agentId, result, digest) {
     if (agentId !== "A7" || !digest) return null;
@@ -226,6 +396,7 @@ export function createLoopService({
         ? invoker.isConfigured()
         : true;
       const installArtifact = await getInstallArtifactCapability(agent);
+      const governedRuntime = await governedRuntimeFor(agent);
       return {
         invocationType: agent.invocation?.type || "link",
         mode: invoker.mode || agent.invocation?.mode || null,
@@ -248,16 +419,19 @@ export function createLoopService({
           : !artifactAvailable
             ? "Server-owned runtime artifact is unavailable"
             : null,
+        ...(governedRuntime.skipped ? {} : { governedRuntime }),
       };
     },
     async getInstallSkill(agentId) {
       const agent = await store.get("agents", agentId);
       if (!agent) throw httpError(404, `No agent ${agentId}`);
+      await assertGovernedRuntime(agent);
       return loadInstallSkill(agent);
     },
     async getInstallArtifactZip(agentId) {
       const agent = await store.get("agents", agentId);
       if (!agent) throw httpError(404, `No agent ${agentId}`);
+      await assertGovernedRuntime(agent);
       return buildInstallArtifactZip(agent);
     },
     async getHandoffBriefing(agentId) {
@@ -332,6 +506,7 @@ export function createLoopService({
     async runAgent(agentId, inputs = {}) {
       const agent = await store.get("agents", agentId);
       if (!agent) throw httpError(404, `No agent ${agentId}`);
+      await assertGovernedRuntime(agent);
       const invoker = getInvoker(agent, config);
       const artifactDigest =
         typeof invoker.artifactDigest === "function"
@@ -496,7 +671,9 @@ export function createLoopService({
       const checkResults = Array.isArray(result.checkResults)
         ? result.checkResults
         : [];
-      const failedChecks = checkResults.map((r) => r.checkId);
+      const blockingResults = checkResults.filter(isBlockingCheckResult);
+      const observationResults = checkResults.filter(isAdvisoryResult);
+      const failedChecks = blockingResults.map((r) => r.checkId);
       const llmGroundingStatus = sanitizeLlmGroundingStatus(
         result.llmGroundingStatus,
       );
@@ -523,7 +700,9 @@ export function createLoopService({
             ? { failureReason: failedChecks.join(", "), checkResults }
             : groundingUnavailable
               ? { failureReason: "llm_grounding_unavailable" }
-              : {}),
+              : checkResults.length
+                ? { checkResults }
+                : {}),
           ...(llmGroundingStatus ? { llmGroundingStatus } : {}),
           latencyMs:
             typeof result.latencyMs === "number"
@@ -608,11 +787,25 @@ export function createLoopService({
               failedChecks,
               // Messages are for the reviewer reading this response; only the
               // structural facts above are persisted on the trace.
-              checkFailures: checkResults.map((r) => ({
+              checkFailures: blockingResults.map((r) => ({
                 checkId: r.checkId,
+                tier: r.tier || null,
+                status: r.status || "fail",
+                passed: r.passed === undefined ? false : r.passed,
                 message: r.message || null,
                 ...(r.claimKind ? { claimKind: r.claimKind } : {}),
                 ...(r.category ? { category: r.category } : {}),
+              })),
+            }
+          : {}),
+        ...(observationResults.length
+          ? {
+              observations: observationResults.map((r) => ({
+                checkId: r.checkId,
+                tier: "advisory",
+                status: "observation",
+                passed: null,
+                message: r.message || null,
               })),
             }
           : {}),
@@ -687,8 +880,7 @@ export function createLoopService({
       // are never mistaken for fleet-health eval scores.
       // Canned plumbing rows are structurally excluded from maker signals so
       // fixture failures cannot mint Approve-button proposals.
-      const mechanicalDefects = mechanicalResults
-        .filter((row) => row.outputSource === "live")
+      const mechanicalDefects = mechanicalResultsForMaker(mechanicalResults)
         .flatMap((row) =>
           (row.failed || []).map(
             (checkId) => `mechanical:${checkId}`,
@@ -734,6 +926,10 @@ export function createLoopService({
         defectSignals,
         latestEval,
         artifact,
+        // Maker-visible mechanical rows (live only, sealed already stripped).
+        // The noise gate needs the rows themselves, not just their signals,
+        // so it can check what artifact each was observed against.
+        mechanicalResults: mechanicalResultsForMaker(mechanicalResults),
         calibration: {
           falsePositiveExclusions: fpExclusions,
           falsePositivesExcludedCount,
@@ -839,6 +1035,37 @@ export function createLoopService({
       };
 
       const artifact = getRuntimeArtifactDescriptor(agentId);
+
+      // Noise gate. Having *a signal* is not having *a defect*: the maker once
+      // proposed off a seeded trace pinned to a superseded artifact whose only
+      // tokens were an unregistered runtime string and an advisory observation.
+      // Require at least one classified, non-advisory defect observed on the
+      // artifact running now, and name the rule that refused otherwise.
+      try {
+        const gate = assertMakerDefectGate({
+          evidence: makerEvidence,
+          liveArtifactDigest: artifact?.artifactDigest || null,
+        });
+        makerEvidence.qualifyingDefects = gate.qualifying;
+      } catch (error) {
+        agent.latestProposalAttempt = {
+          outcome: "maker-refused-noise-gate",
+          recordedAt: new Date().toISOString(),
+          refusalCode: error.code,
+          reason: error.message,
+          rejected: (error.detail?.rejected || []).map((row) => ({
+            source: row.source,
+            reason: row.reason,
+            detail: row.detail,
+          })),
+        };
+        await store.put("agents", agent);
+        throw httpError(error.status || 422, error.message, {
+          code: error.code,
+          proposal: null,
+        });
+      }
+
       // Optimizers are untrusted adapter boundaries. A better model with an
       // untyped output is still unsafe: enforce concrete changes, bounded text,
       // and evidence ids that exist for this agent before anything is queued.
@@ -863,7 +1090,45 @@ export function createLoopService({
         }
         throw error;
       }
-      const proposals = (Array.isArray(raw) ? raw : [raw]).map((candidate, index) => {
+      // The gate is not only a permission to run: it also fixes WHICH defects
+      // may be proposed against. Without this the optimizer clears the gate on
+      // one real defect and then proposes against the noise beside it — which
+      // is exactly how the stale seeded trace produced a proposal before.
+      const qualifyingKeys = new Set(
+        (makerEvidence.qualifyingDefects || []).map((d) => d.checkId),
+      );
+      const rawList = (Array.isArray(raw) ? raw : [raw]).filter(Boolean);
+      const admissible = qualifyingKeys.size
+        ? rawList.filter((candidate) => {
+            const key = String(candidate?.defectKey || "");
+            if (candidate?.unclassified === true) return false;
+            return (
+              qualifyingKeys.has(key) ||
+              qualifyingKeys.has(`trace-defect:${key}`) ||
+              qualifyingKeys.has(`feedback-defect:${key}`) ||
+              [...qualifyingKeys].some(
+                (q) => q.endsWith(`:${key}`) || q === key,
+              )
+            );
+          })
+        : rawList;
+      if (qualifyingKeys.size && !admissible.length) {
+        const dropped = rawList.map((c) => c.defectKey).join(", ");
+        agent.latestProposalAttempt = {
+          outcome: "maker-refused-noise-gate",
+          recordedAt: new Date().toISOString(),
+          refusalCode: "MAKER_NO_ADMISSIBLE_PROPOSAL",
+          reason: `Optimizer proposed only against non-qualifying defects: ${dropped}`,
+        };
+        await store.put("agents", agent);
+        throw httpError(
+          422,
+          `Maker refused: the optimizer proposed only against defects that did not clear the noise gate (${dropped}). ` +
+            `Qualifying defects were: ${[...qualifyingKeys].join(", ")}.`,
+          { code: "MAKER_NO_ADMISSIBLE_PROPOSAL", proposal: null },
+        );
+      }
+      const proposals = admissible.map((candidate, index) => {
         const proposal = validateProposal(candidate, makerEvidence);
         proposal.id = `imp_${Date.now().toString(36)}_${index}`;
         // Stamp what this proposal was derived against, so approval cannot be
@@ -1037,6 +1302,146 @@ export function createLoopService({
       return { version: agent.version, proposal: prop, agent };
     },
 
+    /**
+     * Loop branch → the Convex proposal it will release on merge.
+     *
+     * The link is stored on the Railway proposal when the PR opens. A branch
+     * with no link resolves to null and the webhook refuses loudly — it never
+     * guesses a proposal, because guessing wrong releases the wrong version.
+     */
+    async findProposalByLoopBranch(branch) {
+      const wanted = String(branch || "").trim();
+      if (!wanted) return null;
+      const agents = await store.all("agents");
+      for (const agent of agents) {
+        for (const proposal of readProposals(agent)) {
+          if (proposal?.loopPr?.branch !== wanted) continue;
+          return {
+            agentId: agent.id,
+            proposalId: proposal.id,
+            convexProposalId: proposal.convexProposalId || null,
+            proposal,
+            agent,
+          };
+        }
+      }
+      return null;
+    },
+
+    /**
+     * A merged loop/ PR asks Convex to move the pointer.
+     *
+     * Railway proposes; Convex ratifies. Everything this method does before
+     * calling Convex is a refusal opportunity, and every refusal is recorded.
+     * It never merges, never writes to main, and never fabricates an identity.
+     */
+    async releaseFromMergedLoopPullRequest({
+      eventName,
+      payload,
+      approverAllowlist = config?.github?.releaseApprovers || [],
+      convex = convexAuthority,
+    } = {}) {
+      if (!convex.enabled()) {
+        throw Object.assign(
+          new Error(
+            "Convex authority is not configured (CONVEX_URL / CONVEX_DEPLOY_KEY) — refusing the release. " +
+              "A merged PR with no reachable authority must not look like a successful release.",
+          ),
+          { status: 503, code: "loop_release_convex_unconfigured" },
+        );
+      }
+
+      return handleMergedLoopPullRequest({
+        eventName,
+        payload,
+        approverAllowlist,
+        findProposalByBranch: async (branch) => {
+          const link = await this.findProposalByLoopBranch(branch);
+          if (link?.proposal) {
+            // Independent of the maker guard: assert on what is being released.
+            const { listGoldenCasesByHoldout } = await import("../eval/holdout.js");
+            assertProposalCarriesNoSealedMaterial(
+              link.proposal,
+              listGoldenCasesByHoldout(link.agentId).sealed,
+            );
+          }
+          return link;
+        },
+        release: (args) => convex.releaseFromMergedLoopPr(args),
+        recordRefusal: (args) => convex.recordReleaseRefusal(args),
+        onReleased: async ({ link, identity, releaseTrigger, result }) => {
+          // Railway bookkeeping only. Convex already holds the authority row;
+          // this is a local mirror so the UI can show what happened.
+          const agent = await store.get("agents", link.agentId);
+          if (!agent) return;
+          const proposals = readProposals(agent);
+          const prop = proposals.find((p) => p.id === link.proposalId);
+          if (!prop) return;
+          prop.released = {
+            at: new Date().toISOString(),
+            pullRequestNumber: releaseTrigger.pullRequestNumber,
+            mergeCommitSha: releaseTrigger.mergeCommitSha,
+            headRef: releaseTrigger.headRef,
+            // Recorded exactly as Convex recorded it: a service act on behalf
+            // of a human. Never rendered as the human having signed in.
+            executedBy: {
+              subject: "agents-directory-loop",
+              issuer: "service:agents-directory",
+            },
+            onBehalfOf: {
+              subject: identity.subject,
+              issuer: identity.issuer,
+              name: identity.login,
+            },
+            approverAllowlistInEffect: releaseTrigger.approverAllowlist,
+            convexReviewEventId: result?.reviewEventId || null,
+            resultingVersionId: result?.resultingVersionId || null,
+            priorApprovedVersionId: result?.priorApprovedVersionId || null,
+          };
+          delete prop.releaseRefusal;
+          agent.latestProposalAttempt = {
+            outcome: "released-by-merged-loop-pull-request",
+            recordedAt: prop.released.at,
+            proposalId: prop.id,
+            pullRequestNumber: releaseTrigger.pullRequestNumber,
+            onBehalfOfLogin: identity.login,
+          };
+          writeProposals(agent, proposals);
+          await store.put("agents", agent);
+        },
+      });
+    },
+
+    /**
+     * Record the Convex proposal a loop branch will release on merge.
+     * Without this the merge webhook refuses with loop_release_unlinked_branch
+     * rather than searching for a plausible proposal.
+     */
+    async linkConvexProposal(agentId, proposalId, convexProposalId) {
+      const id = String(convexProposalId || "").trim();
+      if (!id) throw httpError(400, "convexProposalId is required");
+      const agent = await store.get("agents", agentId);
+      if (!agent) throw httpError(404, "Agent not found");
+      const proposals = readProposals(agent);
+      const prop = selectProposal(proposals, proposalId);
+      if (!prop) throw httpError(404, "Proposal not found");
+      if (!prop.loopPr?.branch) {
+        throw httpError(
+          409,
+          "Proposal has no loop PR branch yet — approve it first so a branch exists to link.",
+        );
+      }
+      prop.convexProposalId = id;
+      writeProposals(agent, proposals);
+      await store.put("agents", agent);
+      return {
+        agentId,
+        proposalId: prop.id,
+        branch: prop.loopPr.branch,
+        convexProposalId: id,
+      };
+    },
+
     // A manual rejection is deliberately destructive: the operator saw this
     // proposal and chose to clear it. The loop must use markVerifierRejected
     // below instead, so an unreliable checker cannot erase its own evidence.
@@ -1205,9 +1610,7 @@ export function createLoopService({
      * Never writes evalHistory; never feeds fleet health.
      */
     async mechanicalInventory(agentId) {
-      if (agentId !== "A7") {
-        throw httpError(400, "Mechanical inventory is only wired for A7");
-      }
+      assertMechanicalCheckCapability(agentId);
       const { getMechanicalInventory } = await import(
         "../eval/mechanicalInventory.js"
       );
@@ -1215,16 +1618,25 @@ export function createLoopService({
     },
 
     async mechanicalScore(agentId, body = {}) {
-      if (agentId !== "A7") {
-        throw httpError(400, "Mechanical score is only wired for A7");
-      }
+      const cap = assertMechanicalCheckCapability(agentId);
       const {
-        caseId = "a7-mira-okonkwo-v1",
-        artifactVersion = "biocraft-singleshot-v7",
+        caseId,
+        artifactVersion = cap.artifactVersion,
         outputSource = "canned",
       } = body;
       try {
-        const { runMechanicalScore } = await import("../eval/runCompare.js");
+        const { runMechanicalScore, runMechanicalScoresByHoldout } = await import(
+          "../eval/runCompare.js"
+        );
+        if (!caseId) {
+          return await runMechanicalScoresByHoldout({
+            agentId,
+            artifactVersion,
+            outputSource,
+            config,
+            store,
+          });
+        }
         return await runMechanicalScore({
           caseId,
           artifactVersion,
@@ -1245,12 +1657,10 @@ export function createLoopService({
      *                     live = may answer whether the prompt change helped
      */
     async mechanicalCompare(agentId, body = {}) {
-      if (agentId !== "A7") {
-        throw httpError(400, "Mechanical compare is only wired for A7");
-      }
+      assertMechanicalCheckCapability(agentId);
       const {
         experiment,
-        caseId = "a7-mira-okonkwo-v1",
+        caseId,
         leftVersion = "biocraft-singleshot-v6",
         rightVersion = "biocraft-singleshot-v7",
         rulerVersion,
@@ -1263,11 +1673,14 @@ export function createLoopService({
             "A bare score delta across versions is refused.",
         );
       }
+      const resolvedCaseId =
+        caseId ||
+        (agentId === "A10" ? "a10-mira-okonkwo-v1" : "a7-mira-okonkwo-v1");
       try {
         const { runMechanicalCompare } = await import("../eval/runCompare.js");
         return await runMechanicalCompare(store, {
           experiment,
-          caseId,
+          caseId: resolvedCaseId,
           leftVersion,
           rightVersion,
           rulerVersion,
@@ -1281,9 +1694,7 @@ export function createLoopService({
     },
 
     async mechanicalComparePreview(agentId, query = {}) {
-      if (agentId !== "A7") {
-        throw httpError(400, "Mechanical compare is only wired for A7");
-      }
+      assertMechanicalCheckCapability(agentId);
       const leftVersion = query.leftVersion || "biocraft-singleshot-v6";
       const rightVersion = query.rightVersion || "biocraft-singleshot-v7";
       const { previewVersionComparability } = await import(
