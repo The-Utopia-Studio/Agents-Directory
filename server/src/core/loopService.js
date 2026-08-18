@@ -1337,6 +1337,16 @@ export function createLoopService({
         (listGoldenCases(agentId).find((c) => c.sealed !== true) || {}).id;
       const golden = caseId ? getGoldenCase(caseId) : null;
       if (!golden) throw httpError(400, `No golden case available for ${agentId}`);
+      // getGoldenCase is global. Without this an approver could preview A7's
+      // candidate against A10's fixture and record evidence claiming the
+      // candidate was exercised by input it never saw. runMechanicalScore
+      // already refuses this; the preview must too.
+      if (golden.agentId && golden.agentId !== agentId) {
+        throw httpError(
+          400,
+          `Golden case ${caseId} belongs to ${golden.agentId}, not ${agentId}`,
+        );
+      }
       if (golden.sealed === true) {
         throw httpError(422, `Golden case ${caseId} is sealed and cannot be previewed`);
       }

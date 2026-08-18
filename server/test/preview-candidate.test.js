@@ -144,3 +144,41 @@ test("a sealed golden case can never be previewed", () => {
   assert.match(body, /sealed === true/);
   assert.match(body, /sealed and cannot be previewed/);
 });
+
+test("a golden case belonging to another agent is refused", async () => {
+  // getGoldenCase is global. Previewing A7's candidate against A10's fixture
+  // would record evidence claiming the candidate was exercised by input it
+  // never saw. runMechanicalScore already refuses this; so must the preview.
+  const { createLoopService } = await import("../src/core/loopService.js");
+  const { createStore } = await import("../src/core/store.js");
+  const { config } = await import("../src/config.js");
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { seed } = await import("../src/scripts/seed.js");
+
+  const store = createStore(await mkdtemp(join(tmpdir(), "adir-preview-")));
+  await seed(store);
+  const svc = createLoopService({
+    store,
+    obs: { recordTrace: async () => ({ id: "t1" }) },
+    optimizer: {},
+    memory: {},
+    verifier: {},
+    config,
+  });
+
+  await assert.rejects(
+    () =>
+      svc.previewCandidate("A7", {
+        artifactVersion: "biocraft-singleshot-v10",
+        candidateDeclaredDigest: "c".repeat(64),
+        caseId: "a10-mira-okonkwo-v1",
+      }),
+    (error) => {
+      assert.equal(error.status, 400);
+      assert.match(error.message, /belongs to A10, not A7/);
+      return true;
+    },
+  );
+});

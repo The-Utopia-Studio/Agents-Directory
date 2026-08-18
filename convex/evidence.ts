@@ -6,7 +6,7 @@ import {
   query,
   type MutationCtx,
 } from "./_generated/server";
-import { requireIdentity, type AuthorityActor } from "./lib/auth";
+import { requireApprover, requireIdentity, type AuthorityActor } from "./lib/auth";
 import { declaredLoopServiceActor } from "./lib/serviceActor";
 import { evidenceType, providerCost } from "./lib/validators";
 
@@ -375,7 +375,11 @@ export const recordCandidatePreviewEvidence = mutation({
     cost: v.optional(providerCost),
   },
   handler: async (ctx, args) => {
-    const human = await requireIdentity(ctx);
+    // Approver, not merely authenticated. The preview ROUTE is approver-gated,
+    // so a non-approver could not have run the preview they would be attesting.
+    // This does NOT prove an execution happened — see the preview-proof gap
+    // recorded in docs/APPROVER_IDENTITY.md.
+    const human = await requireApprover(ctx);
     const displayId = args.displayId.trim();
     const agent = await ctx.db
       .query("agents")

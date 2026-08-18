@@ -294,6 +294,28 @@ describe("the evalResult is a separate deliberate act", () => {
   });
 });
 
+describe("attesting a preview requires an approver", () => {
+  test("a merely-authenticated user cannot mint promotion-eligible preview evidence", async () => {
+    // The preview ROUTE is approver-gated, so a non-approver could not have run
+    // the preview they would be attesting. Before this, any signed-in user who
+    // knew an open candidate's digest could create promotion-eligible evidence.
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await governed(t, 20);
+    await t.mutation(authorityApi.proposals.createCandidateProposal, {
+      agentId: g.agentId,
+      candidateVersionId: g.versionId,
+      summary: "preview auth",
+    });
+    await expect(
+      base.withIdentity(HUMAN).mutation(
+        authorityApi.evidence.recordCandidatePreviewEvidence,
+        { displayId: g.displayId, artifactDigest: DIGEST },
+      ),
+    ).rejects.toThrow(/approver|FORBIDDEN/i);
+  });
+});
+
 describe("the service + promotion-eligible invariant", () => {
   test("no write path can produce a second fossil", async () => {
     const base = convexTest(schema, modules);

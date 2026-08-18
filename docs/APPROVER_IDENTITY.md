@@ -83,3 +83,37 @@ Not done, listed so it is not rediscovered:
   `role` claim for a known approver
 - an audit query listing which Clerk subjects currently carry `approver`
 - the GitHub → Clerk mapping that collapses the two sets into one
+
+## Open gap: preview evidence has no execution proof
+
+`recordCandidatePreviewEvidence` creates **promotion-eligible** evidence from
+caller-supplied identifiers alone. It verifies that the digest resolves to a
+governed candidate, that an open proposal references it, and that it is not
+already approved — but **nothing binds the row to a preview having actually
+run**.
+
+An approver who knows an open candidate's digest can mint promotion-eligible
+evidence without ever executing or reading a draft. The release gate then
+accepts a candidate nobody previewed.
+
+The same gap exists on `recordVerifiedHumanRunEvidence`: the browser asserts
+"a human saw output" and Convex takes that on trust.
+
+Mitigated, not closed: both mutations now require an **approver**, so the blast
+radius is the approver set rather than every authenticated user. That is a
+smaller set, not a proof.
+
+**Closing it properly** needs the execution to leave a durable record Convex can
+check. The shape that fits the existing identity model:
+
+1. Railway, after a successful preview, writes a `previewExecutions` row as the
+   **service** principal — digest, artifact version, trace id, cost, timestamp.
+   The service can prove execution because it performed it.
+2. `recordCandidatePreviewEvidence` requires a recent, unconsumed row matching
+   the digest, and marks it consumed so one preview cannot attest twice.
+3. The human's act still supplies `actorKind: "human"` and `runBy`.
+
+Service proves the run happened; the human proves they read it. Neither alone
+is sufficient, which is the property the promotion gate was supposed to have.
+
+This is a schema change touching promotion eligibility and has not been made.
