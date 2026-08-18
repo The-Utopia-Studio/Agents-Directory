@@ -221,3 +221,176 @@ test("a blocking failure makes the preview non-attestable", () => {
   assert.match(src, /isBlockingCheckResult/);
   assert.match(src, /attestable: blocking\.length === 0/);
 });
+
+// ── Pasted source, executed end to end ────────────────────────────────────────
+//
+// The path had never been RUN by a test, only described: assertions checked that
+// app.js contained a placeholder string and that a Convex row round-tripped
+// "pasted-source". So 303 tests passed against a path that threw
+// `Cannot read properties of null (reading 'agentId')` on its first real use,
+// and that never sent the pasted text to the model at all.
+
+const PASTED = [
+  "Name: Jordan Reyes",
+  "Role material:",
+  "- Intern, Platform Engineering, Northwind Systems (2023)",
+  "- Contract data work for Ridgeline Health",
+  "Achievements: cut onboarding time from 9 days to 3 across 12 teams.",
+].join("\n");
+
+/** A stub standing in for the OpenAI Responses call. Records what it was sent. */
+function stubOpenAi(draft) {
+  const seen = { calls: 0, body: null };
+  const fetchImpl = async (_url, init) => {
+    seen.calls += 1;
+    seen.body = JSON.parse(init.body);
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          model: "gpt-5.6-terra",
+          usage: { input_tokens: 1900, output_tokens: 300 },
+          // Same shape the Responses API returns: extractOpenAiText requires
+          // item.type === "message" before it reads content parts.
+          output: [
+            { type: "message", content: [{ type: "output_text", text: draft }] },
+          ],
+        };
+      },
+      async text() {
+        return "";
+      },
+    };
+  };
+  return { seen, fetchImpl };
+}
+
+const CLEAN_DRAFT = [
+  "### LinkedIn About",
+  "",
+  "I help platform teams cut onboarding time.",
+  "",
+  "At Northwind Systems I worked as an Intern on platform engineering.",
+  "",
+  "One delivery cut onboarding from 9 days to 3 across 12 teams.",
+  "",
+  "Reach out if your team needs a clearer path.",
+  "",
+  "### Spoken event introduction",
+  "",
+  "Jordan Reyes builds platform tooling for engineering teams.",
+  "",
+  "### Suggested headline",
+  "",
+  "Platform engineer",
+].join("\n");
+
+async function previewWithStub(body, draft = CLEAN_DRAFT) {
+  const { previewCandidateVersion } = await import("../src/eval/previewCandidate.js");
+  const { config } = await import("../src/config.js");
+  const { seen, fetchImpl } = stubOpenAi(draft);
+  const result = await previewCandidateVersion({
+    agentId: "A7",
+    artifactVersion: "biocraft-singleshot-v10",
+    candidateDeclaredDigest:
+      "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1",
+    golden: null,
+    config: { ...config, runtime: { ...config.runtime, openai: { ...config.runtime.openai, fetch: fetchImpl } } },
+    ...body,
+  });
+  return { result, seen };
+}
+
+test("pasted source runs end to end with no golden case", async () => {
+  const { result, seen } = await previewWithStub({ sourceText: PASTED, fellowName: "Jordan Reyes" });
+
+  // It reached the model exactly once and did not throw on the null golden.
+  assert.equal(seen.calls, 1);
+  assert.ok(result.output.includes("Northwind"));
+  assert.equal(result.executionKind, "candidate-preview");
+  assert.equal(result.artifactDigest.length, 64);
+});
+
+test("the model receives the PASTED text, not the fixture's", async () => {
+  // The bug behind the crash: sourceText was accepted and silently dropped, so
+  // a "pasted source" preview would have generated from Mira Okonkwo's fixture.
+  const { seen } = await previewWithStub({ sourceText: PASTED, fellowName: "Jordan Reyes" });
+  const sent = JSON.stringify(seen.body);
+  assert.match(sent, /Jordan Reyes/);
+  assert.match(sent, /Northwind Systems/);
+  assert.doesNotMatch(sent, /Mira Okonkwo/, "the fixture must not leak into a pasted-source preview");
+  assert.doesNotMatch(sent, /Helix Labs/);
+});
+
+test("pasted source is still scored by the candidate's declared checks", async () => {
+  const { result } = await previewWithStub({ sourceText: PASTED, fellowName: "Jordan Reyes" });
+  assert.ok(Array.isArray(result.checkResults) && result.checkResults.length >= 5);
+  assert.equal(typeof result.checkSetId, "string");
+  assert.equal(typeof result.attestable, "boolean");
+  // Grounding rules come from a golden case; with none, style still scores.
+  assert.equal(typeof result.stylePassRate, "number");
+});
+
+test("a blocking failure on pasted output makes it non-attestable", async () => {
+  const dirty = CLEAN_DRAFT.replace(
+    "Jordan Reyes builds platform tooling for engineering teams.",
+    "Jordan Reyes sits at the intersection of platform and product.",
+  );
+  const { result } = await previewWithStub(
+    { sourceText: PASTED, fellowName: "Jordan Reyes" },
+    dirty,
+  );
+  assert.equal(result.attestable, false);
+  assert.ok(
+    result.blockingFailures.some((f) => f.checkId.includes("cliche")),
+    `expected a cliche blocking failure, got ${JSON.stringify(result.blockingFailures)}`,
+  );
+});
+
+test("no source at all refuses by name rather than throwing a TypeError", async () => {
+  await assert.rejects(
+    () => previewWithStub({ sourceText: "" }),
+    (error) => {
+      assert.ok(!(error instanceof TypeError), "must not be a raw TypeError");
+      assert.match(error.message, /No source material to generate from/);
+      return true;
+    },
+  );
+});
+
+test("the service path accepts pasted source without touching a golden case", async () => {
+  // The exact crash reported: previewCandidate dereferenced a null golden.
+  const { createLoopService } = await import("../src/core/loopService.js");
+  const { createStore } = await import("../src/core/store.js");
+  const { config } = await import("../src/config.js");
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { seed } = await import("../src/scripts/seed.js");
+  const { fetchImpl } = stubOpenAi(CLEAN_DRAFT);
+
+  const store = createStore(await mkdtemp(join(tmpdir(), "adir-paste-")));
+  await seed(store);
+  const svc = createLoopService({
+    store,
+    obs: { recordTrace: async () => ({ id: "trace_paste_1" }) },
+    optimizer: {},
+    memory: {},
+    verifier: {},
+    config: { ...config, runtime: { ...config.runtime, openai: { ...config.runtime.openai, fetch: fetchImpl } } },
+  });
+
+  const out = await svc.previewCandidate("A7", {
+    artifactVersion: "biocraft-singleshot-v10",
+    candidateDeclaredDigest:
+      "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1",
+    sourceMaterial: PASTED,
+    fellowName: "Jordan Reyes",
+  });
+
+  assert.equal(out.previewSourceKind, "pasted-source");
+  assert.equal(out.caseId, null, "a pasted preview must not attribute a golden case");
+  assert.equal(out.evidenceRecorded, false);
+  assert.ok(out.output.includes("Northwind"));
+});

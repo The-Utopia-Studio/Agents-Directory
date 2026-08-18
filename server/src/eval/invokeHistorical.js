@@ -25,18 +25,31 @@ function runtimeModelFromArtifactContent(content) {
 /**
  * Build the same user payload the live single-shot runtime sends.
  */
-export function buildGoldenUserPayload(agentId, golden) {
+export function buildGoldenUserPayload(agentId, golden, overrides = {}) {
+  // Pasted material wins over the fixture. `golden` is null on the pasted path,
+  // so every read of it is optional — previously `golden.input` threw a raw
+  // TypeError there, and the pasted text never reached the model at all.
+  const sourceMaterial = String(
+    overrides.sourceMaterial || golden?.input || "",
+  ).trim();
+  if (!sourceMaterial) {
+    refuse(
+      "No source material to generate from: supply sourceMaterial, or a golden case with input.",
+      400,
+    );
+  }
+  const fellowName = String(
+    overrides.fellowName || golden?.fellowName || "Mira Okonkwo",
+  ).trim();
   const contract = getRuntimeInputContract(agentId);
   if (!contract) {
-    return {
-      fellowName: "Mira Okonkwo",
-      sourceMaterial: golden.input,
-    };
+    return { fellowName, sourceMaterial };
   }
   const { values, missing } = resolveRuntimeInputs(agentId, {
-    fellowName: "Mira Okonkwo",
-    sourceMaterial: golden.input,
+    fellowName,
+    sourceMaterial,
     interviewAnswers: "",
+    ...(overrides.gapAnswers ? { gapAnswers: overrides.gapAnswers } : {}),
   });
   if (missing.length) {
     refuse(
@@ -72,6 +85,12 @@ export async function generateUnderHistoricalArtifact({
   agentId,
   artifactVersion,
   golden,
+  // Pasted material and gap answers were previously accepted by callers and
+  // silently dropped here, so a "pasted source" preview generated from the
+  // fixture and A10's gap answers never reached Call 2.
+  sourceMaterial = "",
+  fellowName = "",
+  gapAnswers = null,
   config = {},
 }) {
   const artifact = loadHistoricalArtifact(artifactVersion);
@@ -93,7 +112,11 @@ export async function generateUnderHistoricalArtifact({
     refuse("Custom runtime transport is test-only", 500);
   }
 
-  const userPayload = buildGoldenUserPayload(agentId, golden);
+  const userPayload = buildGoldenUserPayload(agentId, golden, {
+    sourceMaterial,
+    fellowName,
+    gapAnswers,
+  });
   const userContent = JSON.stringify(userPayload, null, 2);
   const controller = new AbortController();
   const timer = setTimeout(

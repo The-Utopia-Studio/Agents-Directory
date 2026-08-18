@@ -1408,13 +1408,13 @@ export function createLoopService({
       // candidate against A10's fixture and record evidence claiming the
       // candidate was exercised by input it never saw. runMechanicalScore
       // already refuses this; the preview must too.
-      if (golden.agentId && golden.agentId !== agentId) {
+      if (golden?.agentId && golden.agentId !== agentId) {
         throw httpError(
           400,
           `Golden case ${caseId} belongs to ${golden.agentId}, not ${agentId}`,
         );
       }
-      if (golden.sealed === true) {
+      if (golden?.sealed === true) {
         throw httpError(422, `Golden case ${caseId} is sealed and cannot be previewed`);
       }
 
@@ -1434,6 +1434,7 @@ export function createLoopService({
         candidateDeclaredDigest,
         golden,
         sourceText: pastedSource,
+        fellowName: String(body.fellowName || "").trim(),
         gapAnswers,
         config,
       });
