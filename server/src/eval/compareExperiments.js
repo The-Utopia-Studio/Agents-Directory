@@ -15,6 +15,10 @@
 // version to manufacture comparability.
 
 import { loadHistoricalArtifact } from "./historicalArtifacts.js";
+import {
+  readGroundingPassRate,
+  readGroundingScoreableCount,
+} from "./scoreMechanicalOutput.js";
 
 export const EXPERIMENT_CHECK_COVERAGE = "check_coverage";
 export const EXPERIMENT_OUTPUT_QUALITY = "output_quality";
@@ -44,6 +48,94 @@ export function assertExperiment(experiment) {
   return experiment;
 }
 
+/**
+ * Refuse a rate comparison whose denominators were built from different checks.
+ *
+ * checkSetId already refuses a changed *declared* set. This refuses a changed
+ * *contributing* set — the pool that actually produced the rate. They are not
+ * the same thing: retiering two checks out of the scored style pool left the
+ * declared set intact while the style pass rate rose 57.1 → 80 on byte-identical
+ * output with identical defects. Labelling that "non-comparable" is not enough;
+ * a number that cannot be compared must not be handed back as a delta at all.
+ *
+ * @param {{passRate?: number|null, scoreableCount?: number, basisCheckIds?: string[]}} left
+ * @param {{passRate?: number|null, scoreableCount?: number, basisCheckIds?: string[]}} right
+ */
+export function rateDelta(left, right, label = "rate") {
+  const leftIds = Array.isArray(left?.basisCheckIds) ? [...left.basisCheckIds].sort() : null;
+  const rightIds = Array.isArray(right?.basisCheckIds) ? [...right.basisCheckIds].sort() : null;
+  const meta = {
+    label,
+    leftScoreableCount: left?.scoreableCount ?? null,
+    rightScoreableCount: right?.scoreableCount ?? null,
+    leftBasisCheckIds: leftIds,
+    rightBasisCheckIds: rightIds,
+  };
+
+  // A rate with no recorded basis cannot be shown to be comparable. Rows
+  // written before the basis was recorded are "not measured", never "equal".
+  if (!leftIds || !rightIds) {
+    return {
+      comparable: false,
+      reason: `${label}: rate basis not recorded on one or both sides — cannot show the denominators match`,
+      ...meta,
+    };
+  }
+
+  const added = rightIds.filter((id) => !leftIds.includes(id));
+  const removed = leftIds.filter((id) => !rightIds.includes(id));
+  if (added.length || removed.length) {
+    const parts = [];
+    if (removed.length) parts.push(`removed ${removed.join(", ")}`);
+    if (added.length) parts.push(`added ${added.join(", ")}`);
+    return {
+      comparable: false,
+      reason:
+        `${label}: denominator changed (${leftIds.length} → ${rightIds.length} checks; ${parts.join("; ")}). ` +
+        `A rate over a different check set is not a delta.`,
+      denominatorChanged: true,
+      addedCheckIds: added,
+      removedCheckIds: removed,
+      ...meta,
+    };
+  }
+
+  if (typeof left.passRate !== "number" || typeof right.passRate !== "number") {
+    return {
+      comparable: false,
+      reason: `${label}: one or both sides have no measurement`,
+      ...meta,
+    };
+  }
+
+  return {
+    comparable: true,
+    value: Math.round((right.passRate - left.passRate) * 10) / 10,
+    ...meta,
+  };
+}
+
+/** Style pass-rate delta, under the same denominator guard as grounding. */
+export function styleRateDelta(leftScore, rightScore) {
+  return rateDelta(
+    {
+      passRate: leftScore?.stylePassRate ?? leftScore?.byCategory?.style?.passRate ?? null,
+      scoreableCount:
+        leftScore?.styleScoreableCount ?? leftScore?.byCategory?.style?.scoreableCount ?? null,
+      basisCheckIds:
+        leftScore?.styleBasisCheckIds ?? leftScore?.byCategory?.style?.basisCheckIds ?? null,
+    },
+    {
+      passRate: rightScore?.stylePassRate ?? rightScore?.byCategory?.style?.passRate ?? null,
+      scoreableCount:
+        rightScore?.styleScoreableCount ?? rightScore?.byCategory?.style?.scoreableCount ?? null,
+      basisCheckIds:
+        rightScore?.styleBasisCheckIds ?? rightScore?.byCategory?.style?.basisCheckIds ?? null,
+    },
+    "style pass rate",
+  );
+}
+
 export function checkSetsEqual(leftChecks = [], rightChecks = []) {
   const a = [...leftChecks].sort();
   const b = [...rightChecks].sort();
@@ -52,13 +144,17 @@ export function checkSetsEqual(leftChecks = [], rightChecks = []) {
 }
 
 function scoreableCheckCount(score) {
-  return (score.checkResults || []).filter(
-    (r) =>
+  return (score.checkResults || []).filter((r) => {
+    const tier = r.tier;
+    if (tier && tier !== "scored") return false;
+    if (r.status === "observation" || r.status === "no_hit") return false;
+    return (
       r.passed === true ||
       r.passed === false ||
       r.status === "pass" ||
-      r.status === "fail",
-  ).length;
+      r.status === "fail"
+    );
+  }).length;
 }
 
 /**
@@ -180,9 +276,39 @@ export function groundingScoreDelta(left, right, opts = {}) {
     };
   }
 
+  // Same denominator guard the style rate gets. A matching checkSetId means the
+  // declared set matched; it does not prove the contributing pool did.
+  const basis = rateDelta(
+    {
+      passRate: leftScore,
+      scoreableCount: leftScoreable,
+      basisCheckIds:
+        left.groundingBasisCheckIds ?? left.byCategory?.grounding?.basisCheckIds ?? null,
+    },
+    {
+      passRate: rightScore,
+      scoreableCount: rightScoreable,
+      basisCheckIds:
+        right.groundingBasisCheckIds ?? right.byCategory?.grounding?.basisCheckIds ?? null,
+    },
+    "grounding pass rate",
+  );
+  if (basis.denominatorChanged) {
+    return {
+      comparable: false,
+      reason: basis.reason,
+      denominatorChanged: true,
+      addedCheckIds: basis.addedCheckIds,
+      removedCheckIds: basis.removedCheckIds,
+      ...baseMeta,
+    };
+  }
+
   return {
     comparable: true,
     value: Math.round((rightScore - leftScore) * 10) / 10,
+    leftBasisCheckIds: basis.leftBasisCheckIds,
+    rightBasisCheckIds: basis.rightBasisCheckIds,
     ...baseMeta,
   };
 }
@@ -243,9 +369,10 @@ export function buildCheckCoverageResult({
     outputQualityComparable: false,
     // Explicit state — never null, never a pretending number.
     scoreDelta: delta,
-    // Legacy key kept as the explicit object so callers that still read
-    // mechanicalCheckScoreDelta never treat a missing number as 0.
-    mechanicalCheckScoreDelta: delta,
+    groundingPassRateDelta: delta,
+    // Under the same denominator guard: a style rate over a different
+    // contributing check set is refused, not reported as an improvement.
+    stylePassRateDelta: styleRateDelta(left, right),
     left: summarizeScore(left, leftArtifact),
     right: summarizeScore(right, rightArtifact),
     changed: changedStatuses(left, right),
@@ -325,7 +452,8 @@ export function buildOutputQualityResult({
       : {}),
     outputQualityComparable: delta.comparable,
     scoreDelta: delta,
-    mechanicalCheckScoreDelta: delta,
+    groundingPassRateDelta: delta,
+    stylePassRateDelta: styleRateDelta(left, right),
     // Comparable plumbing deltas are real numbers; they are not promotion
     // evidence. Callers must not show a delta beside a silent promotion block.
     promotionEligible: isLive && delta.comparable,
@@ -395,10 +523,14 @@ function summarizeScore(score, artifact) {
     rulerVersion: score.rulerVersion || null,
     scoredWith: score.rulerVersion || score.artifactVersion || null,
     declaredChecks: [...(artifact.checks || [])],
-    mechanicalCheckScore: score.mechanicalCheckScore,
-    scoreableCount: score.scoreableCount,
+    groundingPassRate: readGroundingPassRate(score),
+    groundingScoreableCount: readGroundingScoreableCount(score),
+    groundingBasisCheckIds:
+      score.groundingBasisCheckIds ?? score.byCategory?.grounding?.basisCheckIds ?? null,
     stylePassRate: score.stylePassRate,
     styleScoreableCount: score.styleScoreableCount,
+    styleBasisCheckIds:
+      score.styleBasisCheckIds ?? score.byCategory?.style?.basisCheckIds ?? null,
     byCategory: score.byCategory
       ? {
           grounding: { ...score.byCategory.grounding },

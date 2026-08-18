@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 import { requireIdentity } from "./lib/auth";
 import {
@@ -37,6 +37,36 @@ export const recordEvalResult = mutation({
       (evidence.source !== "real" && evidence.source !== "imported")
     ) {
       throw new Error("Evidence is not eligible for evaluation");
+    }
+
+    // An eval result must NAME WHAT WAS CHECKED. An empty criterionResults or
+    // an all-N/A set scores nothing and asserts nothing, but would still
+    // satisfy the promotion gate — an attestation with no content behind it.
+    // The gate is the last thing before the pointer moves; a blank pass here
+    // is exactly the fabricated-evidence failure the whole model refuses.
+    if (!args.criterionResults.length) {
+      throw new ConvexError({
+        code: "EVAL_RESULT_NAMES_NOTHING",
+        status: 422,
+        message:
+          "EVAL_RESULT_NAMES_NOTHING: an eval result must record at least one scored rubric criterion. An empty attestation is not an eval result.",
+      });
+    }
+    if (args.criterionResults.every((r) => r.result.kind === "n/a")) {
+      throw new ConvexError({
+        code: "EVAL_RESULT_NAMES_NOTHING",
+        status: 422,
+        message:
+          "EVAL_RESULT_NAMES_NOTHING: every criterion was marked N/A, so nothing was actually checked.",
+      });
+    }
+    if (!evalSet.rubric.length) {
+      throw new ConvexError({
+        code: "EVAL_RESULT_NAMES_NOTHING",
+        status: 422,
+        message:
+          "EVAL_RESULT_NAMES_NOTHING: the eval set declares no rubric, so there is nothing an eval result could name.",
+      });
     }
 
     const rubricById = new Map(evalSet.rubric.map((item) => [item.id, item]));

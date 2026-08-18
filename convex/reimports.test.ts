@@ -25,6 +25,7 @@ import {
 } from "./reimportSpec";
 import schema from "./schema";
 import { modules } from "./test.setup";
+import { approveWithPromotionEval } from "./lib/seedPromotionEval";
 
 const authorityApi = api as any;
 const approverIdentity = {
@@ -39,10 +40,7 @@ async function importedV4() {
     authorityApi.imports.executeApprovedCanonicalImport,
     { manifestDigest: APPROVED_IMPORT_MANIFEST_DIGEST },
   );
-  await t.mutation(authorityApi.reviews.approve, {
-    proposalId: initial.A7.proposalId,
-    editCategory: "no-edit",
-  });
+  await approveWithPromotionEval(t, initial.A7.proposalId);
   return { t, initial };
 }
 
@@ -111,6 +109,8 @@ describe("approved A7/A8 merged re-import", () => {
     ).toBe(A7_V9_RELEASE_MANIFEST_DIGEST);
     expect(A7_V9_RELEASE_SPEC.priorVersion).toBe("biocraft-singleshot-v8");
     expect(A7_V9_RELEASE_SPEC.version.version).toBe("biocraft-singleshot-v9");
+    // v9's released bytes, unchanged. The 2026-08-16 SKILL.md edits are v10;
+    // a released version is immutable and is never re-pinned to new bytes.
     expect(A7_V9_RELEASE_SPEC.version.artifact.declaredDigest).toBe(
       "e229c64f44bcf3b6e8f57ea7dc74c868b7987ddfc7f92379ad4723761fa4314e",
     );
@@ -174,10 +174,7 @@ describe("approved A7/A8 merged re-import", () => {
     expect(a8.executionContract.inputs).toHaveLength(6);
     expect(a8.tools).toHaveLength(8);
 
-    const review = await t.mutation(authorityApi.reviews.approve, {
-      proposalId: merged.A7.proposalId,
-      editCategory: "no-edit",
-    });
+    const review = await approveWithPromotionEval(t, merged.A7.proposalId);
     expect(review.resultingVersionId).toBe(v5._id);
 
     const rerun = await t.mutation(
@@ -194,10 +191,7 @@ describe("approved A7/A8 merged re-import", () => {
       authorityApi.reimports.executeApprovedMergedReimport,
       { manifestDigest: MERGED_REIMPORT_MANIFEST_DIGEST },
     );
-    await t.mutation(authorityApi.reviews.approve, {
-      proposalId: merged.A7.proposalId,
-      editCategory: "no-edit",
-    });
+    await approveWithPromotionEval(t, merged.A7.proposalId);
     const release = await t.mutation(
       authorityApi.reimports.executeApprovedA7V6Release,
       { releaseManifestDigest: A7_V6_RELEASE_MANIFEST_DIGEST },
@@ -215,10 +209,7 @@ describe("approved A7/A8 merged re-import", () => {
       artifact: A7_V6_RELEASE_SPEC.version.artifact,
     });
     expect(beforeApproval.proposal).toMatchObject({ status: "open" });
-    const approved = await t.mutation(authorityApi.reviews.approve, {
-      proposalId: release.proposalId,
-      editCategory: "no-edit",
-    });
+    const approved = await approveWithPromotionEval(t, release.proposalId);
     expect(approved.resultingVersionId).toBe(release.versionId);
     const afterApproval = await t.run(async (ctx) => await ctx.db.get(release.agentId));
     expect((afterApproval as any)?.currentApprovedVersionId).toBe(release.versionId);
@@ -236,18 +227,12 @@ describe("approved A7/A8 merged re-import", () => {
       authorityApi.reimports.executeApprovedMergedReimport,
       { manifestDigest: MERGED_REIMPORT_MANIFEST_DIGEST },
     );
-    await t.mutation(authorityApi.reviews.approve, {
-      proposalId: merged.A7.proposalId,
-      editCategory: "no-edit",
-    });
+    await approveWithPromotionEval(t, merged.A7.proposalId);
     const v6 = await t.mutation(
       authorityApi.reimports.executeApprovedA7V6Release,
       { releaseManifestDigest: A7_V6_RELEASE_MANIFEST_DIGEST },
     );
-    await t.mutation(authorityApi.reviews.approve, {
-      proposalId: v6.proposalId,
-      editCategory: "no-edit",
-    });
+    await approveWithPromotionEval(t, v6.proposalId);
     const release = await t.mutation(
       authorityApi.reimports.executeApprovedA7V7Release,
       { releaseManifestDigest: A7_V7_RELEASE_MANIFEST_DIGEST },
@@ -265,10 +250,7 @@ describe("approved A7/A8 merged re-import", () => {
       artifact: A7_V7_RELEASE_SPEC.version.artifact,
     });
     expect(beforeApproval.proposal).toMatchObject({ status: "open" });
-    const approved = await t.mutation(authorityApi.reviews.approve, {
-      proposalId: release.proposalId,
-      editCategory: "no-edit",
-    });
+    const approved = await approveWithPromotionEval(t, release.proposalId);
     expect(approved.resultingVersionId).toBe(release.versionId);
     const afterApproval = await t.run(async (ctx) => await ctx.db.get(release.agentId));
     expect((afterApproval as any)?.currentApprovedVersionId).toBe(release.versionId);
@@ -286,26 +268,17 @@ describe("approved A7/A8 merged re-import", () => {
       authorityApi.reimports.executeApprovedMergedReimport,
       { manifestDigest: MERGED_REIMPORT_MANIFEST_DIGEST },
     );
-    await t.mutation(authorityApi.reviews.approve, {
-      proposalId: merged.A7.proposalId,
-      editCategory: "no-edit",
-    });
+    await approveWithPromotionEval(t, merged.A7.proposalId);
     const v6 = await t.mutation(
       authorityApi.reimports.executeApprovedA7V6Release,
       { releaseManifestDigest: A7_V6_RELEASE_MANIFEST_DIGEST },
     );
-    await t.mutation(authorityApi.reviews.approve, {
-      proposalId: v6.proposalId,
-      editCategory: "no-edit",
-    });
+    await approveWithPromotionEval(t, v6.proposalId);
     const v7 = await t.mutation(
       authorityApi.reimports.executeApprovedA7V7Release,
       { releaseManifestDigest: A7_V7_RELEASE_MANIFEST_DIGEST },
     );
-    await t.mutation(authorityApi.reviews.approve, {
-      proposalId: v7.proposalId,
-      editCategory: "no-edit",
-    });
+    await approveWithPromotionEval(t, v7.proposalId);
     const release = await t.mutation(
       authorityApi.reimports.executeApprovedA7V8Release,
       { releaseManifestDigest: A7_V8_RELEASE_MANIFEST_DIGEST },
@@ -326,10 +299,7 @@ describe("approved A7/A8 merged re-import", () => {
       artifact: A7_V8_RELEASE_SPEC.version.artifact,
     });
     expect(beforeApproval.proposal).toMatchObject({ status: "open" });
-    const approved = await t.mutation(authorityApi.reviews.approve, {
-      proposalId: release.proposalId,
-      editCategory: "no-edit",
-    });
+    const approved = await approveWithPromotionEval(t, release.proposalId);
     expect(approved.resultingVersionId).toBe(release.versionId);
     const afterApproval = await t.run(async (ctx) => await ctx.db.get(release.agentId));
     expect((afterApproval as any)?.currentApprovedVersionId).toBe(release.versionId);
@@ -376,6 +346,7 @@ describe("approved A7/A8 merged re-import", () => {
     ).toBe(A10_V3_RELEASE_MANIFEST_DIGEST);
     expect(A10_V3_RELEASE_SPEC.priorVersion).toBe("biocraft-gapfill-v2");
     expect(A10_V3_RELEASE_SPEC.version.version).toBe("biocraft-gapfill-v3");
+    // gapfill-v3's released bytes, unchanged; the edits are gapfill-v4.
     expect(A10_V3_RELEASE_SPEC.version.artifact.declaredDigest).toBe(
       "8ccee5f24ac47dc16643954020309b85602109ca824a34cb54655bfaabd40fb4",
     );
@@ -459,10 +430,7 @@ describe("approved A7/A8 merged re-import", () => {
     expect((beforeApproval.a9 as any)?.name).toBe("Con");
     expect((beforeApproval.a9Version as any)?.version).toBe("0.1.0");
 
-    const approved = await t.mutation(authorityApi.reviews.approve, {
-      proposalId: release.proposalId,
-      editCategory: "no-edit",
-    });
+    const approved = await approveWithPromotionEval(t, release.proposalId);
     expect(approved.resultingVersionId).toBe(release.versionId);
     const afterApproval = await t.run(async (ctx) => ({
       a10: await ctx.db.get(release.agentId),

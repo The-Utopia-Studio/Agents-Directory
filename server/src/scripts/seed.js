@@ -87,6 +87,16 @@ export const SEED_AGENTS = [
           "Preserve Intern+Helix; Dextrum ≠ founded; Northline = founded; About CTA; no em dash; no sits-at-the-intersection cliché",
         rule: "mechanical + source-grounding checks; see eval/goldenCases.js a7-mira-okonkwo-v1",
         source: "synthetic/golden-a7-v1",
+        sealed: false,
+      },
+      {
+        input:
+          "Jonas Park — Intern Tidewatch Conservancy; contracted NOAA (not founded); founded Kelpward; sealed holdout",
+        expected:
+          "Preserve Intern+Tidewatch; NOAA ≠ founded; Kelpward = founded; hook within 200 characters",
+        rule: "sealed holdout — scorer only; see eval/goldenCases.js a7-jonas-park-v1",
+        source: "synthetic/golden-a7-jonas-v1",
+        sealed: true,
       },
     ],
     evalHistory: [], changelog: [{ version: "1.0", date: "2026-08-01", note: "Stateless single-shot draft mode using a server-owned SKILL.md." }], proposedImprovements: [] },
@@ -126,6 +136,16 @@ export const SEED_AGENTS = [
           "Preserve relationships; Factory ≠ employer; Snoonu ≠ workplace; Call-1 gaps for omitted bank items; see a10-mira-okonkwo-v1",
         rule: "mechanical + source-grounding (forbid-employer-frame); see eval/goldenCases.js a10-mira-okonkwo-v1",
         source: "synthetic/golden-a10-v1",
+        sealed: false,
+      },
+      {
+        input:
+          "Priya Venkat (partial) — Intern Dairywell; Cargill auditor not founder; Saltline founded; Benchling=tool; IAFP=event; sealed holdout",
+        expected:
+          "Preserve relationships; Benchling ≠ employer; IAFP ≠ workplace; no delimiter keyword run; see a10-priya-venkat-v1",
+        rule: "sealed holdout — scorer only; see eval/goldenCases.js a10-priya-venkat-v1",
+        source: "synthetic/golden-a10-priya-v1",
+        sealed: true,
       },
     ],
     changelog: [{ version: "biocraft-gapfill-v3", date: "2026-08-05", note: "Employer-frame guardrail + source-grounding; mechanical checks retained from A7." }], proposedImprovements: [] },
