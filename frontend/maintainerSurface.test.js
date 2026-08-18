@@ -171,13 +171,19 @@ describe("the candidate preview", () => {
     expect(body).toContain("blockingCheckIds");
   });
 
-  test("the source kind is shown and sent, never inferred", () => {
-    expect(appSource).toContain("previewSourceKind");
+  test("the source kind is shown to the human but never sent by the browser", () => {
+    // Displayed, so the reader knows what was executed.
     expect(appSource).toContain("synthetic golden fixture");
     expect(appSource).toContain("pasted material");
-    // Pasting is offered; the fixture is the explicit fallback.
     expect(appSource).toContain("leave blank to fall back to the synthetic golden fixture");
-    expect(clientSource).toContain("previewSourceKind,");
+    // NOT sent: the mutation reads provenance off the service execution proof.
+    // A browser saying what a run executed against is the attester grading
+    // their own homework, which is how a fixture run could be labelled real.
+    const start = clientSource.indexOf("async recordCandidatePreviewEvidence(");
+    const body = clientSource.slice(start, start + 700);
+    expect(body).not.toMatch(/previewSourceKind\s*[,:]/);
+    expect(body).not.toMatch(/blockingCheckIds\s*[,:]/);
+    expect(body).toContain("overrideReason");
   });
 
   test("executionKind is rendered wherever evidence provenance is shown", () => {

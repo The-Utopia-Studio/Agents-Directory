@@ -231,7 +231,6 @@ describe("evidence requires proof that an execution happened", () => {
     await expect(
       t.mutation(authorityApi.evidence.recordCandidatePreviewEvidence, {
         displayId: g.displayId, artifactDigest: DIGEST,
-        previewSourceKind: "golden-fixture",
       }),
     ).rejects.toThrow(/EXECUTION_PROOF_REQUIRED/);
   });
@@ -427,7 +426,7 @@ describe("attesting a preview requires an approver", () => {
     await expect(
       base.withIdentity(HUMAN).mutation(
         authorityApi.evidence.recordCandidatePreviewEvidence,
-        { displayId: g.displayId, artifactDigest: DIGEST, previewSourceKind: "golden-fixture" },
+        { displayId: g.displayId, artifactDigest: DIGEST },
       ),
     ).rejects.toThrow(/approver|FORBIDDEN/i);
   });
@@ -441,6 +440,7 @@ describe("a blocking check failure refuses attestation", () => {
     });
     await t.mutation(authorityInternal.executions.recordExecution, {
       displayId: g.displayId, artifactDigest: DIGEST, executionKind: "candidate-preview",
+      previewSourceKind: "golden-fixture",
     });
     return g;
   }
@@ -448,13 +448,20 @@ describe("a blocking check failure refuses attestation", () => {
   test("attesting output a blocking check failed is REFUSED, not warned", async () => {
     const base = convexTest(schema, modules);
     const t = base.withIdentity(APPROVER);
-    const g = await previewable(t, base, 40);
+    const g = await governed(t, 40);
+    await t.mutation(authorityApi.proposals.createCandidateProposal, {
+      agentId: g.agentId, candidateVersionId: g.versionId, summary: "blocking",
+    });
+    // The SERVICE records what its scoring found. The attester cannot omit it.
+    await t.mutation(authorityInternal.executions.recordExecution, {
+      displayId: g.displayId, artifactDigest: DIGEST, executionKind: "candidate-preview",
+      previewSourceKind: "golden-fixture",
+      blockingCheckIds: ["draft_registered_ai_cliche_lemma"],
+    });
     await expect(
       t.mutation(authorityApi.evidence.recordCandidatePreviewEvidence, {
         displayId: g.displayId,
         artifactDigest: DIGEST,
-        previewSourceKind: "golden-fixture",
-        blockingCheckIds: ["draft_registered_ai_cliche_lemma"],
       }),
     ).rejects.toThrow(/BLOCKING_CHECK_FAILED/);
     expect(await t.run(async (ctx: any) => (await ctx.db.query("evidence").collect()).length)).toBe(0);
@@ -463,14 +470,20 @@ describe("a blocking check failure refuses attestation", () => {
   test("a deliberate override is recorded with its reason and the ids it covers", async () => {
     const base = convexTest(schema, modules);
     const t = base.withIdentity(APPROVER);
-    const g = await previewable(t, base, 41);
+    const g = await governed(t, 41);
+    await t.mutation(authorityApi.proposals.createCandidateProposal, {
+      agentId: g.agentId, candidateVersionId: g.versionId, summary: "override",
+    });
+    await t.mutation(authorityInternal.executions.recordExecution, {
+      displayId: g.displayId, artifactDigest: DIGEST, executionKind: "candidate-preview",
+      previewSourceKind: "pasted-source",
+      blockingCheckIds: ["draft_registered_ai_cliche_lemma"],
+    });
     const evidenceId = await t.mutation(
       authorityApi.evidence.recordCandidatePreviewEvidence,
       {
         displayId: g.displayId,
         artifactDigest: DIGEST,
-        previewSourceKind: "pasted-source",
-        blockingCheckIds: ["draft_registered_ai_cliche_lemma"],
         overrideReason: "the lemma appears inside a quoted client testimonial",
       },
     );
@@ -489,8 +502,6 @@ describe("a blocking check failure refuses attestation", () => {
     await expect(
       t.mutation(authorityApi.evidence.recordCandidatePreviewEvidence, {
         displayId: g.displayId, artifactDigest: DIGEST,
-        previewSourceKind: "golden-fixture",
-        blockingCheckIds: [],
         overrideReason: "looks fine to me",
       }),
     ).rejects.toThrow(/OVERRIDE_WITHOUT_FAILURE/);
@@ -502,11 +513,89 @@ describe("a blocking check failure refuses attestation", () => {
     const g = await previewable(t, base, 43);
     const evidenceId = await t.mutation(
       authorityApi.evidence.recordCandidatePreviewEvidence,
-      { displayId: g.displayId, artifactDigest: DIGEST, previewSourceKind: "golden-fixture" },
+      { displayId: g.displayId, artifactDigest: DIGEST },
     );
     const row = await t.run(async (ctx: any) => await ctx.db.get(evidenceId));
     expect(row.previewSourceKind).toBe("golden-fixture");
     expect(row.checkOverride).toBeUndefined();
+  });
+});
+
+describe("the attester cannot grade their own homework", () => {
+  async function withExecution(t: any, seed: number, exec: Record<string, unknown>) {
+    const g = await governed(t, seed);
+    await t.mutation(authorityApi.proposals.createCandidateProposal, {
+      agentId: g.agentId, candidateVersionId: g.versionId, summary: `bypass ${seed}`,
+    });
+    await t.mutation(authorityInternal.executions.recordExecution, {
+      displayId: g.displayId, artifactDigest: DIGEST,
+      executionKind: "candidate-preview", ...exec,
+    });
+    return g;
+  }
+
+  test("omitting the failed checks cannot skip the override gate", async () => {
+    // The reported bypass: blockingCheckIds was a caller argument, so simply
+    // not sending it made a failed preview look clean.
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await withExecution(t, 50, {
+      previewSourceKind: "golden-fixture",
+      blockingCheckIds: ["draft_registered_ai_cliche_lemma"],
+    });
+    // Sending nothing at all still refuses, because the ids come from the proof.
+    await expect(
+      t.mutation(authorityApi.evidence.recordCandidatePreviewEvidence, {
+        displayId: g.displayId, artifactDigest: DIGEST,
+      }),
+    ).rejects.toThrow(/BLOCKING_CHECK_FAILED/);
+    expect(await t.run(async (ctx: any) => (await ctx.db.query("evidence").collect()).length)).toBe(0);
+  });
+
+  test("a caller-supplied blockingCheckIds is not even accepted", async () => {
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await withExecution(t, 51, {
+      previewSourceKind: "golden-fixture",
+      blockingCheckIds: ["draft_registered_ai_cliche_lemma"],
+    });
+    // Not a validated field — an unknown argument is rejected outright.
+    await expect(
+      t.mutation(authorityApi.evidence.recordCandidatePreviewEvidence, {
+        displayId: g.displayId, artifactDigest: DIGEST, blockingCheckIds: [],
+      } as any),
+    ).rejects.toThrow();
+  });
+
+  test("provenance is what the service executed, not what the attester claims", async () => {
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await withExecution(t, 52, { previewSourceKind: "pasted-source" });
+    // The caller cannot pass previewSourceKind at all; the row takes the
+    // service's observation, so a fixture run can never be labelled real paste.
+    const evidenceId = await t.mutation(
+      authorityApi.evidence.recordCandidatePreviewEvidence,
+      { displayId: g.displayId, artifactDigest: DIGEST },
+    );
+    const row = await t.run(async (ctx: any) => await ctx.db.get(evidenceId));
+    expect(row.previewSourceKind).toBe("pasted-source");
+    await expect(
+      t.mutation(authorityApi.evidence.recordCandidatePreviewEvidence, {
+        displayId: g.displayId, artifactDigest: DIGEST,
+        previewSourceKind: "golden-fixture",
+      } as any),
+    ).rejects.toThrow();
+  });
+
+  test("an execution that recorded no provenance cannot be attested", async () => {
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await withExecution(t, 53, {});
+    await expect(
+      t.mutation(authorityApi.evidence.recordCandidatePreviewEvidence, {
+        displayId: g.displayId, artifactDigest: DIGEST,
+      }),
+    ).rejects.toThrow(/PREVIEW_PROVENANCE_UNRECORDED/);
   });
 });
 

@@ -15,7 +15,7 @@ import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import { internalMutation, query, type MutationCtx } from "./_generated/server";
 import { declaredLoopServiceActor } from "./lib/serviceActor";
-import { executionKind, providerCost } from "./lib/validators";
+import { executionKind, previewSourceKind, providerCost } from "./lib/validators";
 
 /**
  * How long an execution may sit unattested before it stops counting.
@@ -36,6 +36,9 @@ export const recordExecution = internalMutation({
     executionKind,
     traceId: v.optional(v.string()),
     cost: v.optional(providerCost),
+    // Observed by the service that ran it, not claimed by whoever attests.
+    blockingCheckIds: v.optional(v.array(v.string())),
+    previewSourceKind: v.optional(previewSourceKind),
   },
   handler: async (ctx, args): Promise<Id<"executionRecords">> => {
     // requireIdentity is deliberately NOT called: the actor is declared, not
@@ -73,6 +76,8 @@ export const recordExecution = internalMutation({
       recordedBy,
       ...(args.traceId ? { traceId: args.traceId } : {}),
       ...(args.cost ? { cost: args.cost } : {}),
+      ...(args.blockingCheckIds ? { blockingCheckIds: args.blockingCheckIds } : {}),
+      ...(args.previewSourceKind ? { previewSourceKind: args.previewSourceKind } : {}),
       occurredAt: Date.now(),
     });
   },

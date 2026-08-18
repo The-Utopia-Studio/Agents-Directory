@@ -249,19 +249,16 @@ export function createConvexDirectoryClient({ url, clientFactory } = {}) {
     async recordEvalResult(args) {
       return await client.mutation(recordEvalResultMutation, args);
     },
-    async recordCandidatePreviewEvidence({
-      displayId,
-      artifactDigest,
-      previewSourceKind,
-      blockingCheckIds,
-      overrideReason,
-      cost,
-    }) {
+    /**
+     * previewSourceKind and blockingCheckIds are NOT sent: the mutation reads
+     * both off the service execution proof. A browser cannot be trusted to say
+     * what a run found or what it ran against — that is the attester grading
+     * their own homework.
+     */
+    async recordCandidatePreviewEvidence({ displayId, artifactDigest, overrideReason, cost }) {
       return await client.mutation(recordCandidatePreviewEvidenceMutation, {
         displayId,
         artifactDigest,
-        previewSourceKind,
-        ...(blockingCheckIds ? { blockingCheckIds } : {}),
         ...(overrideReason ? { overrideReason } : {}),
         ...(cost ? { cost } : {}),
       });

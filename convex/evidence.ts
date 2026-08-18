@@ -9,7 +9,7 @@ import {
 import { requireApprover, requireIdentity, type AuthorityActor } from "./lib/auth";
 import { declaredLoopServiceActor } from "./lib/serviceActor";
 import { claimExecutionProof } from "./executions";
-import { evidenceType, previewSourceKind, providerCost } from "./lib/validators";
+import { evidenceType, providerCost } from "./lib/validators";
 
 type EvidenceSource = "real" | "mock" | "demo" | "imported";
 type SyntheticEvidenceSource = Extract<EvidenceSource, "mock" | "demo">;
@@ -398,10 +398,11 @@ export const recordCandidatePreviewEvidence = mutation({
     displayId: v.string(),
     artifactDigest: v.string(),
     cost: v.optional(providerCost),
-    previewSourceKind,
-    // Blocking check ids the preview reported, from the same declared set the
-    // scorer uses. Supplying any of these REFUSES unless overridden.
-    blockingCheckIds: v.optional(v.array(v.string())),
+    // previewSourceKind and blockingCheckIds are deliberately NOT arguments.
+    // Both are read off the service execution proof below. As arguments they
+    // were caller-controlled: omitting a failed check skipped the override
+    // gate, and a wrong source kind made the durable row misdescribe what was
+    // attested. Neither is something the attester gets to assert.
     // The deliberate override. Reason required; absence is a refusal.
     overrideReason: v.optional(v.string()),
   },
@@ -452,18 +453,27 @@ export const recordCandidatePreviewEvidence = mutation({
       });
     }
 
+    // Claim the proof FIRST: the blocking failures and the source kind are
+    // facts the executing service observed, so they come from the proof rather
+    // than from the caller attesting to it.
+    const proof = await claimExecutionProof(ctx, {
+      agentVersionId: version._id,
+      declaredArtifactDigest: version.artifact!.declaredDigest,
+      executionKind: "candidate-preview",
+    });
+
     // A blocking failure REFUSES the attestation. Not a warning: evidence that
     // a human saw output a scored or named_hit check failed, with nothing
     // recording that they knew, is exactly the "looked like it worked" artifact
     // this system exists to prevent.
-    const blocking = args.blockingCheckIds ?? [];
+    const blocking = proof.blockingCheckIds ?? [];
     const overrideReason = (args.overrideReason ?? "").trim();
     if (blocking.length && !overrideReason) {
       throw new ConvexError({
         code: "BLOCKING_CHECK_FAILED",
         status: 409,
         message:
-          `BLOCKING_CHECK_FAILED: the preview failed ${blocking.join(", ")}. ` +
+          `BLOCKING_CHECK_FAILED: the recorded execution failed ${blocking.join(", ")}. ` +
           `Attesting is refused. To attest anyway, state why the check is wrong about this draft — ` +
           `the reason is recorded on the evidence row as an explicit human override.`,
       });
@@ -473,15 +483,20 @@ export const recordCandidatePreviewEvidence = mutation({
         code: "OVERRIDE_WITHOUT_FAILURE",
         status: 400,
         message:
-          "OVERRIDE_WITHOUT_FAILURE: an override was supplied but no blocking check failed. An override must name what it overrides.",
+          "OVERRIDE_WITHOUT_FAILURE: an override was supplied but the recorded execution failed no blocking check. An override must name what it overrides.",
       });
     }
-
-    const proof = await claimExecutionProof(ctx, {
-      agentVersionId: version._id,
-      declaredArtifactDigest: version.artifact!.declaredDigest,
-      executionKind: "candidate-preview",
-    });
+    // A preview whose execution never recorded what it ran against cannot be
+    // attested: the row would have to guess, and a guess about provenance is
+    // the thing this field exists to prevent.
+    if (!proof.previewSourceKind) {
+      throw new ConvexError({
+        code: "PREVIEW_PROVENANCE_UNRECORDED",
+        status: 409,
+        message:
+          "PREVIEW_PROVENANCE_UNRECORDED: the execution record does not say what the preview ran against, so the evidence row cannot state it. Re-run the preview on a build that records provenance.",
+      });
+    }
     const evidenceId = await insertEvidence(
       ctx,
       {
@@ -494,7 +509,8 @@ export const recordCandidatePreviewEvidence = mutation({
       declaredLoopServiceActor(),
       "candidate-preview",
       {
-        previewSourceKind: args.previewSourceKind,
+        // From the proof, never the caller.
+        previewSourceKind: proof.previewSourceKind,
         ...(overrideReason
           ? {
               checkOverride: {

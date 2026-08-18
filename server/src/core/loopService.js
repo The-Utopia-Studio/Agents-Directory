@@ -330,7 +330,7 @@ export function createLoopService({
    * unconfigured — but a failure is reported, never swallowed: without the
    * record the human simply cannot attest, and they need to know why.
    */
-  async function recordExecutionProof(agentId, { artifactDigest, executionKind, traceId, cost }) {
+  async function recordExecutionProof(agentId, { artifactDigest, executionKind, traceId, cost, blockingCheckIds, previewSourceKind }) {
     if (!convexAuthority.enabled()) {
       return { recorded: false, reason: "Convex authority is not configured on this service" };
     }
@@ -344,6 +344,8 @@ export function createLoopService({
         executionKind,
         traceId,
         cost,
+        blockingCheckIds,
+        previewSourceKind,
       });
       return { recorded: true, executionRecordId };
     } catch (error) {
@@ -724,7 +726,6 @@ export function createLoopService({
       // Tracing it is secondary bookkeeping: if the writer fails, the output
       // still has to reach the caller.
       let trace = null;
-      let traceError = null;
       try {
         trace = await obs.recordTrace(metadataOnlyTrace(agentId, {
           agentId,
@@ -1440,6 +1441,7 @@ export function createLoopService({
 
       // Unconditional. The money was spent whatever the human decides next.
       let trace = null;
+      let traceError = null;
       try {
         trace = await obs.recordTrace(metadataOnlyTrace(agentId, {
           status: "ok",
@@ -1480,6 +1482,9 @@ export function createLoopService({
       const proof = await recordExecutionProof(agentId, {
         artifactDigest: result.artifactDigest,
         executionKind: "candidate-preview",
+        // Observed by this service's own scoring of its own output.
+        blockingCheckIds: (result.blockingFailures || []).map((b) => b.checkId),
+        previewSourceKind,
         traceId: trace?.id || null,
         cost: typeof result.costUsd === "number"
           ? {

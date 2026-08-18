@@ -2903,8 +2903,6 @@ async function maintAttestPreview(){
   await maintRun("maint-attest-out","recordCandidatePreviewEvidence",
     ()=>ConvexDirectory.recordCandidatePreviewEvidence({
       displayId:p.agentId,artifactDigest:p.artifactDigest,
-      previewSourceKind:p.previewSourceKind,
-      ...(p.blockingCheckIds&&p.blockingCheckIds.length?{blockingCheckIds:p.blockingCheckIds}:{}),
       ...(overrideReason?{overrideReason}:{}),
       ...(p.cost?{cost:p.cost}:{}),
     }));
