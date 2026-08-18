@@ -113,7 +113,11 @@ describe("the candidate preview", () => {
     const start = appSource.indexOf("async function maintPreviewCandidate(");
     const body = appSource.slice(start, appSource.indexOf("async function maintAttestPreview("));
     expect(body).not.toContain("recordCandidatePreviewEvidence");
-    expect(body).toContain("No evidence has been recorded");
+    // The panel reports the SERVICE's evidenceRecorded flag and its stated next
+    // action, rather than a hardcoded sentence that would keep claiming "no
+    // evidence recorded" even if that stopped being true.
+    expect(body).toContain("r.evidenceRecorded===true");
+    expect(body).toContain("r.nextRequiredAction");
     // The attest button exists, so the human must choose.
     expect(body).toContain('data-maint="attest-preview"');
     expect(body).toContain('data-maint="discard-preview"');
