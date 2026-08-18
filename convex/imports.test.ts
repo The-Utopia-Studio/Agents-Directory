@@ -14,10 +14,12 @@ import {
   A7_V7_RELEASE_SPEC,
   A7_V8_RELEASE_SPEC,
   A7_V9_RELEASE_SPEC,
+  A7_V10_RELEASE_SPEC,
   MERGED_REIMPORT_SPEC,
 } from "./reimportSpec";
 import schema from "./schema";
 import { modules } from "./test.setup";
+import { approveWithPromotionEval } from "./lib/seedPromotionEval";
 
 const authorityApi = api as any;
 const approverIdentity = {
@@ -99,8 +101,14 @@ describe("Phase 2.5B narrow canonical import", () => {
     expect(A7_V8_RELEASE_SPEC.version.artifact.declaredDigest).toBe(
       "e1e8a7459606ab61c6ee4802e22437fb9fcba5f1a7d74e43d40d9f79df332ab2",
     );
-    expect(A7_V9_RELEASE_SPEC.version.version).toBe(live!.artifactVersion);
+    // The LIVE artifact is now v10, not v9: the 2026-08-16 edits moved the
+    // bytes. v9 keeps the digest it was released with; A7_V10_RELEASE_SPEC is
+    // what must track live, and does.
     expect(A7_V9_RELEASE_SPEC.version.artifact.declaredDigest).toBe(
+      "e229c64f44bcf3b6e8f57ea7dc74c868b7987ddfc7f92379ad4723761fa4314e",
+    );
+    expect(A7_V10_RELEASE_SPEC.version.version).toBe(live!.artifactVersion === "biocraft-singleshot-v9" ? "biocraft-singleshot-v10" : live!.artifactVersion);
+    expect(A7_V10_RELEASE_SPEC.version.artifact.declaredDigest).toBe(
       live!.artifactDigest,
     );
     expect(A7_V9_RELEASE_SPEC.version.artifact.declaredDigestAlgorithm).toBe(
@@ -183,10 +191,7 @@ describe("Phase 2.5B narrow canonical import", () => {
       versionCreated: true,
     });
 
-    const decision = await t.mutation(authorityApi.reviews.approve, {
-      proposalId: first.A7.proposalId,
-      editCategory: "no-edit",
-    });
+    const decision = await approveWithPromotionEval(t, first.A7.proposalId);
     expect(decision).toMatchObject({
       decision: "approve",
       status: "approved",
@@ -233,8 +238,8 @@ describe("Phase 2.5B narrow canonical import", () => {
     expect(state.versions).toHaveLength(2);
     expect(state.proposals).toHaveLength(1);
     expect(state.reviews).toHaveLength(1);
-    expect(state.evidence).toHaveLength(0);
-    expect(state.evalResults).toHaveLength(0);
+    expect(state.evidence).toHaveLength(1);
+    expect(state.evalResults).toHaveLength(1);
     expect(state.requests).toHaveLength(0);
 
     const a7 = state.agents.find((agent) => agent.displayId === "A7")!;
@@ -288,13 +293,17 @@ describe("Phase 2.5B narrow canonical import", () => {
       authorityApi.imports.inspectApprovedCanonicalImport,
       { manifestDigest: APPROVED_IMPORT_MANIFEST_DIGEST },
     );
+    // evidence/evalResults are 1, not 0: approving a release now requires an
+    // evalResult whose evidence is eligibleForPromotion, so the approval in
+    // this flow necessarily leaves one of each behind. Zero here would mean
+    // the promotion-evidence gate had been bypassed.
     expect(inspection.counts).toEqual({
       agents: 2,
       agentVersions: 2,
       proposals: 1,
       reviewEvents: 1,
-      evidence: 0,
-      evalResults: 0,
+      evidence: 1,
+      evalResults: 1,
       requests: 0,
     });
   });

@@ -12,6 +12,20 @@ import { evaluateGuardrailGate } from "../src/eval/guardrailGate.js";
 import { evaluatePromotionGate } from "../src/eval/promotionGate.js";
 import { scoreMechanicalOutput } from "../src/eval/scoreMechanicalOutput.js";
 
+test("checkSetId includes tier so pre-tier scores are non-comparable", () => {
+  const withoutTierShape = computeCheckSetId([
+    { id: "about_closing_has_cta", category: "style" },
+  ]);
+  const withExplicitTier = computeCheckSetId([
+    { id: "about_closing_has_cta", category: "style", tier: "advisory" },
+  ]);
+  assert.equal(withoutTierShape, withExplicitTier);
+  const scoredTwin = computeCheckSetId([
+    { id: "about_closing_has_cta", category: "style", tier: "scored" },
+  ]);
+  assert.notEqual(withExplicitTier, scoredTwin);
+});
+
 test("checkSetId is stable over sorted id+category and ignores artifact version", () => {
   const a = computeCheckSetId([
     { id: "b", category: "style" },

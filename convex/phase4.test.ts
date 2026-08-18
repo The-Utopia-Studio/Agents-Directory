@@ -5,6 +5,7 @@ import { api } from "./_generated/api";
 import { APPROVED_IMPORT_MANIFEST_DIGEST } from "./importSpec";
 import schema from "./schema";
 import { modules } from "./test.setup";
+import { approveWithPromotionEval } from "./lib/seedPromotionEval";
 
 const authorityApi = api as any;
 const approverIdentity = {
@@ -21,10 +22,7 @@ describe("directory query", () => {
       authorityApi.imports.executeApprovedCanonicalImport,
       { manifestDigest: APPROVED_IMPORT_MANIFEST_DIGEST },
     );
-    await t.mutation(authorityApi.reviews.approve, {
-      proposalId: imported.A7.proposalId,
-      editCategory: "no-edit",
-    });
+    await approveWithPromotionEval(t, imported.A7.proposalId);
 
     const rows = await t.query(
       authorityApi.agents.listGovernedDirectoryPilot,

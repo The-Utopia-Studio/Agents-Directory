@@ -1244,9 +1244,16 @@ function renderDetail(a){
   </div>`;
 }
 
+function maintainerRouteActive(){
+  return typeof location!=="undefined"&&String(location.hash||"")==="#maintainer";
+}
+
 function render(){
   renderAuthSurface();
   const app=document.getElementById("app");
+  // Separate route. The run panel is never rendered here, so a maintainer
+  // action cannot also produce a witnessed-run evidence row.
+  if(maintainerRouteActive()){app.innerHTML=maintainerPanelHtml();return}
   if(catalogPending()){
     app.innerHTML=`<div class="directory-state directory-state-loading"><h2>Loading governed directory…</h2><p>Waiting for Convex.</p></div>`;
     return;
@@ -1368,25 +1375,11 @@ function slug(s){return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").repla
 // view. The run form is built from this, never from the editable inputs[]
 // labels on the record — renaming a label must not break the run.
 const runCapabilities={};
-const GOVERNED_RUNTIME_MISMATCH="Runtime version does not match the governed version. Deployment or approval is incomplete.";
-function capabilityIdentityMatches(a,capability){
-  const governance=a&&a.convexGovernance;
-  if(!governance)return false;
-  if(hasUsabilityMode(a,"hosted-run")||canInstall(a)){
-    const expected=governance.artifact;
-    const actual=capability&&capability.installArtifact;
-    if(!governance.isCurrentApproved||!expected||!actual||actual.available!==true)return false;
-    if(actual.artifactVersion!==a.version)return false;
-    if(actual.artifactDigestAlgorithm!==expected.algorithm)return false;
-    if(actual.artifactDigest!==expected.digest)return false;
-  }
-  if(canHandoff(a)){
-    const expected=governance.sourcePin;
-    const actual=capability&&capability.handoff;
-    if(!expected||!actual||actual.available!==true)return false;
-    if(actual.commitSha!==expected.commitSha||actual.repoUrl!==expected.repoUrl)return false;
-  }
-  return true;
+function governedRuntimeRefused(capability){
+  return Boolean(capability&&capability.governedRuntime&&capability.governedRuntime.matched===false);
+}
+function governedRuntimeReason(capability){
+  return (capability&&capability.governedRuntime&&capability.governedRuntime.reason)||"GOVERNED_RUNTIME_MISMATCH";
 }
 async function loadRunCapability(id){
   const a=agents.find(x=>x.id===id),slot=document.getElementById("run-action"),installSlot=document.getElementById("install-actions"),handoffSlot=document.getElementById("handoff-actions");
@@ -1405,12 +1398,11 @@ async function loadRunCapability(id){
   }
   try{
     const capability=await DirectoryAPI.invocationCapability(id);
-    if(!capabilityIdentityMatches(a,capability)){
+    if(governedRuntimeRefused(capability)){
       delete runCapabilities[id];
-      showCapabilityFailure(a,{slot,installSlot,handoffSlot},GOVERNED_RUNTIME_MISMATCH);
+      showCapabilityFailure(a,{slot,installSlot,handoffSlot},governedRuntimeReason(capability));
       return;
     }
-    capability.governedIdentityMatched=true;
     runCapabilities[id]=capability;
     if(slot&&hasUsabilityMode(a,"hosted-run")){
       if(capability.serverRun&&capability.artifactAvailable&&capability.configured&&capability.runnable)slot.innerHTML=`<button class="btn btn-sm btn-primary" onclick="toggleRun('${id}')">&#9654; ${capability.mode==="single-shot"?"Run single-shot draft":capability.mode==="gap-fill"?"Run gap-fill draft":"Run here"}</button>`;
@@ -1471,14 +1463,14 @@ function buildAgentPrompt(a){
 function copyText(text,msg){(navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(text):Promise.reject()).then(()=>toast(msg)).catch(()=>{const ta=document.createElement("textarea");ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast(msg)}catch(e){toast("Copy failed")}ta.remove()})}
 function copyAgentPrompt(id){const a=agents.find(x=>x.id===id);if(a)copyText(buildAgentPrompt(a),"Summary copied — a description of this record, not the agent")}
 async function copyHandoffBriefing(id){
-  if(runCapabilities[id]?.governedIdentityMatched!==true){toast(GOVERNED_RUNTIME_MISMATCH);return}
+  if(governedRuntimeRefused(runCapabilities[id])){toast(governedRuntimeReason(runCapabilities[id]));return}
   try{
     const brief=await DirectoryAPI.handoffBriefing(id);
     copyText(brief.content,`Engagement brief copied · ${brief.briefVersion} · commit ${String(brief.commitSha).slice(0,7)}`);
   }catch(e){toast(`Briefing unavailable: ${String(e.message||e)}`)}
 }
 async function copyInstallSkill(id){
-  if(runCapabilities[id]?.governedIdentityMatched!==true){toast(GOVERNED_RUNTIME_MISMATCH);return}
+  if(governedRuntimeRefused(runCapabilities[id])){toast(governedRuntimeReason(runCapabilities[id]));return}
   try{
     const artifact=await DirectoryAPI.installSkill(id);
     const modeWord=runtimeModeLabel(runCapabilities[id]?.mode||artifact.mode);
@@ -1486,7 +1478,7 @@ async function copyInstallSkill(id){
   }catch(e){toast(`Install export failed: ${String(e.message||e)}`)}
 }
 async function downloadInstallArtifact(id){
-  if(runCapabilities[id]?.governedIdentityMatched!==true){toast(GOVERNED_RUNTIME_MISMATCH);return}
+  if(governedRuntimeRefused(runCapabilities[id])){toast(governedRuntimeReason(runCapabilities[id]));return}
   try{
     const artifact=await DirectoryAPI.downloadInstallArtifact(id);
     const url=URL.createObjectURL(artifact.blob),a=document.createElement("a");
@@ -1518,12 +1510,17 @@ function renderRunResult(id,r){
   const banner=failed?`<div class="run-checks-failed"><div class="run-checks-title">&#9888; ${r.checkFailures.length} check${r.checkFailures.length===1?"":"s"} did not pass — review before shipping</div><ul>${r.checkFailures.map(c=>{
     const msg=c.message||c.why||"";
     const kind=c.claimKind?` · ${escHtml(c.claimKind)}`:"";
-    return`<li><code>${escHtml(c.checkId)}</code>${kind}${msg?` — ${escHtml(msg)}`:""}</li>`;
+    const tier=c.tier?` <span class="mech-tier">${escHtml(c.tier)}</span>`:"";
+    return`<li><code>${escHtml(c.checkId)}</code>${tier}${kind}${msg?` — ${escHtml(msg)}`:""}</li>`;
   }).join("")}</ul><div class="run-checks-note">The output below was still generated and billed. A check can be wrong about a correct draft — if that is what happened, say so in the notes.</div></div>`:"";
+  const observations=(r.observations||[]).length?`<div class="run-observations"><div class="run-checks-title">Observations (advisory — not pass/fail)</div><ul>${r.observations.map(c=>{
+    const msg=c.message||c.why||"";
+    return`<li><code>${escHtml(c.checkId)}</code> <span class="mech-tier">advisory</span>${msg?` — ${escHtml(msg)}`:""}</li>`;
+  }).join("")}</ul></div>`:"";
   const groundingBanner=groundingUnavailable?`<div class="run-grounding-unavailable"><div class="run-checks-title">&#9888; Grounding check unavailable for this run</div><div class="run-checks-note">${escHtml(r.groundingNotice||"Truthfulness was not verified for this draft. Do not treat this run as grounded.")}</div></div>`:"";
   const callMeta=typeof r.callCount==="number"?` · ${r.callCount} call${r.callCount===1?"":"s"}`:"";
   const headLabel=failed?"Output (failed checks)":groundingUnavailable?"Output (grounding not verified)":"Output";
-  box.innerHTML=`<div class="run-result${failed||groundingUnavailable?" run-result-failed":""}">${banner}${groundingBanner}<div class="run-result-head">${headLabel} <span class="run-via">via ${escHtml(runModeLabel(r.mode)||r.via)}${callMeta}</span> ${r.tracePersisted&&r.traceId?`<span class="run-trace">&#10003; metadata trace ${escHtml(r.traceId)} recorded</span>`:`<span class="run-via">trace not persisted</span>`}</div><pre>${escHtml(r.output)}</pre>${feedback}</div>`;
+  box.innerHTML=`<div class="run-result${failed||groundingUnavailable?" run-result-failed":""}">${banner}${observations}${groundingBanner}<div class="run-result-head">${headLabel} <span class="run-via">via ${escHtml(runModeLabel(r.mode)||r.via)}${callMeta}</span> ${r.tracePersisted&&r.traceId?`<span class="run-trace">&#10003; metadata trace ${escHtml(r.traceId)} recorded</span>`:`<span class="run-via">trace not persisted</span>`}</div><pre>${escHtml(r.output)}</pre>${feedback}</div>`;
 }
 function renderGapFillForm(id,state){
   const panel=document.getElementById("run-panel");
@@ -1548,9 +1545,58 @@ function toggleRun(id){
   }
   box.innerHTML=`<div class="run-form">${unsupported}${fields}<button class="btn btn-sm btn-primary" onclick="runAgentUI('${id}')">Run &#9654;</button></div><div id="run-out" class="run-out"></div>`;
 }
+/**
+ * Record that this human witnessed a hosted run.
+ *
+ * Written ONLY when output actually reached the browser. A failed run, a 409
+ * from the digest gate, a needs_input pause, or a thrown request writes
+ * nothing — the row asserts a human saw output, and with no output there is
+ * nothing to assert.
+ *
+ * The digest recorded is the one the run REPORTS HAVING SERVED
+ * (result.artifactDigest), never runCapabilities' expected pin. If those two
+ * ever disagree the served one is the truth, and attesting to the other would
+ * be attesting to bytes that did not run.
+ *
+ * Failure to record is surfaced, never swallowed: the run still succeeded, but
+ * the human must know no evidence was captured or they will believe the
+ * promotion gate has something it does not.
+ */
+async function recordWitnessedRun(id, result){
+  if(!result||typeof result!=="object")return null;
+  // Output must have reached the browser.
+  const output=typeof result.output==="string"?result.output:"";
+  if(!output.trim())return null;
+  if(result.status!=="ok"&&result.status!=="fail")return null;
+  if(result.status==="needs_input")return null;
+  // The served digest, from the run itself.
+  const servedDigest=String(result.artifactDigest||"").trim();
+  if(!/^[a-f0-9]{64}$/i.test(servedDigest))return{recorded:false,reason:"the run reported no served artifact digest"};
+  if(!ConvexDirectory||!ConvexDirectory.enabled||!ConvexDirectory.recordVerifiedHumanRunEvidence){
+    return{recorded:false,reason:"Convex directory is not configured in this browser session"};
+  }
+  try{
+    const evidenceId=await ConvexDirectory.recordVerifiedHumanRunEvidence({
+      displayId:id,
+      artifactDigest:servedDigest,
+    });
+    return{recorded:true,evidenceId,servedDigest};
+  }catch(e){
+    return{recorded:false,reason:String(e&&e.message?e.message:e)};
+  }
+}
+
+function renderWitnessNotice(witness){
+  if(!witness)return"";
+  if(witness.recorded){
+    return`<div class="run-witness">Run evidence recorded against served digest <code>${escHtml(String(witness.servedDigest).slice(0,12))}</code>. This is not an eval result — promotion additionally requires one, recorded separately.</div>`;
+  }
+  return`<div class="run-witness run-witness-err">Run succeeded but no evidence was recorded: ${escHtml(witness.reason||"unknown reason")}. The promotion gate has nothing from this run.</div>`;
+}
+
 async function runAgentUI(id){
   const box=document.getElementById("run-out");if(!box)return;
-  if(runCapabilities[id]?.governedIdentityMatched!==true){box.innerHTML=`<div class="run-status run-err">${escHtml(GOVERNED_RUNTIME_MISMATCH)}</div>`;return}
+  if(governedRuntimeRefused(runCapabilities[id])){box.innerHTML=`<div class="run-status run-err">${escHtml(governedRuntimeReason(runCapabilities[id]))}</div>`;return}
   const inputs={};document.querySelectorAll("#run-panel [data-k]").forEach(el=>{if(el.value.trim())inputs[el.getAttribute("data-k")]=el.value.trim()});
   box.innerHTML='<div class="run-status">Running…</div>';
   try{
@@ -1567,12 +1613,16 @@ async function runAgentUI(id){
     }
     gapFillState=null;
     renderRunResult(id,r);
+    // Only after output reached the browser. A throw above (including the
+    // digest gate's 409) never reaches this line.
+    const witness=await recordWitnessedRun(id,r);
+    if(witness){const el=document.getElementById("run-out");if(el)el.insertAdjacentHTML("beforeend",renderWitnessNotice(witness));}
   }catch(e){box.innerHTML=`<div class="run-status run-err">Run failed: ${escHtml(String(e.message||e))}${e.tracePersisted&&e.traceId?`<div>Error trace ${escHtml(e.traceId)} recorded.</div>`:`<div>Error trace persistence is disabled.</div>`}</div>`}
 }
 async function continueGapFillUI(id){
   if(!gapFillState)return;
   const box=document.getElementById("run-out");if(!box)return;
-  if(runCapabilities[id]?.governedIdentityMatched!==true){box.innerHTML=`<div class="run-status run-err">${escHtml(GOVERNED_RUNTIME_MISMATCH)}</div>`;return}
+  if(governedRuntimeRefused(runCapabilities[id])){box.innerHTML=`<div class="run-status run-err">${escHtml(governedRuntimeReason(runCapabilities[id]))}</div>`;return}
   const gapAnswers={};
   document.querySelectorAll("#run-panel [data-gap-id]").forEach(el=>{
     const v=el.value.trim();
@@ -1595,6 +1645,10 @@ async function continueGapFillUI(id){
     }
     gapFillState=null;
     renderRunResult(id,r);
+    // The gap-fill completion is the other way output reaches the browser.
+    // Same rule, same served digest — a human saw a draft either way.
+    const witness=await recordWitnessedRun(id,r);
+    if(witness){const el=document.getElementById("run-out");if(el)el.insertAdjacentHTML("beforeend",renderWitnessNotice(witness));}
   }catch(e){box.innerHTML=`<div class="run-status run-err">Run failed: ${escHtml(String(e.message||e))}${e.tracePersisted&&e.traceId?`<div>Error trace ${escHtml(e.traceId)} recorded.</div>`:`<div>Error trace persistence is disabled.</div>`}</div>`}
 }
 
@@ -1738,10 +1792,12 @@ function mechSideFromStoredRecord(rec,outputSource){
     checkSetId:rec.checkSetId||null,
     checkSetVersion:rec.checkSetVersion||null,
     rulerVersion:rec.rulerVersion||null,
-    mechanicalCheckScore:rec.mechanicalCheckScore,
-    scoreableCount:rec.scoreableCount,
+    groundingPassRate:mechGroundingPassRate(rec),
+    groundingScoreableCount:mechGroundingScoreableCount(rec),
+    groundingBasisCheckIds:rec.groundingBasisCheckIds||rec.byCategory?.grounding?.basisCheckIds||null,
     stylePassRate:rec.stylePassRate,
     styleScoreableCount:rec.styleScoreableCount,
+    styleBasisCheckIds:rec.styleBasisCheckIds||rec.byCategory?.style?.basisCheckIds||null,
     byCategory:rec.byCategory
       ?{
           grounding:rec.byCategory.grounding?{...rec.byCategory.grounding}:null,
@@ -1794,8 +1850,30 @@ function mechGroundingMeasured(side){
 }
 
 /**
+ * Grounding pass rate off a score row. `mechanicalCheckScore` is the historical
+ * key for this number — nothing writes it any more, but rows persisted before
+ * the rename still carry it, so a read falls back rather than rendering real
+ * history as "not measured". There is deliberately no combined quality number:
+ * grounding and style are separate rates and must be shown as such.
+ */
+function mechGroundingPassRate(row){
+  if(!row||typeof row!=="object")return null;
+  if(typeof row.groundingPassRate==="number")return row.groundingPassRate;
+  if(typeof row.byCategory?.grounding?.passRate==="number")return row.byCategory.grounding.passRate;
+  if(typeof row.mechanicalCheckScore==="number")return row.mechanicalCheckScore;
+  return null;
+}
+function mechGroundingScoreableCount(row){
+  if(!row||typeof row!=="object")return null;
+  if(typeof row.groundingScoreableCount==="number")return row.groundingScoreableCount;
+  if(typeof row.byCategory?.grounding?.scoreableCount==="number")return row.byCategory.grounding.scoreableCount;
+  if(typeof row.scoreableCount==="number")return row.scoreableCount;
+  return null;
+}
+
+/**
  * Grounding Δ only when both sides have a real grounding measurement.
- * Never invent a delta from mechanicalCheckScore when the UI would say
+ * Never invent a delta from a grounding pass rate when the UI would say
  * "not yet checked".
  */
 function mechGroundingDeltaFromSides(left,right){
@@ -1964,7 +2042,7 @@ function reconstructMechPayloadFromStored(rows){
             :{}),
           outputQualityComparable:false,
           scoreDelta,
-          mechanicalCheckScoreDelta:scoreDelta,
+          groundingPassRateDelta:scoreDelta,
           left,
           right,
           changed:left.legacyIncomplete||right.legacyIncomplete?[]:mechChangedFromSides(left,right),
@@ -2004,7 +2082,7 @@ function reconstructMechPayloadFromStored(rows){
         answersDidImprovementHelp:outputSource==="live",
         findingKind:outputSource==="live"?"prompt_comparison":"plumbing_verification",
         scoreDelta,
-        mechanicalCheckScoreDelta:scoreDelta,
+        groundingPassRateDelta:scoreDelta,
         promotionEligible:outputSource==="live"&&scoreDelta.comparable===true,
         promotionEligibility:outputSource==="live"
           ?(scoreDelta.comparable
@@ -2059,10 +2137,12 @@ function reconstructMechPayloadFromStored(rows){
       artifactVersion:singleSide.artifactVersion,
       artifactDigest:singleSide.artifactDigest,
       checkSetVersion:singleSide.checkSetVersion,
-      mechanicalCheckScore:singleSide.mechanicalCheckScore,
-      scoreableCount:singleSide.scoreableCount,
+      groundingPassRate:mechGroundingPassRate(singleSide),
+      groundingScoreableCount:mechGroundingScoreableCount(singleSide),
+      groundingBasisCheckIds:singleSide.groundingBasisCheckIds||singleSide.byCategory?.grounding?.basisCheckIds||null,
       stylePassRate:singleSide.stylePassRate,
       styleScoreableCount:singleSide.styleScoreableCount,
+      styleBasisCheckIds:singleSide.styleBasisCheckIds||singleSide.byCategory?.style?.basisCheckIds||null,
       byCategory:singleSide.byCategory,
       passed:singleSide.passed,
       failed:singleSide.failed,
@@ -2089,7 +2169,7 @@ function showMechResult(agentId,payload,{persist=false,markRestored=false}={}){
   if(payload.kind==="compare"&&payload.result){
     const safe=mechGroundingDeltaFromSides(payload.result.left,payload.result.right);
     const claimed=mechNormalizeScoreDelta(
-      payload.result.scoreDelta||payload.result.mechanicalCheckScoreDelta
+      payload.result.scoreDelta||payload.result.groundingPassRateDelta||payload.result.mechanicalCheckScoreDelta
     );
     // Never keep a numeric Δ when grounding wasn't measured on both sides.
     if(!safe.comparable&&claimed.comparable){
@@ -2098,7 +2178,7 @@ function showMechResult(agentId,payload,{persist=false,markRestored=false}={}){
         result:{
           ...payload.result,
           scoreDelta:safe,
-          mechanicalCheckScoreDelta:safe,
+          groundingPassRateDelta:safe,
           promotionEligible:false,
           promotionEligibility:{eligible:false,reason:safe.reason},
         },
@@ -2324,7 +2404,7 @@ function renderPromotionEligibilityNote(r){
   if(elig.eligible){
     return`<div class="mech-promotion-elig mech-promotion-elig-ok"><strong>Promotion evidence:</strong> live comparable delta — may support a promotion decision (human approval still required).</div>`;
   }
-  const delta=mechNormalizeScoreDelta(r.scoreDelta||r.mechanicalCheckScoreDelta);
+  const delta=mechNormalizeScoreDelta(r.scoreDelta||r.groundingPassRateDelta||r.mechanicalCheckScoreDelta);
   const comparable=delta.comparable===true;
   if(comparable&&r.outputSource==="canned"){
     return`<div class="mech-promotion-elig mech-promotion-elig-block"><strong>Comparable, not promotable.</strong> ${escHtml(elig.reason||'Delta is real; outputSource is "canned" so it cannot support promotion.')}</div>`;
@@ -2355,7 +2435,7 @@ function renderMechQualityDeltaChip(delta,{allowDirection=true}={}){
 }
 
 function renderMechQualityRefusedTile(r){
-  const d=mechNormalizeScoreDelta(r.scoreDelta||r.mechanicalCheckScoreDelta);
+  const d=mechNormalizeScoreDelta(r.scoreDelta||r.groundingPassRateDelta||r.mechanicalCheckScoreDelta);
   const reason=d.reason||r.checkSetNote||"not comparable";
   return`<div class="mech-quality-tile" title="${escAttr(r.checkSetNote||r.interpretation||"Coverage experiment — no output-quality delta.")}">
     <div class="mech-quality-tile-label">Quality delta</div>
@@ -2382,15 +2462,18 @@ function renderMechCheckTable(left,right,leftLabel,rightLabel){
   if(!ids.length)return"";
   const statusOf=(side,id)=>{
     const row=(side?.checkResults||[]).find(r=>(r.id||r.checkId)===id);
-    if(!row)return{text:"absent",passFail:null,historical:false,category:null,why:null};
+    if(!row)return{text:"absent",passFail:null,historical:false,category:null,why:null,tier:null};
     const hist=row.historicalImplementation;
     const cat=row.category||null;
+    const tier=row.tier||null;
+    const status=row.status||(row.passed===true?"pass":row.passed===false?"fail":null);
     return{
-      text:hist?`${row.status} · historical`:row.status,
-      passFail:row.status,
+      text:[status,tier?`tier:${tier}`:null,hist?"historical":null].filter(Boolean).join(" · "),
+      passFail:status,
       historical:!!hist,
       category:cat,
       why:row.why||null,
+      tier,
     };
   };
   const cell=(side,id)=>{
@@ -2400,7 +2483,9 @@ function renderMechCheckTable(left,right,leftLabel,rightLabel){
     if(s.why)tips.push(s.why);
     const tip=tips.length?` title="${escAttr(tips.join(" "))}"`:"";
     let cls="";
-    if(s.passFail==="pass")cls="mech-status-pass";
+    if(s.passFail==="observation"||s.tier==="advisory")cls="mech-status-observation";
+    else if(s.passFail==="no_hit"||s.tier==="named_hit"&&s.passFail!=="fail")cls="mech-status-named-hit";
+    else if(s.passFail==="pass")cls="mech-status-pass";
     else if(s.passFail==="fail"&&s.category==="grounding")cls="mech-status-fail-grounding";
     else if(s.passFail==="fail")cls="mech-status-fail-style";
     return`<td class="${cls}"${tip}>${escHtml(s.text)}${s.category?` <span class="mech-cat-tag mech-cat-${escHtml(s.category)}">${escHtml(s.category)}</span>`:""}</td>`;
@@ -2467,10 +2552,13 @@ function renderMechanicalScoreResult(r){
     const histLabel=hist?" · historical":"";
     const cat=row.category||"";
     let cls="";
-    if(row.status==="pass"||row.passed===true)cls="mech-status-pass";
+    if(row.status==="observation"||row.tier==="advisory")cls="mech-status-observation";
+    else if(row.status==="no_hit")cls="mech-status-named-hit";
+    else if(row.status==="pass"||row.passed===true)cls="mech-status-pass";
     else if((row.status==="fail"||row.passed===false)&&cat==="grounding")cls="mech-status-fail-grounding";
     else if(row.status==="fail"||row.passed===false)cls="mech-status-fail-style";
-    return `<tr><td><code>${escHtml(row.id||row.checkId)}</code>${cat?` <span class="mech-cat-tag mech-cat-${escHtml(cat)}">${escHtml(cat)}</span>`:""}${row.family?` <span class="mech-fam">${escHtml(row.family)}</span>`:""}</td><td class="${cls}"${tip}>${escHtml(row.status||"")}${escHtml(histLabel)}${row.why?`<div class="mech-why">${escHtml(row.why)}</div>`:""}</td></tr>`;
+    const tier=row.tier?` <span class="mech-tier">${escHtml(row.tier)}</span>`:"";
+    return `<tr><td><code>${escHtml(row.id||row.checkId)}</code>${tier}${cat?` <span class="mech-cat-tag mech-cat-${escHtml(cat)}">${escHtml(cat)}</span>`:""}${row.family?` <span class="mech-fam">${escHtml(row.family)}</span>`:""}</td><td class="${cls}"${tip}>${escHtml(row.status||"")}${escHtml(histLabel)}${row.why?`<div class="mech-why">${escHtml(row.why)}</div>`:""}</td></tr>`;
   }).join("");
   return `${renderMechHeadlineCard(r,src)}
     <div class="mech-caption">Single-version score · ${escHtml(src==="unknown"?"output source not yet checked":src+" outputs")} · grounding headline · style separate</div>
@@ -2485,7 +2573,7 @@ function renderMechanicalCompareResult(r){
   if(r.experiment==="check_coverage"){
     const left={...r.left,outputSource:r.outputSource};
     const right={...r.right,outputSource:r.outputSource};
-    const delta=mechNormalizeScoreDelta(r.scoreDelta||r.mechanicalCheckScoreDelta);
+    const delta=mechNormalizeScoreDelta(r.scoreDelta||r.groundingPassRateDelta||r.mechanicalCheckScoreDelta);
     const tooltip=[
       r.interpretation,
       delta.comparable===false?delta.reason:r.checkSetNote,
@@ -2502,7 +2590,7 @@ function renderMechanicalCompareResult(r){
       ${renderMechChecksDisclosure(left,right,left.artifactVersion,right.artifactVersion)}`;
   }
   if(r.experiment==="output_quality"){
-    const delta=r.scoreDelta||r.mechanicalCheckScoreDelta;
+    const delta=r.scoreDelta||r.groundingPassRateDelta||r.mechanicalCheckScoreDelta;
     const isFinding=r.answersDidImprovementHelp===true&&r.findingKind==="prompt_comparison";
     const tooltip=isFinding
       ?`Experiment B live · ruler ${r.rulerVersion||""}. Same check set scores two prompt runs. Higher grounding rate is better. May answer whether the prompt change helped.`
@@ -2607,6 +2695,203 @@ function setFilter(t,v){if(t==="cat")state.catFilter=v;else state.statusFilter=v
 function openDetail(id){state.agent=displayedAgents().find(a=>a.id===id);state.view="detail";render();window.scrollTo(0,0)}
 function goBack(){state.view="list";state.agent=null;render()}
 function switchSubTab(tab){state.subTab=tab;state.view="list";render()}
+
+// ── MAINTAINER SURFACE ──
+// Approver-only mutations, reachable only from inside the app.
+//
+// requireApprover reads a top-level `role` claim. That claim exists only on the
+// named "convex" Clerk JWT template, which getToken({template:"convex"}) mints
+// for a live browser session. The default __session cookie carries sub/sid/iss/
+// exp and no role, which is why the Clerk CLI and the Convex dashboard both
+// fail these calls. This panel is not a convenience — it is the only surface
+// that can reach them.
+//
+// Deliberately separate from the run panel. The witnessed-run evidence row is
+// written there when a human sees output; the eval result is authored HERE.
+// One action must never produce both, or the separation is decorative.
+//
+// Ugly on purpose. Maintainer tool, not a fellow surface.
+
+const MAINT_RELEASES=[
+  {key:"a7v10",label:"A7 → biocraft-singleshot-v10",method:"executeA7V10Release",
+   digest:"f892dad7392ff31657d375d20ee532c1c2a0bcf726af4ed21ec4565ab17cfd18"},
+  {key:"a10v4",label:"A10 → biocraft-gapfill-v4",method:"executeA10V4Release",
+   digest:"a066599a997a1cbbd7de373e946b9efe44859acc8afdcad26be1b4c3c9c1cd4f"},
+];
+
+/** Why this session cannot act, naming the missing claim. Null when it can. */
+function maintainerBlockReason(){
+  const auth=authState();
+  if(auth.status!=="signed-in")return`Not signed in (${escHtml(auth.status||"unknown")}). ${escHtml(auth.detail||"")}`;
+  const u=auth.user||{};
+  if(!ConvexDirectory||!ConvexDirectory.enabled)return"Convex directory is not configured in this browser session.";
+  if(u.role==="approver")return null;
+  const carried=Array.isArray(u.claimNames)&&u.claimNames.length?u.claimNames.join(", "):"(none decoded)";
+  if(u.role===null||u.role===undefined){
+    return`Your token carries no <code>role</code> claim. requireApprover needs a top-level <code>role: "approver"</code>. `+
+      `Token template: <code>${escHtml(u.template||"?")}</code>. Claims present: <code>${escHtml(carried)}</code>. `+
+      `Add <code>role</code> to the Clerk JWT template's custom claims, then sign out and back in.`;
+  }
+  return`Your token carries <code>role: "${escHtml(String(u.role))}"</code>, but requireApprover requires <code>"approver"</code>. Claims present: <code>${escHtml(carried)}</code>.`;
+}
+
+function maintOut(id,html){const el=document.getElementById(id);if(el)el.innerHTML=html}
+
+/** Render any outcome — success or refusal — with its reason. Never silent. */
+function maintResult(ok,title,detail){
+  return`<div class="maint-result ${ok?"maint-ok":"maint-err"}"><strong>${escHtml(title)}</strong><pre>${escHtml(detail)}</pre></div>`;
+}
+function maintErrText(e){
+  if(!e)return"Unknown failure with no error object.";
+  const data=e.data||(e.cause&&e.cause.data)||null;
+  const parts=[];
+  if(data&&data.code)parts.push(`code: ${data.code}`);
+  if(data&&data.status)parts.push(`status: ${data.status}`);
+  parts.push(String(data&&data.message?data.message:(e.message||e)));
+  return parts.join("\n");
+}
+
+async function maintRun(outId,label,fn){
+  maintOut(outId,`<div class="maint-result">Running ${escHtml(label)}…</div>`);
+  try{
+    const r=await fn();
+    maintOut(outId,maintResult(true,`${label} — OK`,JSON.stringify(r,null,2)));
+  }catch(e){
+    maintOut(outId,maintResult(false,`${label} — REFUSED`,maintErrText(e)));
+  }
+}
+
+async function maintAuditFossils(){
+  await maintRun("maint-fossil-out","listServicePromotionViolations",
+    ()=>ConvexDirectory.listServicePromotionViolations());
+}
+async function maintBackfillFossils(){
+  await maintRun("maint-fossil-out","backfillServicePromotionEligibility",
+    ()=>ConvexDirectory.backfillServicePromotionEligibility({}));
+}
+async function maintRelease(key){
+  const spec=MAINT_RELEASES.find(r=>r.key===key);if(!spec)return;
+  const input=document.getElementById(`maint-digest-${key}`);
+  const digest=input?input.value.trim():"";
+  if(!digest){maintOut("maint-release-out",maintResult(false,`${spec.label} — NOT SENT`,"No manifest digest entered. The mutation seals on this value; sending an empty one would just 403."));return}
+  await maintRun("maint-release-out",spec.label,()=>ConvexDirectory[spec.method](digest));
+}
+async function maintApprove(){
+  const el=document.getElementById("maint-proposal-id");
+  const id=el?el.value.trim():"";
+  if(!id){maintOut("maint-approve-out",maintResult(false,"approve — NOT SENT","No proposalId entered."));return}
+  await maintRun("maint-approve-out","reviews.approve",()=>ConvexDirectory.approveProposal(id));
+}
+async function maintCreateEvalSet(){
+  const g=(k)=>{const el=document.getElementById(k);return el?el.value.trim():""};
+  const agentId=g("maint-es-agent"),name=g("maint-es-name"),version=Number(g("maint-es-version")||"1");
+  const criteria=g("maint-es-rubric").split("\n").map(l=>l.trim()).filter(Boolean);
+  if(!agentId||!name||!criteria.length){
+    maintOut("maint-eval-out",maintResult(false,"createEvalSet — NOT SENT","agentId, name, and at least one rubric criterion are required. A rubric with no criteria could only produce an eval result that names nothing."));return;
+  }
+  await maintRun("maint-eval-out","createEvalSet",()=>ConvexDirectory.createEvalSet({
+    agentId,name,version,status:"draft",
+    rubric:criteria.map(c=>{const [id,...rest]=c.split("|");return{id:id.trim(),label:(rest.join("|")||id).trim(),maxScore:1,conditional:false}}),
+    guardrails:[{id:"no-secrets",label:"Contains no secrets"}],
+  }));
+}
+async function maintCreateEvalCase(){
+  const g=(k)=>{const el=document.getElementById(k);return el?el.value.trim():""};
+  const evalSetId=g("maint-ec-set"),name=g("maint-ec-name"),fixtureRef=g("maint-ec-ref");
+  if(!evalSetId||!name||!fixtureRef){maintOut("maint-eval-out",maintResult(false,"createEvalCase — NOT SENT","evalSetId, name, and fixtureRef are required."));return}
+  await maintRun("maint-eval-out","createEvalCase",()=>ConvexDirectory.createEvalCase({
+    evalSetId,name,fixtureRef,declaredFixtureDigest:g("maint-ec-digest")||"maintainer-authored",
+  }));
+}
+async function maintRecordEvalResult(){
+  const g=(k)=>{const el=document.getElementById(k);return el?el.value.trim():""};
+  const evalSetId=g("maint-er-set"),evalCaseId=g("maint-er-case"),
+        agentVersionId=g("maint-er-version"),evidenceId=g("maint-er-evidence");
+  const scored=g("maint-er-criteria").split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{
+    const [id,score]=l.split("=").map(x=>(x||"").trim());
+    return{criterionId:id,result:{kind:"score",score:Number(score||"1")}};
+  });
+  if(!evalSetId||!evalCaseId||!agentVersionId||!evidenceId){
+    maintOut("maint-eval-out",maintResult(false,"recordEvalResult — NOT SENT","evalSetId, evalCaseId, agentVersionId, and evidenceId are all required."));return;
+  }
+  if(!scored.length){
+    // Convex refuses this too (EVAL_RESULT_NAMES_NOTHING). Saying so here costs
+    // nothing and explains the rule before the round trip.
+    maintOut("maint-eval-out",maintResult(false,"recordEvalResult — NOT SENT","No criterion scored. An eval result must NAME WHAT WAS CHECKED — Convex refuses an empty or all-N/A set with EVAL_RESULT_NAMES_NOTHING."));return;
+  }
+  await maintRun("maint-eval-out","recordEvalResult",()=>ConvexDirectory.recordEvalResult({
+    evalSetId,evalCaseId,agentVersionId,evidenceId,
+    criterionResults:scored,
+    guardrailResults:[{guardrailId:"no-secrets",passed:true}],
+  }));
+}
+
+function maintainerPanelHtml(){
+  const blocked=maintainerBlockReason();
+  const head=`<h2>Maintainer — release surface</h2>
+    <p class="maint-note">Approver-only Convex mutations. These are unreachable from the Clerk CLI or the Convex dashboard: <code>requireApprover</code> reads a top-level <code>role</code> claim carried only by the named <code>convex</code> JWT template, which only a live browser session can mint. The witnessed-run evidence row is written on the run panel; the eval result is authored here. Two acts, two surfaces, on purpose.</p>`;
+  if(blocked){
+    return`<div class="maint">${head}<div class="maint-result maint-err"><strong>Cannot act as approver</strong><div>${blocked}</div></div></div>`;
+  }
+  const rel=MAINT_RELEASES.map(r=>`<div class="maint-row">
+      <label>${escHtml(r.label)} — releaseManifestDigest</label>
+      <input id="maint-digest-${r.key}" value="${escHtml(r.digest)}" size="70">
+      <button data-maint-release="${r.key}">Execute release</button>
+    </div>`).join("");
+  return`<div class="maint">${head}
+  <fieldset><legend>1 · Fossil audit + backfill</legend>
+    <button data-maint="audit-fossils">List service+promotion violations</button>
+    <button data-maint="backfill-fossils">Backfill to eligibleForPromotion:false</button>
+    <div id="maint-fossil-out"></div></fieldset>
+  <fieldset><legend>2 · Releases (creates candidate + open proposal; does NOT move the pointer)</legend>
+    ${rel}<div id="maint-release-out"></div></fieldset>
+  <fieldset><legend>3 · Eval set / case</legend>
+    <div class="maint-row"><label>agentId (Convex id)</label><input id="maint-es-agent" size="40">
+      <label>name</label><input id="maint-es-name" size="24">
+      <label>version</label><input id="maint-es-version" value="1" size="4"></div>
+    <div class="maint-row"><label>rubric — one per line, <code>id|label</code></label>
+      <textarea id="maint-es-rubric" rows="3" cols="60">grounding|No claim unsupported by the source</textarea>
+      <button data-maint="create-eval-set">Create eval set</button></div>
+    <div class="maint-row"><label>evalSetId</label><input id="maint-ec-set" size="40">
+      <label>case name</label><input id="maint-ec-name" size="24">
+      <label>fixtureRef</label><input id="maint-ec-ref" size="30">
+      <label>fixture digest</label><input id="maint-ec-digest" size="24">
+      <button data-maint="create-eval-case">Create eval case</button></div></fieldset>
+  <fieldset><legend>4 · Eval result — must name what was checked</legend>
+    <div class="maint-row"><label>evalSetId</label><input id="maint-er-set" size="40">
+      <label>evalCaseId</label><input id="maint-er-case" size="40"></div>
+    <div class="maint-row"><label>agentVersionId</label><input id="maint-er-version" size="40">
+      <label>evidenceId (from the witnessed run)</label><input id="maint-er-evidence" size="40"></div>
+    <div class="maint-row"><label>criteria scored — one per line, <code>criterionId=score</code></label>
+      <textarea id="maint-er-criteria" rows="3" cols="60">grounding=1</textarea>
+      <button data-maint="record-eval-result">Record eval result</button></div>
+    <div id="maint-eval-out"></div></fieldset>
+  <fieldset><legend>5 · Approve — moves currentApprovedVersionId</legend>
+    <div class="maint-row"><label>proposalId</label><input id="maint-proposal-id" size="40">
+      <button data-maint="approve">reviews.approve</button></div>
+    <div id="maint-approve-out"></div></fieldset>
+  </div>`;
+}
+
+if(typeof document!=="undefined"){
+  document.addEventListener("click",(ev)=>{
+    const t=ev.target;
+    if(!t||typeof t.closest!=="function")return;
+    const rel=t.closest("[data-maint-release]");
+    if(rel){ev.preventDefault();void maintRelease(rel.getAttribute("data-maint-release"));return}
+    const btn=t.closest("[data-maint]");
+    if(!btn)return;
+    ev.preventDefault();
+    const action=btn.getAttribute("data-maint");
+    if(action==="audit-fossils")void maintAuditFossils();
+    else if(action==="backfill-fossils")void maintBackfillFossils();
+    else if(action==="create-eval-set")void maintCreateEvalSet();
+    else if(action==="create-eval-case")void maintCreateEvalCase();
+    else if(action==="record-eval-result")void maintRecordEvalResult();
+    else if(action==="approve")void maintApprove();
+  });
+  window.addEventListener("hashchange",()=>render());
+}
 
 // ── BOOT ──
 render();

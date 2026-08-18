@@ -1,5 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { getRuntimeArtifactDescriptor } from "../src/invoke/runtimeArtifacts.js";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -83,7 +84,7 @@ test("collectDefects maps check-id failureReasons and keeps unclassified tokens"
   ]);
   const cta = defects.find((d) => d.key === "about_closing_has_cta");
   assert.equal(cta.category, "style");
-  assert.match(cta.description, /call to action/i);
+  assert.match(cta.description, /advisory/i);
   // Em-dash is post-processed in the host — not a maker defect class.
   assert.equal(
     defects.some((d) => d.key === "draft_has_no_em_dash"),
@@ -106,6 +107,9 @@ test("maker proposes from A7 check-id failing traces", async () => {
     checkResults: [{ checkId: "about_closing_has_cta" }],
     ts: new Date().toISOString(),
     source: "real",
+    artifactVersion: getRuntimeArtifactDescriptor("A7").artifactVersion,
+    artifactDigest: getRuntimeArtifactDescriptor("A7").artifactDigest,
+    outputSource: "live",
     metadata: { via: "runtime" },
   });
   const svc = createLoopService({
@@ -116,12 +120,18 @@ test("maker proposes from A7 check-id failing traces", async () => {
     verifier: getVerifier(config),
     config: { ...config, optimizer: { ...config.optimizer, provider: "heuristic" } },
   });
-  const proposals = await svc.runImprovement("A7");
-  assert.ok(proposals.length >= 1);
-  const keys = proposals.map((p) => p.defectKey).sort();
-  assert.ok(keys.includes("about_closing_has_cta"));
-  assert.equal(keys.includes("draft_has_no_em_dash"), false);
-  assert.ok(proposals.every((p) => p.status === "proposed"));
+  // about_closing_has_cta is advisory since the retiering: an observation in
+  // both directions, never a defect. The noise gate refuses it by name rather
+  // than letting it mint a proposal with an Approve button behind it.
+  await assert.rejects(
+    () => svc.runImprovement("A7"),
+    (error) => {
+      assert.equal(error.status, 422);
+      assert.equal(error.code, "MAKER_ADVISORY_ONLY");
+      assert.match(error.message, /advisory/i);
+      return true;
+    },
+  );
 });
 
 test("optimizer surfaces unclassified failure reasons instead of dropping them", async () => {

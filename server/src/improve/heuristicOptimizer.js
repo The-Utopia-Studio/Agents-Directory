@@ -23,6 +23,7 @@ import {
   resolveCheckDefect,
 } from "./checkDefectRegistry.js";
 import { isPostProcessedCheckId } from "../invoke/postProcessDraft.js";
+import { assertNoSealedGoldenCasesForMaker } from "../eval/holdout.js";
 
 const BIOCRAFT_ARTIFACT = "server/src/artifacts/biocraft/SKILL.md";
 
@@ -64,7 +65,7 @@ function normalizedArtifact(text) {
  * `alreadyInArtifact` is the honesty gate for reviewer prose: do not re-propose
  * registering a check the artifact already declares.
  */
-const FEEDBACK_DEFECTS = [
+export const FEEDBACK_DEFECTS = [
   {
     key: "em-dash",
     matches: (note) => /em[\s-]?dash|double hyphen|—/.test(note),
@@ -87,10 +88,11 @@ const FEEDBACK_DEFECTS = [
     key: "cliche-check",
     matches: (note) => /clich[eé]|intersection of|ai phrase|stock phrase/.test(note),
     alreadyInArtifact: (artifact) =>
+      artifact.declaresCheck("draft_registered_ai_cliche_lemma") ||
       artifact.declaresCheck("draft_has_no_ai_cliche_phrase"),
     change: (agent) => ({
       surface: "check",
-      target: "draft_has_no_ai_cliche_phrase",
+      target: "draft_registered_ai_cliche_lemma",
       current:
         "No mechanical check matches multi-word cliche phrases in any generated section.",
       proposed:
@@ -137,7 +139,7 @@ const FEEDBACK_DEFECTS = [
   },
 ];
 
-const TRACE_DEFECTS = [
+export const TRACE_DEFECTS = [
   {
     key: "voice",
     matches: (reason) => /voice mismatch/i.test(reason),
@@ -376,6 +378,8 @@ export function createHeuristicOptimizer() {
         defectSignals = [],
         artifact = null,
       } = evidence || {};
+
+      assertNoSealedGoldenCasesForMaker(evidence);
 
       if (!defectSignals.length) {
         // Belt and braces: the service refuses first, but an optimizer must

@@ -6,6 +6,7 @@ import {
   SCORING_PROVIDER,
 } from "../eval/invokeHistorical.js";
 import { collectDefects } from "./heuristicOptimizer.js";
+import { assertNoSealedGoldenCasesForMaker } from "../eval/holdout.js";
 import { CHECK_SET_CATEGORY_GROUNDING } from "./checkDefectRegistry.js";
 
 const BIOCRAFT = "server/src/artifacts/biocraft/SKILL.md";
@@ -232,6 +233,7 @@ export function createLlmOptimizer(options = {}) {
     },
 
     async propose(agent, evidence) {
+      assertNoSealedGoldenCasesForMaker(evidence);
       const openai = options.openai || {};
       const apiKey = openai.apiKey || process.env.OPENAI_API_KEY || "";
       if (!apiKey) {

@@ -9,6 +9,34 @@ const registerAgentMutation = makeFunctionReference("agents:registerAgent");
 const updateAgentMutation = makeFunctionReference("agents:updateAgent");
 const createRequestMutation = makeFunctionReference("requests:createRequest");
 const updateRequestMutation = makeFunctionReference("requests:updateRequest");
+// The only public path to promotion-eligible evidence. Called by the BROWSER
+// as the signed-in human — that is what makes actorKind "human". Routing it
+// through Railway would make it a service write and defeat the point.
+const recordVerifiedHumanRunEvidenceMutation = makeFunctionReference(
+  "evidence:recordVerifiedHumanRunEvidence",
+);
+
+// ── Maintainer surface ───────────────────────────────────────────────────────
+// Approver-only. Reachable ONLY from inside the app: requireApprover reads a
+// top-level `role` claim carried solely by the named "convex" JWT template,
+// which Clerk's default __session token does not have — so the Clerk CLI and
+// the Convex dashboard cannot call any of these.
+const servicePromotionViolationsQuery = makeFunctionReference(
+  "evidenceIntegrity:listServicePromotionViolations",
+);
+const backfillServicePromotionMutation = makeFunctionReference(
+  "evidenceIntegrity:backfillServicePromotionEligibility",
+);
+const a7V10ReleaseMutation = makeFunctionReference(
+  "reimports:executeApprovedA7V10Release",
+);
+const a10V4ReleaseMutation = makeFunctionReference(
+  "reimports:executeApprovedA10V4Release",
+);
+const createEvalSetMutation = makeFunctionReference("evalSets:createEvalSet");
+const createEvalCaseMutation = makeFunctionReference("evalSets:createEvalCase");
+const recordEvalResultMutation = makeFunctionReference("evalResults:recordEvalResult");
+const approveProposalMutation = makeFunctionReference("reviews:approve");
 
 function labels(items) {
   return Array.isArray(items)
@@ -169,6 +197,57 @@ export function createConvexDirectoryClient({ url, clientFactory } = {}) {
     },
     async updateRequest(args) {
       return await client.mutation(updateRequestMutation, args);
+    },
+    /**
+     * Record that this signed-in human witnessed a hosted run.
+     *
+     * `artifactDigest` MUST be the digest the run actually served, taken from
+     * the run response — never the digest we expected. Attesting to the
+     * expected bytes when different bytes ran is the fabrication this whole
+     * path exists to prevent.
+     *
+     * Does NOT create an evalResult. That is a separate deliberate act on a
+     * separate surface; if one action produced both, the separation would be
+     * decorative.
+     */
+    async recordVerifiedHumanRunEvidence({ displayId, artifactDigest }) {
+      return await client.mutation(recordVerifiedHumanRunEvidenceMutation, {
+        displayId,
+        artifactDigest,
+      });
+    },
+    // ── Maintainer surface ──
+    async listServicePromotionViolations() {
+      return await client.query(servicePromotionViolationsQuery, {});
+    },
+    async backfillServicePromotionEligibility(args = {}) {
+      return await client.mutation(backfillServicePromotionMutation, args);
+    },
+    async executeA7V10Release(releaseManifestDigest) {
+      return await client.mutation(a7V10ReleaseMutation, { releaseManifestDigest });
+    },
+    async executeA10V4Release(releaseManifestDigest) {
+      return await client.mutation(a10V4ReleaseMutation, { releaseManifestDigest });
+    },
+    async createEvalSet(args) {
+      return await client.mutation(createEvalSetMutation, args);
+    },
+    async createEvalCase(args) {
+      return await client.mutation(createEvalCaseMutation, args);
+    },
+    /**
+     * The second deliberate act. Convex refuses an empty or all-N/A criterion
+     * set with EVAL_RESULT_NAMES_NOTHING — an attestation that names nothing
+     * checked nothing.
+     */
+    async recordEvalResult(args) {
+      return await client.mutation(recordEvalResultMutation, args);
+    },
+    async approveProposal(proposalId) {
+      return await client.mutation(approveProposalMutation, {
+        proposalId,
+        editCategory: "no-edit",
+      });
     },
     async listRequests() {
       const rows = await client.query(authenticatedRequestsQuery, {});

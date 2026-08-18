@@ -159,7 +159,26 @@ test("Terra pricing attributes spend from token counts", () => {
 });
 
 test("A10 mechanical checks reuse the same validators as A7", () => {
-  assert.deepEqual(validateRuntimeArtifactOutput("A10", DRAFT), []);
+  const findings = validateRuntimeArtifactOutput("A10", DRAFT);
+
+  // A clean draft produces no BLOCKING finding. It is no longer the empty
+  // array: about_closing_has_cta was demoted to advisory, and an advisory
+  // check reports an observation in both directions rather than a pass or a
+  // fail. Asserting [] here would quietly re-assert the pre-demotion contract.
+  assert.deepEqual(
+    findings.filter((f) => f.tier !== "advisory"),
+    [],
+    "a clean draft must produce no scored or named_hit finding",
+  );
+
+  const cta = findings.find((f) => f.checkId === "about_closing_has_cta");
+  assert.ok(cta, "the advisory CTA check must still report");
+  assert.equal(cta.tier, "advisory");
+  assert.equal(cta.status, "observation");
+  // Advisory results are never a pass and never a fail — neither direction is
+  // trustworthy, which is why the check was demoted.
+  assert.equal(cta.passed, null);
+  assert.match(cta.message, /not a scored pass/i);
 });
 
 test("gap-fill returns needs_input without drafting when gaps remain", async () => {
