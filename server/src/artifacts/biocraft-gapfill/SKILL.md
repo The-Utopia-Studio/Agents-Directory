@@ -3,7 +3,7 @@ name: biocraft-gapfill
 description: Hosted Biocraft gap-fill draft. Call 1 returns structured gaps against Sarah's fixed interview bank; Call 2 drafts three labelled text sections from material plus answers.
 user-invocable: true
 artifact-mode: gap-fill
-artifact_version: biocraft-gapfill-v4
+artifact_version: biocraft-gapfill-v3
 runtime_provider: openai
 runtime_model: gpt-5.6-terra
 success_criteria:
@@ -30,7 +30,7 @@ checks:
   - about_has_no_delimiter_separated_keyword_run
   - about_closing_has_cta
   - draft_has_no_em_dash
-  - draft_registered_ai_cliche_lemma
+  - draft_has_no_ai_cliche_phrase
 ---
 
 # Biocraft — Gap-Fill Fellow Bio Draft

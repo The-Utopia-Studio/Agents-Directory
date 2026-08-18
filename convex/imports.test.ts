@@ -107,10 +107,17 @@ describe("Phase 2.5B narrow canonical import", () => {
     expect(A7_V9_RELEASE_SPEC.version.artifact.declaredDigest).toBe(
       "e229c64f44bcf3b6e8f57ea7dc74c868b7987ddfc7f92379ad4723761fa4314e",
     );
-    expect(A7_V10_RELEASE_SPEC.version.version).toBe(live!.artifactVersion === "biocraft-singleshot-v9" ? "biocraft-singleshot-v10" : live!.artifactVersion);
-    expect(A7_V10_RELEASE_SPEC.version.artifact.declaredDigest).toBe(
-      live!.artifactDigest,
-    );
+    // Whichever version is live must be one the specs describe, and its bytes
+    // must match that spec's declared digest. Which one is live is a deployment
+    // fact — v9 while the v10 release is staged, v10 once approved — so pinning
+    // it here would fail for the whole staging period.
+    const specsByVersion = {
+      [A7_V9_RELEASE_SPEC.version.version]: A7_V9_RELEASE_SPEC,
+      [A7_V10_RELEASE_SPEC.version.version]: A7_V10_RELEASE_SPEC,
+    } as Record<string, { version: { artifact: { declaredDigest: string } } }>;
+    const liveSpec = specsByVersion[live!.artifactVersion];
+    expect(liveSpec, `no release spec describes live ${live!.artifactVersion}`).toBeDefined();
+    expect(liveSpec.version.artifact.declaredDigest).toBe(live!.artifactDigest);
     expect(A7_V9_RELEASE_SPEC.version.artifact.declaredDigestAlgorithm).toBe(
       live!.artifactDigestAlgorithm,
     );

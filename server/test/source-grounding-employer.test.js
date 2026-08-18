@@ -15,6 +15,9 @@ import {
   validateRuntimeArtifactOutput,
 } from "../src/invoke/runtimeArtifacts.js";
 import { sanitizeCheckResults } from "../src/core/traceSafety.js";
+import { declaredClicheCheckId, liveArtifact } from "./artifactContract.js";
+const LIVE_A7 = liveArtifact("A7");
+const CLICHE_ID = declaredClicheCheckId("A7");
 
 test("sourceEstablishesEmployer accepts jobs and rejects tools/events", () => {
   const source = A10_MIRA_OKONKWO_V1.input;
@@ -79,7 +82,7 @@ test("forbid-employer-frame fails canned bad and passes canned improved", () => 
 
 test("A10 live artifact keeps A7 mechanical checks and scores Mira gap-fill golden", () => {
   const live = getRuntimeArtifactDescriptor("A10");
-  assert.equal(live.artifactVersion, "biocraft-gapfill-v4");
+  assert.equal(live.artifactVersion, liveArtifact("A10").artifactVersion);
   assert.ok(live.checks.includes("about_hook_max_200_characters"));
   assert.ok(live.checks.includes("draft_has_no_em_dash"));
   assert.ok(

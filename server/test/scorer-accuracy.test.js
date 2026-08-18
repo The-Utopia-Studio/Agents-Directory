@@ -10,6 +10,7 @@ import {
   TIER_NAMED_HIT,
   TIER_SCORED,
   isBlockingCheckResult,
+  isClicheCheckId,
   tierForCheck,
 } from "../src/eval/checkTiers.js";
 import {
@@ -25,6 +26,20 @@ const FIXTURE_DIR = join(
 const CHECK_IDS = Object.freeze([
   ...getRuntimeArtifactDescriptor("A7").checks,
 ]);
+
+/**
+ * The hand-written ground truth states an expectation for THE CLICHE CHECK.
+ * Which id that is depends on the artifact (v9 declares
+ * draft_has_no_ai_cliche_phrase, v10 draft_registered_ai_cliche_lemma — same
+ * detector, same tier). Resolve the id from the artifact; the expectation
+ * itself stays hand-written and concrete.
+ */
+function expectedFor(expectedMap, checkId) {
+  if (expectedMap[checkId]) return expectedMap[checkId];
+  if (!isClicheCheckId(checkId)) return undefined;
+  const alias = Object.keys(expectedMap).find(isClicheCheckId);
+  return alias ? expectedMap[alias] : undefined;
+}
 
 function loadCases() {
   const names = readdirSync(FIXTURE_DIR)
@@ -92,7 +107,7 @@ test("scorer accuracy harness: hand-labelled fixtures vs RUNTIME_CHECKS, grouped
 
   for (const fixture of cases) {
     const missing = CHECK_IDS.filter(
-      (checkId) => !fixture.expected.expected[checkId],
+      (checkId) => !expectedFor(fixture.expected.expected, checkId),
     );
     assert.equal(
       missing.length,
@@ -101,7 +116,7 @@ test("scorer accuracy harness: hand-labelled fixtures vs RUNTIME_CHECKS, grouped
     );
     const results = validateRuntimeArtifactOutput("A7", fixture.text);
     for (const checkId of CHECK_IDS) {
-      const expected = fixture.expected.expected[checkId];
+      const expected = expectedFor(fixture.expected.expected, checkId);
       const actual = actualVerdict(checkId, results);
       const tier = tierForCheck(checkId);
 

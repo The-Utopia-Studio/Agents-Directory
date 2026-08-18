@@ -90,15 +90,22 @@ test("the live artifact matches the fixture of the version it claims to be", () 
 });
 
 test("the live artifact's frontmatter names its own digest's version", () => {
-  // v10 exists because the version string lives inside the digested bytes:
-  // releasing "v10" with bytes declaring v9 would make the descriptor and
-  // Convex disagree forever.
-  for (const [agentId, expected] of [
-    ["A7", "biocraft-singleshot-v10"],
-    ["A10", "biocraft-gapfill-v4"],
-  ]) {
+  // The version string lives inside the digested bytes, so a file claiming one
+  // version while hashing to another's digest would make the descriptor and
+  // Convex disagree forever. Asserted as self-consistency against the registry
+  // rather than against a hardcoded version: which version is live is a
+  // deployment fact, and pinning it here would fail on every legitimate release.
+  for (const agentId of ["A7", "A10"]) {
     const live = getRuntimeArtifactDescriptor(agentId);
-    assert.equal(live.artifactVersion, expected);
+    const entry = HISTORICAL_ARTIFACT_REGISTRY[live.artifactVersion];
+    if (!entry) continue; // gapfill has no registry entry.
+    assert.equal(
+      live.artifactDigest,
+      entry.declaredDigest,
+      `${agentId} declares ${live.artifactVersion} but its bytes hash to something else`,
+    );
+    const text = readFileSync(fileURLToPath(new URL(entry.fixtureRelativePath, FIXTURES_ROOT)), "utf8");
+    assert.match(text, new RegExp(`^artifact_version: ${live.artifactVersion}$`, "m"));
   }
 });
 

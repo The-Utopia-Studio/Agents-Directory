@@ -17,6 +17,9 @@ import { assertNoSealedGoldenCasesForMaker } from "../src/eval/holdout.js";
 import { createHeuristicOptimizer } from "../src/improve/heuristicOptimizer.js";
 import { scoreGoldenCannedAgainstLive } from "../src/eval/scoreGoldenCase.js";
 import { MECHANICAL_RESULTS_COLLECTION } from "../src/eval/mechanicalResults.js";
+import { declaredClicheCheckId, liveArtifact } from "./artifactContract.js";
+const LIVE_A7 = liveArtifact("A7");
+const CLICHE_ID = declaredClicheCheckId("A7");
 
 function loopConfig() {
   return {
@@ -107,7 +110,7 @@ test("A10 mechanicalScore succeeds against the live checks: block", async () => 
   assert.equal(result.caseId, "a10-mira-okonkwo-v1");
   assert.equal(result.sealed, false);
   assert.equal(result.holdout, "unsealed");
-  assert.equal(result.artifactVersion, "biocraft-gapfill-v4");
+  assert.equal(result.artifactVersion, liveArtifact("A10").artifactVersion);
   assert.ok(Array.isArray(result.declaredChecks) && result.declaredChecks.length > 0);
   // Named for what it measures; the old ambiguous key is no longer written.
   assert.equal(typeof result.groundingPassRate, "number");

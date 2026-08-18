@@ -6,6 +6,10 @@ import {
   isPostProcessedCheckId,
 } from "../src/invoke/postProcessDraft.js";
 import { collectDefects } from "../src/improve/heuristicOptimizer.js";
+import { isClicheCheckId } from "../src/eval/checkTiers.js";
+import { declaredClicheCheckId, liveArtifact } from "./artifactContract.js";
+const LIVE_A7 = liveArtifact("A7");
+const CLICHE_ID = declaredClicheCheckId("A7");
 
 test("postProcessDraft strips em dashes and banned terms", () => {
   const input = [
@@ -26,7 +30,12 @@ test("postProcessDraft strips em dashes and banned terms", () => {
   assert.equal(output.includes("utilize"), false);
   assert.equal(output.includes("!"), false);
   assert.ok(applied.includes("draft_has_no_em_dash"));
-  assert.ok(applied.includes("draft_registered_ai_cliche_lemma"));
+  // `applied` reports the host's own id for the cliche pass, which is host
+  // behaviour and not artifact-declared. The artifact-driven invariant is that
+  // the host neutralises whatever cliche check THIS artifact declares — if it
+  // stopped, the artifact would declare a check nothing enforces.
+  assert.ok(POST_PROCESSED_CHECK_IDS.includes(CLICHE_ID));
+  assert.ok(applied.some(isClicheCheckId));
 });
 
 test("maker collectDefects ignores post-processed check ids", () => {
