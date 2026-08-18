@@ -1,4 +1,9 @@
 import { test } from "node:test";
+import { declaredClicheCheckId, liveArtifact } from "./artifactContract.js";
+// Identifiers sourced from the artifact. Every assertion below still names the
+// exact phrase, section, and expected outcome — only the id is not hardcoded.
+const CLICHE_ID = declaredClicheCheckId("A7");
+const LIVE_A7 = liveArtifact("A7");
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
@@ -532,7 +537,7 @@ test("v6 rejects registered multi-word AI cliche phrases in every generated sect
   ]) {
     const output = VALID_BIOCRAFT_OUTPUT.replace(line, "This work sits at the intersection of AI and product development.");
     const failure = liveResults(output).find(
-      (candidate) => candidate.checkId === "draft_registered_ai_cliche_lemma",
+      (candidate) => candidate.checkId === CLICHE_ID,
     );
     assert.equal(failure?.section, section);
   }
@@ -542,7 +547,7 @@ test("v6 rejects registered multi-word AI cliche phrases in every generated sect
   );
   assert.equal(
     liveResults(nearMiss).some(
-      (failure) => failure.checkId === "draft_registered_ai_cliche_lemma",
+      (failure) => failure.checkId === CLICHE_ID,
     ),
     false,
   );
@@ -555,14 +560,14 @@ test("v6 matches inflections of registered AI cliche terms and ignores longer un
   );
   assert.deepEqual(
     liveBlocking(output).map((failure) => failure.checkId),
-    ["draft_registered_ai_cliche_lemma"],
+    [CLICHE_ID],
   );
   const inflected = VALID_BIOCRAFT_OUTPUT.replace(
     "I help venture teams turn complex ideas into practical tools.",
     "I am leveraging practical systems for venture teams.",
   );
   const inflectedHit = liveResults(inflected).find(
-    (failure) => failure.checkId === "draft_registered_ai_cliche_lemma",
+    (failure) => failure.checkId === CLICHE_ID,
   );
   assert.equal(inflectedHit?.registeredPhrase, "leverage");
   const nonMatch = VALID_BIOCRAFT_OUTPUT.replace(
@@ -571,7 +576,7 @@ test("v6 matches inflections of registered AI cliche terms and ignores longer un
   );
   assert.equal(
     liveResults(nonMatch).some(
-      (failure) => failure.checkId === "draft_registered_ai_cliche_lemma",
+      (failure) => failure.checkId === CLICHE_ID,
     ),
     false,
     "inflection matching must not reject a longer unrelated word",
@@ -850,7 +855,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
     ["LinkedIn URL", "Google Drive folder or pitch deck", "Local file path"],
   );
   assert.equal(installArtifact.available, true);
-  assert.equal(installArtifact.artifactVersion, "biocraft-singleshot-v10");
+  assert.equal(installArtifact.artifactVersion, LIVE_A7.artifactVersion);
   assert.match(installArtifact.artifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(installArtifact.artifactDigestAlgorithm, "sha256");
 
@@ -900,7 +905,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(run.via, "runtime");
   assert.equal(run.mode, "single-shot");
   assert.equal(run.agentVersion, "1.0");
-  assert.equal(run.artifactVersion, "biocraft-singleshot-v10");
+  assert.equal(run.artifactVersion, LIVE_A7.artifactVersion);
   assert.equal(
     run.artifactDigest,
     createHash("sha256").update(request.body.instructions).digest("hex"),
@@ -937,7 +942,7 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   assert.equal(trace.metadata.via, "runtime");
   assert.equal(trace.metadata.mode, "single-shot");
   assert.equal(trace.agentVersion, "1.0");
-  assert.equal(trace.artifactVersion, "biocraft-singleshot-v10");
+  assert.equal(trace.artifactVersion, LIVE_A7.artifactVersion);
   assert.equal(trace.artifactDigest, run.artifactDigest);
   assert.equal(trace.artifactDigestAlgorithm, "sha256");
   assert.equal("agentVersionId" in trace, false);

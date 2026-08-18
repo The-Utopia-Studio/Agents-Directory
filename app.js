@@ -1562,25 +1562,63 @@ function toggleRun(id){
  * the human must know no evidence was captured or they will believe the
  * promotion gate has something it does not.
  */
+// Run statuses loopService can return alongside a rendered draft. Only
+// needs_input is excluded: it pauses for gap answers and renders no draft, so
+// there is nothing to witness. checks_failed and grounding_unavailable BOTH
+// produced a draft a human read — and a failed check is precisely when human
+// attestation matters most, because that is when someone needs to say the
+// check is wrong about this draft. Gating on a clean run would mean only
+// flawless agents could ever be attested, and therefore only flawless agents
+// could ever be released — including released to fix the failing check.
+const WITNESSABLE_RUN_STATUSES=Object.freeze(["ok","checks_failed","grounding_unavailable"]);
+const NON_WITNESSABLE_RUN_STATUSES=Object.freeze(["needs_input"]);
+
+/**
+ * Record that this human witnessed a hosted run.
+ *
+ * ALWAYS returns a verdict object, never null. A silent null is the exact
+ * failure class this project keeps finding: the caller renders nothing and the
+ * human believes evidence exists when it does not. Every path below states
+ * whether the row was recorded and, if not, why.
+ *
+ * The digest recorded is the one the run REPORTS HAVING SERVED
+ * (result.artifactDigest), never runCapabilities' expected pin.
+ */
 async function recordWitnessedRun(id, result){
-  if(!result||typeof result!=="object")return null;
-  // Output must have reached the browser.
+  if(!result||typeof result!=="object"){
+    return{recorded:false,reason:"the run returned no result object, so there is no output to attest"};
+  }
+  const status=String(result.status||"");
+  if(NON_WITNESSABLE_RUN_STATUSES.includes(status)){
+    return{recorded:false,witnessable:false,reason:`run status "${status}" renders no draft, so there is nothing to witness`};
+  }
+  if(!WITNESSABLE_RUN_STATUSES.includes(status)){
+    // An unrecognised status is reported, not silently dropped. If loopService
+    // grows a new status this says so instead of quietly recording nothing.
+    return{recorded:false,reason:`unrecognised run status "${status}" — evidence was not recorded because this wiring does not know whether a draft was rendered`};
+  }
   const output=typeof result.output==="string"?result.output:"";
-  if(!output.trim())return null;
-  if(result.status!=="ok"&&result.status!=="fail")return null;
-  if(result.status==="needs_input")return null;
-  // The served digest, from the run itself.
+  if(!output.trim()){
+    return{recorded:false,reason:`run status "${status}" but no output reached the browser, so there is nothing to attest`};
+  }
   const servedDigest=String(result.artifactDigest||"").trim();
-  if(!/^[a-f0-9]{64}$/i.test(servedDigest))return{recorded:false,reason:"the run reported no served artifact digest"};
-  if(!ConvexDirectory||!ConvexDirectory.enabled||!ConvexDirectory.recordVerifiedHumanRunEvidence){
-    return{recorded:false,reason:"Convex directory is not configured in this browser session"};
+  if(!/^[a-f0-9]{64}$/i.test(servedDigest)){
+    return{recorded:false,reason:"the run reported no served artifact digest"};
+  }
+  // Two different facts, two different messages. "Not configured" and "this
+  // build does not ship the method" have different fixes.
+  if(!ConvexDirectory||!ConvexDirectory.enabled){
+    return{recorded:false,reason:"Convex is not configured in this browser session, so no evidence could be written"};
+  }
+  if(typeof ConvexDirectory.recordVerifiedHumanRunEvidence!=="function"){
+    return{recorded:false,reason:"this build of convex-directory.bundle.js does not include recordVerifiedHumanRunEvidence — the frontend bundle is stale and needs rebuilding (npm run build:frontend)"};
   }
   try{
     const evidenceId=await ConvexDirectory.recordVerifiedHumanRunEvidence({
       displayId:id,
       artifactDigest:servedDigest,
     });
-    return{recorded:true,evidenceId,servedDigest};
+    return{recorded:true,evidenceId,servedDigest,status};
   }catch(e){
     return{recorded:false,reason:String(e&&e.message?e.message:e)};
   }
@@ -1616,7 +1654,7 @@ async function runAgentUI(id){
     // Only after output reached the browser. A throw above (including the
     // digest gate's 409) never reaches this line.
     const witness=await recordWitnessedRun(id,r);
-    if(witness){const el=document.getElementById("run-out");if(el)el.insertAdjacentHTML("beforeend",renderWitnessNotice(witness));}
+    {const el=document.getElementById("run-out");if(el)el.insertAdjacentHTML("beforeend",renderWitnessNotice(witness));}
   }catch(e){box.innerHTML=`<div class="run-status run-err">Run failed: ${escHtml(String(e.message||e))}${e.tracePersisted&&e.traceId?`<div>Error trace ${escHtml(e.traceId)} recorded.</div>`:`<div>Error trace persistence is disabled.</div>`}</div>`}
 }
 async function continueGapFillUI(id){
@@ -1648,7 +1686,7 @@ async function continueGapFillUI(id){
     // The gap-fill completion is the other way output reaches the browser.
     // Same rule, same served digest — a human saw a draft either way.
     const witness=await recordWitnessedRun(id,r);
-    if(witness){const el=document.getElementById("run-out");if(el)el.insertAdjacentHTML("beforeend",renderWitnessNotice(witness));}
+    {const el=document.getElementById("run-out");if(el)el.insertAdjacentHTML("beforeend",renderWitnessNotice(witness));}
   }catch(e){box.innerHTML=`<div class="run-status run-err">Run failed: ${escHtml(String(e.message||e))}${e.tracePersisted&&e.traceId?`<div>Error trace ${escHtml(e.traceId)} recorded.</div>`:`<div>Error trace persistence is disabled.</div>`}</div>`}
 }
 
@@ -2712,10 +2750,17 @@ function switchSubTab(tab){state.subTab=tab;state.view="list";render()}
 //
 // Ugly on purpose. Maintainer tool, not a fellow surface.
 
+// The last preview awaiting a decision. Held in memory only: nothing is
+// persisted as evidence until the human explicitly attests, so abandoning the
+// tab leaves no half-state.
+let maintPendingPreview=null;
+
 const MAINT_RELEASES=[
   {key:"a7v10",label:"A7 → biocraft-singleshot-v10",method:"executeA7V10Release",
+   agentId:"A7",previewVersion:"biocraft-singleshot-v10",
    digest:"f892dad7392ff31657d375d20ee532c1c2a0bcf726af4ed21ec4565ab17cfd18"},
   {key:"a10v4",label:"A10 → biocraft-gapfill-v4",method:"executeA10V4Release",
+   agentId:"A10",previewVersion:"biocraft-gapfill-v4",
    digest:"a066599a997a1cbbd7de373e946b9efe44859acc8afdcad26be1b4c3c9c1cd4f"},
 ];
 
@@ -2776,6 +2821,75 @@ async function maintRelease(key){
   if(!digest){maintOut("maint-release-out",maintResult(false,`${spec.label} — NOT SENT`,"No manifest digest entered. The mutation seals on this value; sending an empty one would just 403."));return}
   await maintRun("maint-release-out",spec.label,()=>ConvexDirectory[spec.method](digest));
 }
+/** Render evidence provenance so a preview is never mistaken for production. */
+function maintExecutionKindLabel(kind){
+  if(kind==="candidate-preview")return`<span class="maint-kind maint-kind-preview">CANDIDATE PREVIEW — not a run any fellow received</span>`;
+  if(kind==="production")return`<span class="maint-kind">production run</span>`;
+  return`<span class="maint-kind maint-kind-unknown">execution kind not recorded (legacy row — treat as production)</span>`;
+}
+
+async function maintPreviewCandidate(key){
+  const spec=MAINT_RELEASES.find(r=>r.key===key);if(!spec)return;
+  const versionInput=document.getElementById(`maint-preview-version-${key}`);
+  const digestInput=document.getElementById(`maint-preview-digest-${key}`);
+  const artifactVersion=versionInput?versionInput.value.trim():"";
+  const candidateDeclaredDigest=digestInput?digestInput.value.trim():"";
+  if(!artifactVersion||!candidateDeclaredDigest){
+    maintOut("maint-preview-out",maintResult(false,`${spec.label} preview — NOT SENT`,"artifactVersion and the candidate's declared artifact digest are both required. The fixture is verified against that digest at run time; without it there is nothing to verify against."));
+    return;
+  }
+  maintPendingPreview=null;
+  maintOut("maint-preview-out",`<div class="maint-result">Previewing ${escHtml(artifactVersion)}… this is a real model call and costs real money.</div>`);
+  try{
+    const r=await DirectoryAPI.previewCandidate(spec.agentId,{artifactVersion,candidateDeclaredDigest});
+    maintPendingPreview={
+      agentId:spec.agentId,
+      artifactDigest:r.artifactDigest,
+      artifactVersion:r.artifactVersion,
+      cost:(typeof r.costUsd==="number")?{
+        amountUsd:r.costUsd,provider:r.provider,modelId:r.modelId,
+        inputTokens:r.inputTokens,outputTokens:r.outputTokens,
+      }:null,
+    };
+    const spend=r.costRecorded
+      ?`Cost $${escHtml(String(r.costUsd))} recorded on trace ${escHtml(String(r.traceId))} before you decide anything.`
+      :`COST NOT RECORDED${typeof r.costUsd==="number"?` ($${escHtml(String(r.costUsd))} spent)`:" (model is unpriced)"} — the spend happened but is not on a trace.`;
+    maintOut("maint-preview-out",
+      `<div class="maint-result maint-ok"><strong>${escHtml(spec.label)} preview — OK</strong>
+       <div>${maintExecutionKindLabel("candidate-preview")}</div>
+       <div>Executed fixture digest <code>${escHtml(String(r.artifactDigest).slice(0,12))}</code>, verified against the candidate's declared digest at run time.</div>
+       <div>${spend}</div>
+       <div>No evidence has been recorded. Read the output; attest only if it is fit to release.</div>
+       <pre>${escHtml(String(r.output||""))}</pre>
+       <button data-maint="attest-preview">Record witnessed evidence</button>
+       <button data-maint="discard-preview">Discard — do not attest</button></div>`);
+  }catch(e){
+    maintOut("maint-preview-out",maintResult(false,`${spec.label} preview — REFUSED`,maintErrText(e)));
+  }
+}
+
+async function maintAttestPreview(){
+  if(!maintPendingPreview){
+    maintOut("maint-attest-out",maintResult(false,"Record witnessed evidence — NOT SENT","No preview is awaiting a decision. Run a preview first; evidence must attest output you actually read."));
+    return;
+  }
+  const p=maintPendingPreview;
+  await maintRun("maint-attest-out","recordCandidatePreviewEvidence",
+    ()=>ConvexDirectory.recordCandidatePreviewEvidence({
+      displayId:p.agentId,artifactDigest:p.artifactDigest,...(p.cost?{cost:p.cost}:{}),
+    }));
+  maintPendingPreview=null;
+}
+
+function maintDiscardPreview(){
+  const had=Boolean(maintPendingPreview);
+  maintPendingPreview=null;
+  maintOut("maint-attest-out",maintResult(true,"Preview discarded",
+    had
+      ?"No evidence was recorded. The candidate cannot promote without it, the proposal stays open, and the pointer has not moved. The preview's cost remains on its trace — the money was spent."
+      :"There was no pending preview to discard."));
+}
+
 async function maintApprove(){
   const el=document.getElementById("maint-proposal-id");
   const id=el?el.value.trim():"";
@@ -2845,7 +2959,16 @@ function maintainerPanelHtml(){
     <div id="maint-fossil-out"></div></fieldset>
   <fieldset><legend>2 · Releases (creates candidate + open proposal; does NOT move the pointer)</legend>
     ${rel}<div id="maint-release-out"></div></fieldset>
-  <fieldset><legend>3 · Eval set / case</legend>
+  <fieldset><legend>3 · Preview the candidate (real model call, real cost)</legend>
+    <p class="maint-note">Executes the candidate's pinned fixture from <code>eval-artifacts/</code>, which fellows never receive. The fixture is verified against the candidate's declared digest at run time. Nothing is attested until you say so.</p>
+    ${MAINT_RELEASES.map(r=>`<div class="maint-row">
+      <label>${escHtml(r.label)}</label>
+      <input id="maint-preview-version-${r.key}" value="${escHtml(r.previewVersion)}" size="28">
+      <input id="maint-preview-digest-${r.key}" placeholder="candidate declared artifact digest" size="68">
+      <button data-maint-preview="${r.key}">Preview</button>
+    </div>`).join("")}
+    <div id="maint-preview-out"></div><div id="maint-attest-out"></div></fieldset>
+  <fieldset><legend>4 · Eval set / case</legend>
     <div class="maint-row"><label>agentId (Convex id)</label><input id="maint-es-agent" size="40">
       <label>name</label><input id="maint-es-name" size="24">
       <label>version</label><input id="maint-es-version" value="1" size="4"></div>
@@ -2857,7 +2980,7 @@ function maintainerPanelHtml(){
       <label>fixtureRef</label><input id="maint-ec-ref" size="30">
       <label>fixture digest</label><input id="maint-ec-digest" size="24">
       <button data-maint="create-eval-case">Create eval case</button></div></fieldset>
-  <fieldset><legend>4 · Eval result — must name what was checked</legend>
+  <fieldset><legend>5 · Eval result — must name what was checked</legend>
     <div class="maint-row"><label>evalSetId</label><input id="maint-er-set" size="40">
       <label>evalCaseId</label><input id="maint-er-case" size="40"></div>
     <div class="maint-row"><label>agentVersionId</label><input id="maint-er-version" size="40">
@@ -2866,7 +2989,7 @@ function maintainerPanelHtml(){
       <textarea id="maint-er-criteria" rows="3" cols="60">grounding=1</textarea>
       <button data-maint="record-eval-result">Record eval result</button></div>
     <div id="maint-eval-out"></div></fieldset>
-  <fieldset><legend>5 · Approve — moves currentApprovedVersionId</legend>
+  <fieldset><legend>6 · Approve — moves currentApprovedVersionId</legend>
     <div class="maint-row"><label>proposalId</label><input id="maint-proposal-id" size="40">
       <button data-maint="approve">reviews.approve</button></div>
     <div id="maint-approve-out"></div></fieldset>
@@ -2879,6 +3002,8 @@ if(typeof document!=="undefined"){
     if(!t||typeof t.closest!=="function")return;
     const rel=t.closest("[data-maint-release]");
     if(rel){ev.preventDefault();void maintRelease(rel.getAttribute("data-maint-release"));return}
+    const prev=t.closest("[data-maint-preview]");
+    if(prev){ev.preventDefault();void maintPreviewCandidate(prev.getAttribute("data-maint-preview"));return}
     const btn=t.closest("[data-maint]");
     if(!btn)return;
     ev.preventDefault();
@@ -2888,6 +3013,8 @@ if(typeof document!=="undefined"){
     else if(action==="create-eval-set")void maintCreateEvalSet();
     else if(action==="create-eval-case")void maintCreateEvalCase();
     else if(action==="record-eval-result")void maintRecordEvalResult();
+    else if(action==="attest-preview")void maintAttestPreview();
+    else if(action==="discard-preview")maintDiscardPreview();
     else if(action==="approve")void maintApprove();
   });
   window.addEventListener("hashchange",()=>render());

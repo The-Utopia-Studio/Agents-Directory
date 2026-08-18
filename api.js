@@ -131,6 +131,8 @@ window.DirectoryAPI = (function () {
       j("POST", `/api/agents/${id}/context`, item, { signedIdentity: true }),
     recallContext: (id, q) => j("GET", `/api/agents/${id}/context/search?q=${encodeURIComponent(q)}`),
     // Run an agent where it lives (records a trace) — spends Anthropic; requires Clerk
+    previewCandidate: (id, body) =>
+      j("POST", `/api/agents/${id}/preview-candidate`, body, { signedIdentity: true }),
     runAgent: (id, inputs) =>
       j("POST", `/api/agents/${id}/run`, { inputs }, { signedIdentity: true }),
     putAgent: (id, body) =>

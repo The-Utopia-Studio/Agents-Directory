@@ -37,6 +37,12 @@ const createEvalSetMutation = makeFunctionReference("evalSets:createEvalSet");
 const createEvalCaseMutation = makeFunctionReference("evalSets:createEvalCase");
 const recordEvalResultMutation = makeFunctionReference("evalResults:recordEvalResult");
 const approveProposalMutation = makeFunctionReference("reviews:approve");
+// Explicit, human-initiated attestation of a candidate preview. Deliberately
+// NOT called by the preview itself: if the output is bad the human declines by
+// not invoking this, and nothing is written.
+const recordCandidatePreviewEvidenceMutation = makeFunctionReference(
+  "evidence:recordCandidatePreviewEvidence",
+);
 
 function labels(items) {
   return Array.isArray(items)
@@ -242,6 +248,13 @@ export function createConvexDirectoryClient({ url, clientFactory } = {}) {
      */
     async recordEvalResult(args) {
       return await client.mutation(recordEvalResultMutation, args);
+    },
+    async recordCandidatePreviewEvidence({ displayId, artifactDigest, cost }) {
+      return await client.mutation(recordCandidatePreviewEvidenceMutation, {
+        displayId,
+        artifactDigest,
+        ...(cost ? { cost } : {}),
+      });
     },
     async approveProposal(proposalId) {
       return await client.mutation(approveProposalMutation, {

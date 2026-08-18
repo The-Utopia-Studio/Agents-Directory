@@ -13,6 +13,8 @@ import {
   testClerkOptions,
   testClerkToken,
 } from "./clerkTestIdentity.js";
+import { declaredClicheCheckId, liveArtifact } from "./artifactContract.js";
+const LIVE_A7 = liveArtifact("A7");
 
 async function listen(app, t) {
   const server = createServer(app.handler);
@@ -51,7 +53,7 @@ test("clear mechanical results requires approver + reason and reports deletions"
   await store.append("mechanicalResults", {
     agentId: "A7",
     ts: "2026-08-01T00:00:00.000Z",
-    artifactVersion: "biocraft-singleshot-v10",
+    artifactVersion: LIVE_A7.artifactVersion,
     checkSetId: "cs1",
     outputSource: "live",
     provider: "openai",

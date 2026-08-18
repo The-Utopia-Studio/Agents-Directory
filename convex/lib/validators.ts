@@ -179,6 +179,25 @@ export const actorIdentity = v.object({
  */
 export const actorKind = v.union(v.literal("human"), v.literal("service"));
 
+/**
+ * What kind of execution produced this evidence — NOT who ran it, and NOT
+ * whether it was real.
+ *
+ * `production` served a fellow from server/src/artifacts/.
+ * `candidate-preview` executed a candidate's pinned fixture from
+ * server/src/eval-artifacts/ so a human could read the output BEFORE the
+ * version is approved. Both are `source: "real"`: the model call and the bytes
+ * are real in each case, only the audience differs. Collapsing preview into
+ * "mock"/"demo" would be a lie and would force eligibleForPromotion false,
+ * which is exactly the deadlock this field exists to break.
+ *
+ * Absent = production (legacy rows, written before the preview path existed).
+ */
+export const executionKind = v.union(
+  v.literal("production"),
+  v.literal("candidate-preview"),
+);
+
 export const ownershipClaimStatus = v.union(
   v.literal("pending"),
   v.literal("accepted"),

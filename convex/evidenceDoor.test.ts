@@ -1,11 +1,14 @@
 /// <reference types="vite/client" />
 // The evidence door, the deliberate-act separation, and the fossil invariant.
 
+import { readFileSync } from "node:fs";
 import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import schema from "./schema";
 import { modules } from "./test.setup";
+import { internal } from "./_generated/api";
+const authorityInternal = internal as any;
 
 const authorityApi = api as any;
 const HUMAN = {
@@ -75,6 +78,12 @@ describe("recordVerifiedHumanRunEvidence — the door", () => {
     const base = convexTest(schema, modules);
     const t = base.withIdentity(APPROVER);
     const g = await governed(t, 1);
+    // The service records that it executed these bytes; the human then attests.
+    await t.mutation(authorityInternal.executions.recordExecution, {
+      displayId: g.displayId,
+      artifactDigest: DIGEST,
+      executionKind: "production",
+    });
     const evidenceId = await base
       .withIdentity(HUMAN)
       .mutation(authorityApi.evidence.recordVerifiedHumanRunEvidence, {
@@ -149,6 +158,9 @@ describe("recordVerifiedHumanRunEvidence — the door", () => {
     const base = convexTest(schema, modules);
     const t = base.withIdentity(APPROVER);
     const g = await governed(t, 5);
+    await t.mutation(authorityInternal.executions.recordExecution, {
+      displayId: g.displayId, artifactDigest: DIGEST, executionKind: "production",
+    });
     await base.withIdentity(HUMAN).mutation(
       authorityApi.evidence.recordVerifiedHumanRunEvidence,
       { displayId: g.displayId, artifactDigest: DIGEST },
@@ -168,6 +180,101 @@ describe("recordVerifiedHumanRunEvidence — the door", () => {
   });
 });
 
+describe("evidence requires proof that an execution happened", () => {
+  test("attesting a run nobody performed is refused", async () => {
+    // The hole this closes: an approver who knew a digest could mint
+    // promotion-eligible evidence without executing or reading anything.
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await governed(t, 30);
+    await expect(
+      base.withIdentity(HUMAN).mutation(
+        authorityApi.evidence.recordVerifiedHumanRunEvidence,
+        { displayId: g.displayId, artifactDigest: DIGEST },
+      ),
+    ).rejects.toThrow(/EXECUTION_PROOF_REQUIRED/);
+    // And nothing was written.
+    expect(await t.run(async (ctx: any) => (await ctx.db.query("evidence").collect()).length)).toBe(0);
+  });
+
+  test("one execution attests exactly one evidence row", async () => {
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await governed(t, 31);
+    await t.mutation(authorityInternal.executions.recordExecution, {
+      displayId: g.displayId, artifactDigest: DIGEST, executionKind: "production",
+    });
+    await base.withIdentity(HUMAN).mutation(
+      authorityApi.evidence.recordVerifiedHumanRunEvidence,
+      { displayId: g.displayId, artifactDigest: DIGEST },
+    );
+    // The proof is consumed; a second attestation finds nothing unconsumed.
+    // Deliberately NO second recordExecution here — that is the point.
+    await expect(
+      base.withIdentity(HUMAN).mutation(
+        authorityApi.evidence.recordVerifiedHumanRunEvidence,
+        { displayId: g.displayId, artifactDigest: DIGEST },
+      ),
+    ).rejects.toThrow(/already been attested/);
+  });
+
+  test("a production execution cannot attest a candidate preview", async () => {
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await governed(t, 32);
+    await t.mutation(authorityApi.proposals.createCandidateProposal, {
+      agentId: g.agentId, candidateVersionId: g.versionId, summary: "kind check",
+    });
+    await t.mutation(authorityInternal.executions.recordExecution, {
+      displayId: g.displayId, artifactDigest: DIGEST, executionKind: "production",
+    });
+    await expect(
+      t.mutation(authorityApi.evidence.recordCandidatePreviewEvidence, {
+        displayId: g.displayId, artifactDigest: DIGEST,
+      }),
+    ).rejects.toThrow(/EXECUTION_PROOF_REQUIRED/);
+  });
+
+  test("the service-measured cost wins over a caller-supplied figure", async () => {
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await governed(t, 33);
+    await t.mutation(authorityInternal.executions.recordExecution, {
+      displayId: g.displayId, artifactDigest: DIGEST, executionKind: "production",
+      cost: { amountUsd: 0.0104, provider: "openai", modelId: "gpt-5.6-terra" },
+    });
+    const evidenceId = await base.withIdentity(HUMAN).mutation(
+      authorityApi.evidence.recordVerifiedHumanRunEvidence,
+      {
+        displayId: g.displayId, artifactDigest: DIGEST,
+        cost: { amountUsd: 0, provider: "openai", modelId: "gpt-5.6-terra" },
+      },
+    );
+    const row = await t.run(async (ctx: any) => await ctx.db.get(evidenceId));
+    // A caller-supplied zero must not overwrite what the executor measured.
+    expect(row.cost.amountUsd).toBe(0.0104);
+  });
+
+  test("execution proof is service-written and cannot be forged from a browser", async () => {
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await governed(t, 34);
+    await t.mutation(authorityInternal.executions.recordExecution, {
+      displayId: g.displayId, artifactDigest: DIGEST, executionKind: "production",
+    });
+    const [rec] = await t.run(async (ctx: any) =>
+      await ctx.db.query("executionRecords").collect());
+    expect(rec.recordedBy).toEqual({
+      subject: "agents-directory-loop",
+      issuer: "service:agents-directory",
+    });
+    // recordExecution is an internalMutation, so a browser cannot call it.
+    const src = readFileSync(new URL("./executions.ts", import.meta.url), "utf8");
+    expect(src).toContain("export const recordExecution = internalMutation({");
+    expect(src).not.toContain("export const recordExecution = mutation({");
+  });
+});
+
 describe("the evalResult is a separate deliberate act", () => {
   test("one call cannot produce both the evidence row and the evalResult", async () => {
     // Structural: recordVerifiedHumanRunEvidence returns an evidence id and
@@ -176,6 +283,9 @@ describe("the evalResult is a separate deliberate act", () => {
     const base = convexTest(schema, modules);
     const t = base.withIdentity(APPROVER);
     const g = await governed(t, 6);
+    await t.mutation(authorityInternal.executions.recordExecution, {
+      displayId: g.displayId, artifactDigest: DIGEST, executionKind: "production",
+    });
     await base.withIdentity(HUMAN).mutation(
       authorityApi.evidence.recordVerifiedHumanRunEvidence,
       { displayId: g.displayId, artifactDigest: DIGEST },
@@ -194,6 +304,9 @@ describe("the evalResult is a separate deliberate act", () => {
     const base = convexTest(schema, modules);
     const t = base.withIdentity(APPROVER);
     const g = await governed(t, 7);
+    await t.mutation(authorityInternal.executions.recordExecution, {
+      displayId: g.displayId, artifactDigest: DIGEST, executionKind: "production",
+    });
     const evidenceId = await base.withIdentity(HUMAN).mutation(
       authorityApi.evidence.recordVerifiedHumanRunEvidence,
       { displayId: g.displayId, artifactDigest: DIGEST },
@@ -253,6 +366,9 @@ describe("the evalResult is a separate deliberate act", () => {
     const base = convexTest(schema, modules);
     const t = base.withIdentity(APPROVER);
     const g = await governed(t, 8);
+    await t.mutation(authorityInternal.executions.recordExecution, {
+      displayId: g.displayId, artifactDigest: DIGEST, executionKind: "production",
+    });
     const evidenceId = await base.withIdentity(HUMAN).mutation(
       authorityApi.evidence.recordVerifiedHumanRunEvidence,
       { displayId: g.displayId, artifactDigest: DIGEST },
@@ -291,6 +407,28 @@ describe("the evalResult is a separate deliberate act", () => {
     expect(
       await t.run(async (ctx: any) => (await ctx.db.get(g.agentId)).currentApprovedVersionId),
     ).toBe(g.versionId);
+  });
+});
+
+describe("attesting a preview requires an approver", () => {
+  test("a merely-authenticated user cannot mint promotion-eligible preview evidence", async () => {
+    // The preview ROUTE is approver-gated, so a non-approver could not have run
+    // the preview they would be attesting. Before this, any signed-in user who
+    // knew an open candidate's digest could create promotion-eligible evidence.
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await governed(t, 20);
+    await t.mutation(authorityApi.proposals.createCandidateProposal, {
+      agentId: g.agentId,
+      candidateVersionId: g.versionId,
+      summary: "preview auth",
+    });
+    await expect(
+      base.withIdentity(HUMAN).mutation(
+        authorityApi.evidence.recordCandidatePreviewEvidence,
+        { displayId: g.displayId, artifactDigest: DIGEST },
+      ),
+    ).rejects.toThrow(/approver|FORBIDDEN/i);
   });
 });
 

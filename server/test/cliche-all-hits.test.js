@@ -16,6 +16,11 @@ import { scoreMechanicalOutput } from "../src/eval/scoreMechanicalOutput.js";
 import { validateRuntimeArtifactOutput } from "../src/invoke/runtimeArtifacts.js";
 import { sanitizeCheckResults } from "../src/core/traceSafety.js";
 import { getGoldenCase } from "../src/eval/goldenCases.js";
+import { declaredClicheCheckId, liveArtifact } from "./artifactContract.js";
+
+// The id comes from the artifact; every expectation below is still concrete —
+// specific input, specific hit count, specific lemmas, specific tier.
+const CLICHE_ID = declaredClicheCheckId("A7");
 
 test("findAllAiCliches returns every distinct lemma, in order of occurrence", () => {
   const text =
@@ -70,10 +75,10 @@ test("the scorer reports the count across sections, not just the first hit", () 
     output,
     artifactVersion: "test",
     artifactDigest: "d".repeat(64),
-    declaredChecks: ["draft_registered_ai_cliche_lemma"],
+    declaredChecks: [CLICHE_ID],
   });
   const row = score.checkResults.find(
-    (r) => r.checkId === "draft_registered_ai_cliche_lemma",
+    (r) => r.checkId === CLICHE_ID,
   );
   assert.equal(row.tier, "named_hit");
   assert.equal(row.status, "fail");
@@ -98,10 +103,10 @@ test("a clean draft records hitCount 0 as a no_hit, never a pass", () => {
     output: "### LinkedIn About\n\nPlain prose.\n\n### Suggested headline\n\nDesigner",
     artifactVersion: "test",
     artifactDigest: "d".repeat(64),
-    declaredChecks: ["draft_registered_ai_cliche_lemma"],
+    declaredChecks: [CLICHE_ID],
   });
   const row = score.checkResults.find(
-    (r) => r.checkId === "draft_registered_ai_cliche_lemma",
+    (r) => r.checkId === CLICHE_ID,
   );
   assert.equal(row.status, "no_hit");
   assert.equal(row.passed, null, "a miss proves nothing and is never a pass");
@@ -118,10 +123,10 @@ test("the unsealed golden fixtures now report both the inflected variant and the
       output: c.getCannedBadOutput(),
       artifactVersion: "test",
       artifactDigest: "d".repeat(64),
-      declaredChecks: ["draft_registered_ai_cliche_lemma"],
+      declaredChecks: [CLICHE_ID],
     });
     const row = score.checkResults.find(
-      (r) => r.checkId === "draft_registered_ai_cliche_lemma",
+      (r) => r.checkId === CLICHE_ID,
     );
     assert.equal(row.hitCount, 2, `${id} must report both cliche occurrences`);
     assert.deepEqual(
@@ -151,7 +156,7 @@ test("the live validator reports the same count as the scorer", () => {
   ].join("\n");
   const findings = validateRuntimeArtifactOutput("A7", output);
   const cliche = findings.find(
-    (f) => f.checkId === "draft_registered_ai_cliche_lemma",
+    (f) => f.checkId === CLICHE_ID,
   );
   assert.ok(cliche, "the live validator must raise the cliche finding");
   assert.equal(cliche.hitCount, 2);
@@ -162,7 +167,7 @@ test("the live validator reports the same count as the scorer", () => {
   // One finding carrying a count — not N findings sharing a checkId, which
   // would double-count against the blocking logic.
   assert.equal(
-    findings.filter((f) => f.checkId === "draft_registered_ai_cliche_lemma").length,
+    findings.filter((f) => f.checkId === CLICHE_ID).length,
     1,
   );
 });
@@ -170,7 +175,7 @@ test("the live validator reports the same count as the scorer", () => {
 test("the count survives trace sanitization but the matched text does not", () => {
   const [clean] = sanitizeCheckResults([
     {
-      checkId: "draft_registered_ai_cliche_lemma",
+      checkId: CLICHE_ID,
       tier: "named_hit",
       status: "fail",
       passed: false,
@@ -198,7 +203,7 @@ test("the count survives trace sanitization but the matched text does not", () =
 test("registeredPhrases is membership-checked, not shape-checked", () => {
   const [clean] = sanitizeCheckResults([
     {
-      checkId: "draft_registered_ai_cliche_lemma",
+      checkId: CLICHE_ID,
       // A token that merely LOOKS like a lemma must not pass.
       registeredPhrases: ["leverage", "something the model wrote"],
     },

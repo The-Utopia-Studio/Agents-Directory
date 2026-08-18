@@ -95,9 +95,13 @@ function findAgentVersionsMutationViolations(): string[] {
 function findApprovedVersionWritersOutsideReviews(): string[] {
   const violations: string[] = [];
   // Object-key writes / assignments only — not property reads such as
-  // `agent.currentApprovedVersionId` copied into priorApprovedVersionId.
+  // `agent.currentApprovedVersionId` copied into priorApprovedVersionId, and
+  // not comparisons: `=(?!=)` so `=== ` and `!==` are reads, not writes. A
+  // guard like `if (agent.currentApprovedVersionId === candidate._id)` is
+  // exactly the kind of check that PROTECTS the invariant, and flagging it
+  // would push authors to stop reading the field they must not write.
   const keyOrAssign =
-    /(?:(?<![\w.])currentApprovedVersionId\s*:|\.currentApprovedVersionId\s*=)/g;
+    /(?:(?<![\w.])currentApprovedVersionId\s*:|\.currentApprovedVersionId\s*=(?!=))/g;
   for (const [path, source] of Object.entries(authoritySources)) {
     if (path === "./reviews.ts" || path.endsWith("/reviews.ts")) continue;
     let match: RegExpExecArray | null;
@@ -363,7 +367,11 @@ describe("Order 1 authority model", () => {
     // Narrow path check (kept): patch payloads mentioning the field.
     const writers = Object.entries(authoritySources)
       .filter(([, source]) =>
-        /ctx\.db\.patch\([\s\S]*?currentApprovedVersionId/.test(source),
+        // [^)]* stays inside the patch call's own argument list. [\s\S]*? spanned
+        // the whole file, so any patch anywhere plus any mention of the field
+        // anywhere later counted as a write — evidence.ts patches an execution
+        // record and separately READS the field in a different function.
+        /ctx\.db\.patch\([^)]*currentApprovedVersionId/.test(source),
       )
       .map(([path]) => path);
     expect(writers).toEqual(["./reviews.ts"]);

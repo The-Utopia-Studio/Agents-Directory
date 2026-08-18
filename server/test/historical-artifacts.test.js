@@ -11,6 +11,7 @@ import {
   loadHistoricalArtifact,
   verifyHistoricalFixtureAgainstGit,
 } from "../src/eval/historicalArtifacts.js";
+import { getRuntimeArtifactDescriptor } from "../src/invoke/runtimeArtifacts.js";
 
 const V5 = "biocraft-singleshot-v5";
 const V6 = "biocraft-singleshot-v6";
@@ -75,13 +76,16 @@ test("loadHistoricalArtifact reads committed fixtures and verifies digests", () 
   const v10 = loadHistoricalArtifact(V10);
   assert.equal(v10.artifactDigest, V10_DIGEST);
   assert.equal(v10.artifactVersion, V10);
+  // The live artifact must match the fixture of whatever version it declares —
+  // v9 before the v10 release lands, v10 after. Pinning it to v10 here would
+  // fail for the entire period the release is staged but not yet approved.
   const liveBytes = readFileSync(
     fileURLToPath(new URL("../src/artifacts/biocraft/SKILL.md", import.meta.url)),
   );
-  assert.equal(
-    createHash("sha256").update(liveBytes).digest("hex"),
-    V10_DIGEST,
-  );
+  const liveDigest = createHash("sha256").update(liveBytes).digest("hex");
+  const live = getRuntimeArtifactDescriptor("A7");
+  assert.equal(liveDigest, HISTORICAL_ARTIFACT_REGISTRY[live.artifactVersion].declaredDigest);
+  assert.ok([V9_DIGEST, V10_DIGEST].includes(liveDigest));
   assert.notEqual(V9_DIGEST, V10_DIGEST);
 });
 

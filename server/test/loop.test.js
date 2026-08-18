@@ -26,6 +26,8 @@ import { getOptimizer } from "../src/improve/index.js";
 import { getMemory } from "../src/memory/index.js";
 import { seed, SEED_TRACES } from "../src/scripts/seed.js";
 import { config } from "../src/config.js";
+import { declaredClicheCheckId, liveArtifact } from "./artifactContract.js";
+const CLICHE_ID = declaredClicheCheckId("A7");
 
 const TEST_APPROVER = Object.freeze({
   subject: "user_test_approver",
@@ -363,7 +365,7 @@ test("a proposal records the artifact it was derived against", async () => {
     metadata: { via: "runtime" },
   }));
   const [proposal] = await svc.runImprovement("A7");
-  assert.equal(proposal.targetArtifactVersion, "biocraft-singleshot-v10");
+  assert.equal(proposal.targetArtifactVersion, LIVE_A7.artifactVersion);
   assert.match(proposal.targetArtifactDigest, /^[a-f0-9]{64}$/);
   assert.equal(proposal.targetArtifactDigestAlgorithm, "sha256");
   assert.equal(proposal.targetAgentVersion, (await svc.getAgent("A7")).version);
@@ -395,7 +397,7 @@ test("approval is refused when the targeted artifact has moved", async () => {
     () => svc.approveImprovement("A7", proposal.id, TEST_APPROVER),
     (e) => {
       assert.equal(e.status, 409);
-      assert.match(e.message, /but the live artifact is biocraft-singleshot-v10/);
+      assert.match(e.message, new RegExp(`but the live artifact is ${LIVE_A7.artifactVersion}`));
       return true;
     },
   );

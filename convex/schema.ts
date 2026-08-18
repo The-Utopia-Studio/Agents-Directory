@@ -13,6 +13,7 @@ import {
   evidenceContract,
   evidenceSource,
   evidenceType,
+  executionKind,
   executionContract,
   guardrailDefinition,
   guardrailResult,
@@ -121,6 +122,40 @@ export default defineSchema({
     .index("by_agentId_and_version", ["agentId", "version"])
     .index("by_agentId_and_state", ["agentId", "state"]),
 
+  /**
+   * Proof that an execution actually happened, written by the SERVICE that
+   * performed it.
+   *
+   * Evidence claims "a human saw output". Nothing bound that claim to a run
+   * until this table: the mutations took caller-supplied identifiers and
+   * trusted them, so an approver who knew a digest could mint promotion
+   * evidence without executing or reading anything.
+   *
+   * Railway can prove execution because it performed it. The human's
+   * attestation CONSUMES one of these rows, so service proves the run happened
+   * and the human proves they read it — neither alone is sufficient, which is
+   * the property the promotion gate was always supposed to have.
+   *
+   * Insert-only except for consumedByEvidenceId, which is set exactly once.
+   */
+  executionRecords: defineTable({
+    agentId: v.id("agents"),
+    agentVersionId: v.id("agentVersions"),
+    declaredArtifactDigest: v.string(),
+    executionKind,
+    // The service principal that ran it. Never a human — a human cannot
+    // testify that their own attestation was preceded by a real execution.
+    recordedBy: actorIdentity,
+    traceId: v.optional(v.string()),
+    cost: v.optional(providerCost),
+    occurredAt: v.number(),
+    // Set once, by the evidence mutation that used it. One execution attests
+    // one evidence row; a second attempt finds nothing unconsumed.
+    consumedByEvidenceId: v.optional(v.id("evidence")),
+  })
+    .index("by_digest", ["declaredArtifactDigest"])
+    .index("by_agentVersionId", ["agentVersionId"]),
+
   evidence: defineTable({
     agentId: v.id("agents"),
     agentVersionId: v.id("agentVersions"),
@@ -141,6 +176,9 @@ export default defineSchema({
     // recorded here as the loop service principal. Same two-identity shape as
     // reviewEvents actor/onBehalfOf, with each field naming its own role.
     executedBy: v.optional(actorIdentity),
+    // Preview vs production. Absent = production (legacy). A reader must never
+    // mistake a candidate preview for a run a fellow received.
+    executionKind: v.optional(executionKind),
     // Set only when a row's eligibility was corrected after the fact by a rule
     // change. Evidence is insert-only, so a correction is recorded, never a
     // silent rewrite of what the row originally claimed.
