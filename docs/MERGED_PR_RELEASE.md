@@ -17,6 +17,11 @@ own gates regardless of what Railway decided.
 > approver mapping, so one approver set governs both the UI approve button and
 > the merge path.**
 
+The reason a second set exists at all is recorded in
+[APPROVER_IDENTITY.md](APPROVER_IDENTITY.md): the Clerk `approver` role rides on
+a named `convex` JWT template that only a live browser session can mint, so the
+merge webhook could not reuse `requireApprover`.
+
 Today there are two approver sets that can drift:
 
 | Path | Authority |

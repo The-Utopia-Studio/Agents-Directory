@@ -1244,9 +1244,16 @@ function renderDetail(a){
   </div>`;
 }
 
+function maintainerRouteActive(){
+  return typeof location!=="undefined"&&String(location.hash||"")==="#maintainer";
+}
+
 function render(){
   renderAuthSurface();
   const app=document.getElementById("app");
+  // Separate route. The run panel is never rendered here, so a maintainer
+  // action cannot also produce a witnessed-run evidence row.
+  if(maintainerRouteActive()){app.innerHTML=maintainerPanelHtml();return}
   if(catalogPending()){
     app.innerHTML=`<div class="directory-state directory-state-loading"><h2>Loading governed directory…</h2><p>Waiting for Convex.</p></div>`;
     return;
@@ -2688,6 +2695,203 @@ function setFilter(t,v){if(t==="cat")state.catFilter=v;else state.statusFilter=v
 function openDetail(id){state.agent=displayedAgents().find(a=>a.id===id);state.view="detail";render();window.scrollTo(0,0)}
 function goBack(){state.view="list";state.agent=null;render()}
 function switchSubTab(tab){state.subTab=tab;state.view="list";render()}
+
+// ── MAINTAINER SURFACE ──
+// Approver-only mutations, reachable only from inside the app.
+//
+// requireApprover reads a top-level `role` claim. That claim exists only on the
+// named "convex" Clerk JWT template, which getToken({template:"convex"}) mints
+// for a live browser session. The default __session cookie carries sub/sid/iss/
+// exp and no role, which is why the Clerk CLI and the Convex dashboard both
+// fail these calls. This panel is not a convenience — it is the only surface
+// that can reach them.
+//
+// Deliberately separate from the run panel. The witnessed-run evidence row is
+// written there when a human sees output; the eval result is authored HERE.
+// One action must never produce both, or the separation is decorative.
+//
+// Ugly on purpose. Maintainer tool, not a fellow surface.
+
+const MAINT_RELEASES=[
+  {key:"a7v10",label:"A7 → biocraft-singleshot-v10",method:"executeA7V10Release",
+   digest:"f892dad7392ff31657d375d20ee532c1c2a0bcf726af4ed21ec4565ab17cfd18"},
+  {key:"a10v4",label:"A10 → biocraft-gapfill-v4",method:"executeA10V4Release",
+   digest:"a066599a997a1cbbd7de373e946b9efe44859acc8afdcad26be1b4c3c9c1cd4f"},
+];
+
+/** Why this session cannot act, naming the missing claim. Null when it can. */
+function maintainerBlockReason(){
+  const auth=authState();
+  if(auth.status!=="signed-in")return`Not signed in (${escHtml(auth.status||"unknown")}). ${escHtml(auth.detail||"")}`;
+  const u=auth.user||{};
+  if(!ConvexDirectory||!ConvexDirectory.enabled)return"Convex directory is not configured in this browser session.";
+  if(u.role==="approver")return null;
+  const carried=Array.isArray(u.claimNames)&&u.claimNames.length?u.claimNames.join(", "):"(none decoded)";
+  if(u.role===null||u.role===undefined){
+    return`Your token carries no <code>role</code> claim. requireApprover needs a top-level <code>role: "approver"</code>. `+
+      `Token template: <code>${escHtml(u.template||"?")}</code>. Claims present: <code>${escHtml(carried)}</code>. `+
+      `Add <code>role</code> to the Clerk JWT template's custom claims, then sign out and back in.`;
+  }
+  return`Your token carries <code>role: "${escHtml(String(u.role))}"</code>, but requireApprover requires <code>"approver"</code>. Claims present: <code>${escHtml(carried)}</code>.`;
+}
+
+function maintOut(id,html){const el=document.getElementById(id);if(el)el.innerHTML=html}
+
+/** Render any outcome — success or refusal — with its reason. Never silent. */
+function maintResult(ok,title,detail){
+  return`<div class="maint-result ${ok?"maint-ok":"maint-err"}"><strong>${escHtml(title)}</strong><pre>${escHtml(detail)}</pre></div>`;
+}
+function maintErrText(e){
+  if(!e)return"Unknown failure with no error object.";
+  const data=e.data||(e.cause&&e.cause.data)||null;
+  const parts=[];
+  if(data&&data.code)parts.push(`code: ${data.code}`);
+  if(data&&data.status)parts.push(`status: ${data.status}`);
+  parts.push(String(data&&data.message?data.message:(e.message||e)));
+  return parts.join("\n");
+}
+
+async function maintRun(outId,label,fn){
+  maintOut(outId,`<div class="maint-result">Running ${escHtml(label)}…</div>`);
+  try{
+    const r=await fn();
+    maintOut(outId,maintResult(true,`${label} — OK`,JSON.stringify(r,null,2)));
+  }catch(e){
+    maintOut(outId,maintResult(false,`${label} — REFUSED`,maintErrText(e)));
+  }
+}
+
+async function maintAuditFossils(){
+  await maintRun("maint-fossil-out","listServicePromotionViolations",
+    ()=>ConvexDirectory.listServicePromotionViolations());
+}
+async function maintBackfillFossils(){
+  await maintRun("maint-fossil-out","backfillServicePromotionEligibility",
+    ()=>ConvexDirectory.backfillServicePromotionEligibility({}));
+}
+async function maintRelease(key){
+  const spec=MAINT_RELEASES.find(r=>r.key===key);if(!spec)return;
+  const input=document.getElementById(`maint-digest-${key}`);
+  const digest=input?input.value.trim():"";
+  if(!digest){maintOut("maint-release-out",maintResult(false,`${spec.label} — NOT SENT`,"No manifest digest entered. The mutation seals on this value; sending an empty one would just 403."));return}
+  await maintRun("maint-release-out",spec.label,()=>ConvexDirectory[spec.method](digest));
+}
+async function maintApprove(){
+  const el=document.getElementById("maint-proposal-id");
+  const id=el?el.value.trim():"";
+  if(!id){maintOut("maint-approve-out",maintResult(false,"approve — NOT SENT","No proposalId entered."));return}
+  await maintRun("maint-approve-out","reviews.approve",()=>ConvexDirectory.approveProposal(id));
+}
+async function maintCreateEvalSet(){
+  const g=(k)=>{const el=document.getElementById(k);return el?el.value.trim():""};
+  const agentId=g("maint-es-agent"),name=g("maint-es-name"),version=Number(g("maint-es-version")||"1");
+  const criteria=g("maint-es-rubric").split("\n").map(l=>l.trim()).filter(Boolean);
+  if(!agentId||!name||!criteria.length){
+    maintOut("maint-eval-out",maintResult(false,"createEvalSet — NOT SENT","agentId, name, and at least one rubric criterion are required. A rubric with no criteria could only produce an eval result that names nothing."));return;
+  }
+  await maintRun("maint-eval-out","createEvalSet",()=>ConvexDirectory.createEvalSet({
+    agentId,name,version,status:"draft",
+    rubric:criteria.map(c=>{const [id,...rest]=c.split("|");return{id:id.trim(),label:(rest.join("|")||id).trim(),maxScore:1,conditional:false}}),
+    guardrails:[{id:"no-secrets",label:"Contains no secrets"}],
+  }));
+}
+async function maintCreateEvalCase(){
+  const g=(k)=>{const el=document.getElementById(k);return el?el.value.trim():""};
+  const evalSetId=g("maint-ec-set"),name=g("maint-ec-name"),fixtureRef=g("maint-ec-ref");
+  if(!evalSetId||!name||!fixtureRef){maintOut("maint-eval-out",maintResult(false,"createEvalCase — NOT SENT","evalSetId, name, and fixtureRef are required."));return}
+  await maintRun("maint-eval-out","createEvalCase",()=>ConvexDirectory.createEvalCase({
+    evalSetId,name,fixtureRef,declaredFixtureDigest:g("maint-ec-digest")||"maintainer-authored",
+  }));
+}
+async function maintRecordEvalResult(){
+  const g=(k)=>{const el=document.getElementById(k);return el?el.value.trim():""};
+  const evalSetId=g("maint-er-set"),evalCaseId=g("maint-er-case"),
+        agentVersionId=g("maint-er-version"),evidenceId=g("maint-er-evidence");
+  const scored=g("maint-er-criteria").split("\n").map(l=>l.trim()).filter(Boolean).map(l=>{
+    const [id,score]=l.split("=").map(x=>(x||"").trim());
+    return{criterionId:id,result:{kind:"score",score:Number(score||"1")}};
+  });
+  if(!evalSetId||!evalCaseId||!agentVersionId||!evidenceId){
+    maintOut("maint-eval-out",maintResult(false,"recordEvalResult — NOT SENT","evalSetId, evalCaseId, agentVersionId, and evidenceId are all required."));return;
+  }
+  if(!scored.length){
+    // Convex refuses this too (EVAL_RESULT_NAMES_NOTHING). Saying so here costs
+    // nothing and explains the rule before the round trip.
+    maintOut("maint-eval-out",maintResult(false,"recordEvalResult — NOT SENT","No criterion scored. An eval result must NAME WHAT WAS CHECKED — Convex refuses an empty or all-N/A set with EVAL_RESULT_NAMES_NOTHING."));return;
+  }
+  await maintRun("maint-eval-out","recordEvalResult",()=>ConvexDirectory.recordEvalResult({
+    evalSetId,evalCaseId,agentVersionId,evidenceId,
+    criterionResults:scored,
+    guardrailResults:[{guardrailId:"no-secrets",passed:true}],
+  }));
+}
+
+function maintainerPanelHtml(){
+  const blocked=maintainerBlockReason();
+  const head=`<h2>Maintainer — release surface</h2>
+    <p class="maint-note">Approver-only Convex mutations. These are unreachable from the Clerk CLI or the Convex dashboard: <code>requireApprover</code> reads a top-level <code>role</code> claim carried only by the named <code>convex</code> JWT template, which only a live browser session can mint. The witnessed-run evidence row is written on the run panel; the eval result is authored here. Two acts, two surfaces, on purpose.</p>`;
+  if(blocked){
+    return`<div class="maint">${head}<div class="maint-result maint-err"><strong>Cannot act as approver</strong><div>${blocked}</div></div></div>`;
+  }
+  const rel=MAINT_RELEASES.map(r=>`<div class="maint-row">
+      <label>${escHtml(r.label)} — releaseManifestDigest</label>
+      <input id="maint-digest-${r.key}" value="${escHtml(r.digest)}" size="70">
+      <button data-maint-release="${r.key}">Execute release</button>
+    </div>`).join("");
+  return`<div class="maint">${head}
+  <fieldset><legend>1 · Fossil audit + backfill</legend>
+    <button data-maint="audit-fossils">List service+promotion violations</button>
+    <button data-maint="backfill-fossils">Backfill to eligibleForPromotion:false</button>
+    <div id="maint-fossil-out"></div></fieldset>
+  <fieldset><legend>2 · Releases (creates candidate + open proposal; does NOT move the pointer)</legend>
+    ${rel}<div id="maint-release-out"></div></fieldset>
+  <fieldset><legend>3 · Eval set / case</legend>
+    <div class="maint-row"><label>agentId (Convex id)</label><input id="maint-es-agent" size="40">
+      <label>name</label><input id="maint-es-name" size="24">
+      <label>version</label><input id="maint-es-version" value="1" size="4"></div>
+    <div class="maint-row"><label>rubric — one per line, <code>id|label</code></label>
+      <textarea id="maint-es-rubric" rows="3" cols="60">grounding|No claim unsupported by the source</textarea>
+      <button data-maint="create-eval-set">Create eval set</button></div>
+    <div class="maint-row"><label>evalSetId</label><input id="maint-ec-set" size="40">
+      <label>case name</label><input id="maint-ec-name" size="24">
+      <label>fixtureRef</label><input id="maint-ec-ref" size="30">
+      <label>fixture digest</label><input id="maint-ec-digest" size="24">
+      <button data-maint="create-eval-case">Create eval case</button></div></fieldset>
+  <fieldset><legend>4 · Eval result — must name what was checked</legend>
+    <div class="maint-row"><label>evalSetId</label><input id="maint-er-set" size="40">
+      <label>evalCaseId</label><input id="maint-er-case" size="40"></div>
+    <div class="maint-row"><label>agentVersionId</label><input id="maint-er-version" size="40">
+      <label>evidenceId (from the witnessed run)</label><input id="maint-er-evidence" size="40"></div>
+    <div class="maint-row"><label>criteria scored — one per line, <code>criterionId=score</code></label>
+      <textarea id="maint-er-criteria" rows="3" cols="60">grounding=1</textarea>
+      <button data-maint="record-eval-result">Record eval result</button></div>
+    <div id="maint-eval-out"></div></fieldset>
+  <fieldset><legend>5 · Approve — moves currentApprovedVersionId</legend>
+    <div class="maint-row"><label>proposalId</label><input id="maint-proposal-id" size="40">
+      <button data-maint="approve">reviews.approve</button></div>
+    <div id="maint-approve-out"></div></fieldset>
+  </div>`;
+}
+
+if(typeof document!=="undefined"){
+  document.addEventListener("click",(ev)=>{
+    const t=ev.target;
+    if(!t||typeof t.closest!=="function")return;
+    const rel=t.closest("[data-maint-release]");
+    if(rel){ev.preventDefault();void maintRelease(rel.getAttribute("data-maint-release"));return}
+    const btn=t.closest("[data-maint]");
+    if(!btn)return;
+    ev.preventDefault();
+    const action=btn.getAttribute("data-maint");
+    if(action==="audit-fossils")void maintAuditFossils();
+    else if(action==="backfill-fossils")void maintBackfillFossils();
+    else if(action==="create-eval-set")void maintCreateEvalSet();
+    else if(action==="create-eval-case")void maintCreateEvalCase();
+    else if(action==="record-eval-result")void maintRecordEvalResult();
+    else if(action==="approve")void maintApprove();
+  });
+  window.addEventListener("hashchange",()=>render());
+}
 
 // ── BOOT ──
 render();

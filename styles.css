@@ -869,3 +869,15 @@ input[type="date"] { color-scheme: dark; }
 .change-date { color: var(--foreground-subtle); min-width: 96px; }
 .change-note { color: var(--foreground); }
 .shipped-tag { display: inline-block; font-size: 11px; color: var(--success-text); margin-top: 6px; }
+
+/* Maintainer surface — deliberately plain. Maintainer tool, not a fellow surface. */
+.maint{padding:16px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px}
+.maint fieldset{border:1px solid var(--border,#444);margin:12px 0;padding:10px}
+.maint legend{font-weight:600;padding:0 6px}
+.maint-row{margin:6px 0;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.maint-row label{opacity:.8}
+.maint-note{opacity:.85;max-width:80ch;line-height:1.5}
+.maint-result{margin:8px 0;padding:8px;border-left:3px solid var(--border,#666);overflow-x:auto}
+.maint-result pre{white-space:pre-wrap;word-break:break-word;margin:4px 0 0}
+.maint-ok{border-left-color:#3a8}
+.maint-err{border-left-color:#b8472c}

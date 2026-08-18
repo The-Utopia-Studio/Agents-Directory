@@ -97,9 +97,17 @@ describe("the evalResult stays off this surface", () => {
     }
   });
 
-  test("the client exposes no eval-result mutation beside the evidence one", () => {
+  test("the run wiring never reaches the eval-result mutation", () => {
+    // The client DOES expose recordEvalResult, because the maintainer surface
+    // authors eval results — it is the only surface that can, since
+    // requireApprover needs the convex-template role claim. The separation
+    // that matters is that no run-path code can reach it, so it is asserted on
+    // the run functions rather than on the client's method list.
     expect(clientSource).toContain("evidence:recordVerifiedHumanRunEvidence");
-    expect(clientSource).not.toContain("evalResults:recordEvalResult");
+    expect(clientSource).toContain("evalResults:recordEvalResult");
+    for (const body of [fn("recordWitnessedRun"), fn("runAgentUI"), fn("continueGapFillUI")]) {
+      expect(body).not.toMatch(/recordEvalResult|createEvalSet|createEvalCase|approveProposal/);
+    }
   });
 
   test("the notice tells the human evidence is not promotion", () => {

@@ -2,6 +2,29 @@ import { Clerk } from "@clerk/clerk-js";
 
 const CONVEX_TEMPLATE = "convex";
 
+/**
+ * Read the claims out of the token we are actually going to send.
+ *
+ * The maintainer surface gates on `role === "approver"`, and that claim exists
+ * ONLY on the named `convex` template — Clerk's default __session cookie
+ * carries sub/sid/iss/exp and nothing else, which is why the CLI and the Convex
+ * dashboard both fail requireApprover. Decoding here lets the UI say which
+ * claim is missing instead of rendering a button that 403s.
+ *
+ * Decode only, never verify: Convex and Railway verify the signature. This is
+ * a UI affordance and is not trusted for authority.
+ */
+function decodeClaims(token) {
+  try {
+    const payload = String(token).split(".")[1];
+    if (!payload) return null;
+    const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
 function publicMessage(error, stage = "clerk") {
   // Do not put provider/network error strings into the page: they may expose
   // deployment details. The state is still explicit and actionable.
@@ -76,9 +99,16 @@ export function createDirectoryAuth({
       publish({
         status: "signed-in",
         detail: "Signed in. Convex writes use your signed identity.",
-        user: {
-          name: clerk.user.fullName || clerk.user.primaryEmailAddress?.emailAddress || "Signed-in user",
-        },
+        user: (() => {
+          const claims = decodeClaims(token) || {};
+          return {
+            name: clerk.user.fullName || clerk.user.primaryEmailAddress?.emailAddress || "Signed-in user",
+            // The role as the token carries it — absent means absent, never "".
+            role: typeof claims.role === "string" ? claims.role : null,
+            claimNames: Object.keys(claims).sort(),
+            template: CONVEX_TEMPLATE,
+          };
+        })(),
       }, token);
     } catch (error) {
       publish({ status: "unavailable", detail: publicMessage(error), user: null });

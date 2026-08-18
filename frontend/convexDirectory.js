@@ -16,6 +16,28 @@ const recordVerifiedHumanRunEvidenceMutation = makeFunctionReference(
   "evidence:recordVerifiedHumanRunEvidence",
 );
 
+// ── Maintainer surface ───────────────────────────────────────────────────────
+// Approver-only. Reachable ONLY from inside the app: requireApprover reads a
+// top-level `role` claim carried solely by the named "convex" JWT template,
+// which Clerk's default __session token does not have — so the Clerk CLI and
+// the Convex dashboard cannot call any of these.
+const servicePromotionViolationsQuery = makeFunctionReference(
+  "evidenceIntegrity:listServicePromotionViolations",
+);
+const backfillServicePromotionMutation = makeFunctionReference(
+  "evidenceIntegrity:backfillServicePromotionEligibility",
+);
+const a7V10ReleaseMutation = makeFunctionReference(
+  "reimports:executeApprovedA7V10Release",
+);
+const a10V4ReleaseMutation = makeFunctionReference(
+  "reimports:executeApprovedA10V4Release",
+);
+const createEvalSetMutation = makeFunctionReference("evalSets:createEvalSet");
+const createEvalCaseMutation = makeFunctionReference("evalSets:createEvalCase");
+const recordEvalResultMutation = makeFunctionReference("evalResults:recordEvalResult");
+const approveProposalMutation = makeFunctionReference("reviews:approve");
+
 function labels(items) {
   return Array.isArray(items)
     ? items.map((item) => item?.label).filter((label) => typeof label === "string")
@@ -192,6 +214,39 @@ export function createConvexDirectoryClient({ url, clientFactory } = {}) {
       return await client.mutation(recordVerifiedHumanRunEvidenceMutation, {
         displayId,
         artifactDigest,
+      });
+    },
+    // ── Maintainer surface ──
+    async listServicePromotionViolations() {
+      return await client.query(servicePromotionViolationsQuery, {});
+    },
+    async backfillServicePromotionEligibility(args = {}) {
+      return await client.mutation(backfillServicePromotionMutation, args);
+    },
+    async executeA7V10Release(releaseManifestDigest) {
+      return await client.mutation(a7V10ReleaseMutation, { releaseManifestDigest });
+    },
+    async executeA10V4Release(releaseManifestDigest) {
+      return await client.mutation(a10V4ReleaseMutation, { releaseManifestDigest });
+    },
+    async createEvalSet(args) {
+      return await client.mutation(createEvalSetMutation, args);
+    },
+    async createEvalCase(args) {
+      return await client.mutation(createEvalCaseMutation, args);
+    },
+    /**
+     * The second deliberate act. Convex refuses an empty or all-N/A criterion
+     * set with EVAL_RESULT_NAMES_NOTHING — an attestation that names nothing
+     * checked nothing.
+     */
+    async recordEvalResult(args) {
+      return await client.mutation(recordEvalResultMutation, args);
+    },
+    async approveProposal(proposalId) {
+      return await client.mutation(approveProposalMutation, {
+        proposalId,
+        editCategory: "no-edit",
       });
     },
     async listRequests() {
