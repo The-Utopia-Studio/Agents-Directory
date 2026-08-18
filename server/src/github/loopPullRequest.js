@@ -5,10 +5,27 @@
 export const LOOP_PR_REPO = "The-Utopia-Studio/utopia-agents";
 export const LOOP_PR_LABEL = "agents-directory-loop";
 
-/** Agent id → single skill file path inside utopia-agents (one file per PR). */
+/**
+ * Agent id → single skill file path inside utopia-agents (one file per PR).
+ *
+ * The directory MUST match the agent's own runtime slug. A10 previously mapped
+ * to con-linkedin-audit/SKILL.md, which is Con — a DIFFERENT agent (Convex A9).
+ * A merged A10 proposal would have patched Con's skill file with edits derived
+ * from the gap-fill artifact: a cross-agent write, silent at merge time.
+ *
+ * A10 is unmapped rather than repointed, because utopia-agents has no gap-fill
+ * skill to point at — its directories are biocraft, con-linkedin-audit,
+ * newsletter-harness, seo-harness-grandeur, uxer-harness. skillFilePathForAgent
+ * refuses an unmapped agent by name, so the loop stops with
+ * loop_pr_unmapped_agent instead of guessing a plausible-looking path.
+ *
+ * Adding an entry here means asserting that the utopia-agents file is the same
+ * agent as the hosted artifact. It is NOT the same bytes: the hosted artifacts
+ * are a stateless subset with runtime frontmatter the utopia-agents skills do
+ * not carry. See loop-pr-mapping.test.js for the invariant this must satisfy.
+ */
 export const AGENT_SKILL_FILE_PATHS = Object.freeze({
   A7: "biocraft/SKILL.md",
-  A10: "con-linkedin-audit/SKILL.md",
 });
 
 export class LoopPullRequestError extends Error {
