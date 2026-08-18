@@ -111,6 +111,22 @@ export function createConvexAuthorityClient(config) {
       });
     },
     /**
+     * Record that this service actually executed these bytes.
+     *
+     * The evidence mutations require and consume one of these. Without it a
+     * human attestation is a claim the caller made about themselves; with it,
+     * the service proves the run happened and the human proves they read it.
+     */
+    async recordExecution({ displayId, artifactDigest, executionKind, traceId, cost }) {
+      return mutation("executions:recordExecution", {
+        displayId,
+        artifactDigest,
+        executionKind,
+        ...(traceId ? { traceId } : {}),
+        ...(cost ? { cost } : {}),
+      });
+    },
+    /**
      * Move currentApprovedVersionId because a loop/ PR was merged.
      * Convex records the loop principal as actor and the GitHub human as
      * onBehalfOf, and re-applies the promotion-evidence gate. Never uses

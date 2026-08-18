@@ -367,7 +367,11 @@ describe("Order 1 authority model", () => {
     // Narrow path check (kept): patch payloads mentioning the field.
     const writers = Object.entries(authoritySources)
       .filter(([, source]) =>
-        /ctx\.db\.patch\([\s\S]*?currentApprovedVersionId/.test(source),
+        // [^)]* stays inside the patch call's own argument list. [\s\S]*? spanned
+        // the whole file, so any patch anywhere plus any mention of the field
+        // anywhere later counted as a write — evidence.ts patches an execution
+        // record and separately READS the field in a different function.
+        /ctx\.db\.patch\([^)]*currentApprovedVersionId/.test(source),
       )
       .map(([path]) => path);
     expect(writers).toEqual(["./reviews.ts"]);

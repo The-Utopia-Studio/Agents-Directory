@@ -324,6 +324,38 @@ export function createLoopService({
     });
   }
 
+  /**
+   * Tell Convex this service executed these bytes, so a human attestation can
+   * later consume it as proof. Best-effort by necessity — Convex may be
+   * unconfigured — but a failure is reported, never swallowed: without the
+   * record the human simply cannot attest, and they need to know why.
+   */
+  async function recordExecutionProof(agentId, { artifactDigest, executionKind, traceId, cost }) {
+    if (!convexAuthority.enabled()) {
+      return { recorded: false, reason: "Convex authority is not configured on this service" };
+    }
+    if (!artifactDigest) {
+      return { recorded: false, reason: "no artifact digest was served, so there is nothing to prove" };
+    }
+    try {
+      const executionRecordId = await convexAuthority.recordExecution({
+        displayId: agentId,
+        artifactDigest,
+        executionKind,
+        traceId,
+        cost,
+      });
+      return { recorded: true, executionRecordId };
+    } catch (error) {
+      const reason = error?.message || String(error);
+      console.warn(
+        `[execution-proof] ${agentId} ${executionKind} ${String(artifactDigest).slice(0, 12)} NOT recorded: ${reason}. ` +
+          `A human will be unable to attest this run.`,
+      );
+      return { recorded: false, reason };
+    }
+  }
+
   async function recordHostedRunEvidenceBestEffort(agentId, result, digest) {
     if (agentId !== "A7" || !digest) return null;
     if (!convexAuthority.enabled()) return null;
@@ -778,10 +810,33 @@ export function createLoopService({
         result,
         liveDigest,
       );
+      // Proof that THIS service executed these bytes. A human attestation from
+      // the browser consumes it; without it, recordVerifiedHumanRunEvidence
+      // refuses, because "a human saw output" would otherwise be a claim the
+      // caller made about themselves.
+      const executionProof = await recordExecutionProof(agentId, {
+        artifactDigest: liveDigest,
+        executionKind: "production",
+        traceId: trace?.id || null,
+        cost:
+          typeof result.costUsd === "number" && result.provider && result.modelId
+            ? {
+                amountUsd: result.costUsd,
+                provider: result.provider,
+                modelId: result.modelId,
+                inputTokens: result.inputTokens,
+                outputTokens: result.outputTokens,
+              }
+            : undefined,
+      });
 
       return {
         output: result.output,
         status: runStatus,
+        executionProofRecorded: executionProof.recorded,
+        ...(executionProof.recorded
+          ? {}
+          : { executionProofReason: executionProof.reason }),
         ...(failedChecks.length
           ? {
               failedChecks,
@@ -1382,10 +1437,27 @@ export function createLoopService({
         );
       }
 
+      const proof = await recordExecutionProof(agentId, {
+        artifactDigest: result.artifactDigest,
+        executionKind: "candidate-preview",
+        traceId: trace?.id || null,
+        cost: typeof result.costUsd === "number"
+          ? {
+              amountUsd: result.costUsd,
+              provider: result.provider,
+              modelId: result.modelId,
+              inputTokens: result.inputTokens,
+              outputTokens: result.outputTokens,
+            }
+          : undefined,
+      });
+
       return {
         ...result,
         caseId: golden.id,
         traceId: trace?.id || null,
+        executionProofRecorded: proof.recorded,
+        ...(proof.recorded ? {} : { executionProofReason: proof.reason }),
         costRecorded: Boolean(trace?.id) && typeof result.costUsd === "number",
         // The panel writes evidence separately, on an explicit human action.
         evidenceRecorded: false,

@@ -84,7 +84,7 @@ Not done, listed so it is not rediscovered:
 - an audit query listing which Clerk subjects currently carry `approver`
 - the GitHub → Clerk mapping that collapses the two sets into one
 
-## Open gap: preview evidence has no execution proof
+## CLOSED: preview evidence has no execution proof
 
 `recordCandidatePreviewEvidence` creates **promotion-eligible** evidence from
 caller-supplied identifiers alone. It verifies that the digest resolves to a
@@ -116,4 +116,15 @@ check. The shape that fits the existing identity model:
 Service proves the run happened; the human proves they read it. Neither alone
 is sufficient, which is the property the promotion gate was supposed to have.
 
-This is a schema change touching promotion eligibility and has not been made.
+**Built.** `executionRecords` holds service-authored proof; both evidence
+mutations call `claimExecutionProof`, which requires a fresh unconsumed record
+matching the digest AND the execution kind, then marks it consumed in the same
+transaction as the insert. Proof expires after
+`EXECUTION_PROOF_MAX_AGE_MS` (1 hour) — a run from last month is not evidence
+that anyone looked at this candidate today.
+
+Remaining limitation, stated so it is not mistaken for closed: the proof shows
+that the service EXECUTED these bytes and that a named human attested within
+the window. It does not show the human read the output. Nothing in software
+can show that. What changed is that the claim is now bounded by a real
+execution instead of resting entirely on the caller's word.

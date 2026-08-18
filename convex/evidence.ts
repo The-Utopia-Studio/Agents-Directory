@@ -8,6 +8,7 @@ import {
 } from "./_generated/server";
 import { requireApprover, requireIdentity, type AuthorityActor } from "./lib/auth";
 import { declaredLoopServiceActor } from "./lib/serviceActor";
+import { claimExecutionProof } from "./executions";
 import { evidenceType, providerCost } from "./lib/validators";
 
 type EvidenceSource = "real" | "mock" | "demo" | "imported";
@@ -336,14 +337,32 @@ export const recordVerifiedHumanRunEvidence = mutation({
       agent._id,
       args.artifactDigest,
     );
-    return await insertEvidence(
+    // Proof first. Without a service-recorded execution of these exact bytes,
+    // "a human saw output" is an assertion the caller made about themselves.
+    const proof = await claimExecutionProof(ctx, {
+      agentVersionId: version._id,
+      declaredArtifactDigest: version.artifact!.declaredDigest,
+      executionKind: "production",
+    });
+    const evidenceId = await insertEvidence(
       ctx,
-      { agentVersionId: version._id, type: "run", cost: args.cost },
+      {
+        agentVersionId: version._id,
+        type: "run",
+        // Prefer the cost the SERVICE recorded when it ran. A caller-supplied
+        // figure is a claim; the executing service's is a measurement.
+        cost: proof.cost ?? args.cost,
+      },
       "real",
       { kind: "verified-human", actor: human },
       // Railway ran it; the human witnessed it. Recorded, not conflated.
       declaredLoopServiceActor(),
+      "production",
     );
+    // Consume in the same transaction as the insert, so two concurrent
+    // attestations cannot both redeem one execution.
+    await ctx.db.patch(proof._id, { consumedByEvidenceId: evidenceId });
+    return evidenceId;
   },
 });
 
@@ -421,14 +440,25 @@ export const recordCandidatePreviewEvidence = mutation({
       });
     }
 
-    return await insertEvidence(
+    const proof = await claimExecutionProof(ctx, {
+      agentVersionId: version._id,
+      declaredArtifactDigest: version.artifact!.declaredDigest,
+      executionKind: "candidate-preview",
+    });
+    const evidenceId = await insertEvidence(
       ctx,
-      { agentVersionId: version._id, type: "run", cost: args.cost },
+      {
+        agentVersionId: version._id,
+        type: "run",
+        cost: proof.cost ?? args.cost,
+      },
       "real",
       { kind: "verified-human", actor: human },
       declaredLoopServiceActor(),
       "candidate-preview",
     );
+    await ctx.db.patch(proof._id, { consumedByEvidenceId: evidenceId });
+    return evidenceId;
   },
 });
 
