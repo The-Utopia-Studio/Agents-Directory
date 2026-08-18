@@ -22,6 +22,8 @@
 import { loadHistoricalArtifact } from "./historicalArtifacts.js";
 import { generateUnderHistoricalArtifact } from "./invokeHistorical.js";
 import { costUsdFromUsage } from "../invoke/llm/pricing.js";
+import { scoreMechanicalOutput } from "./scoreMechanicalOutput.js";
+import { isBlockingCheckResult } from "./checkTiers.js";
 
 export class PreviewRefusal extends Error {
   constructor(code, message, status = 409) {
@@ -82,6 +84,7 @@ export async function previewCandidateVersion({
   artifactVersion,
   candidateDeclaredDigest,
   golden,
+  sourceText = "",
   config = {},
 }) {
   let artifact;
@@ -112,6 +115,12 @@ export async function previewCandidateVersion({
     candidateDeclaredDigest,
   });
 
+  // The check set comes from the CANDIDATE's own declared checks — the same
+  // artifact-declared set runMechanicalScore uses. A preview that reported no
+  // check results was strictly less informative than an existing scorer on the
+  // same bytes, which is the defect underneath everything else here.
+  const declaredChecks = [...(artifact.checks || [])];
+
   const generation = await generateUnderHistoricalArtifact({
     agentId,
     artifactVersion,
@@ -126,8 +135,38 @@ export async function previewCandidateVersion({
     outputTokens: generation.outputTokens,
   });
 
+  const score = scoreMechanicalOutput({
+    output: generation.output,
+    artifactVersion,
+    artifactDigest: verifiedDigest,
+    declaredChecks,
+    sourceGroundingRules: golden?.sourceGroundingRules || [],
+    sourceText: sourceText || golden?.input || "",
+    guardrails: artifact.guardrails || [],
+  });
+  const blocking = score.checkResults.filter(isBlockingCheckResult);
+
   return {
     executionKind: "candidate-preview",
+    declaredChecks,
+    checkSetId: score.checkSetId,
+    groundingPassRate: score.groundingPassRate,
+    stylePassRate: score.stylePassRate,
+    checkResults: score.checkResults.map((row) => ({
+      checkId: row.checkId,
+      tier: row.tier,
+      status: row.status,
+      passed: row.passed,
+      category: row.category,
+      why: row.why || null,
+    })),
+    // Scored fail or named_hit fail. Advisory never blocks.
+    blockingFailures: blocking.map((row) => ({
+      checkId: row.checkId,
+      tier: row.tier,
+      why: row.why || null,
+    })),
+    attestable: blocking.length === 0,
     agentId,
     artifactVersion,
     artifactDigest: verifiedDigest,

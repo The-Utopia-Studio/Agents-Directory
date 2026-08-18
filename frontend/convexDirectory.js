@@ -249,10 +249,20 @@ export function createConvexDirectoryClient({ url, clientFactory } = {}) {
     async recordEvalResult(args) {
       return await client.mutation(recordEvalResultMutation, args);
     },
-    async recordCandidatePreviewEvidence({ displayId, artifactDigest, cost }) {
+    async recordCandidatePreviewEvidence({
+      displayId,
+      artifactDigest,
+      previewSourceKind,
+      blockingCheckIds,
+      overrideReason,
+      cost,
+    }) {
       return await client.mutation(recordCandidatePreviewEvidenceMutation, {
         displayId,
         artifactDigest,
+        previewSourceKind,
+        ...(blockingCheckIds ? { blockingCheckIds } : {}),
+        ...(overrideReason ? { overrideReason } : {}),
         ...(cost ? { cost } : {}),
       });
     },

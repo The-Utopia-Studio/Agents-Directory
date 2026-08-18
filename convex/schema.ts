@@ -13,7 +13,9 @@ import {
   evidenceContract,
   evidenceSource,
   evidenceType,
+  checkOverride,
   executionKind,
+  previewSourceKind,
   executionContract,
   guardrailDefinition,
   guardrailResult,
@@ -179,6 +181,10 @@ export default defineSchema({
     // Preview vs production. Absent = production (legacy). A reader must never
     // mistake a candidate preview for a run a fellow received.
     executionKind: v.optional(executionKind),
+    // Preview only: what the run was executed against.
+    previewSourceKind: v.optional(previewSourceKind),
+    // Present only when a human attested past a blocking check failure.
+    checkOverride: v.optional(checkOverride),
     // Set only when a row's eligibility was corrected after the fact by a rule
     // change. Evidence is insert-only, so a correction is recorded, never a
     // silent rewrite of what the row originally claimed.

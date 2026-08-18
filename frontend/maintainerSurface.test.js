@@ -149,6 +149,37 @@ describe("the candidate preview", () => {
     expect(body).toContain("real model call and costs real money");
   });
 
+  test("check results are rendered with tiers, and a blocking failure refuses", () => {
+    const start = appSource.indexOf("async function maintPreviewCandidate(");
+    const body = appSource.slice(start, appSource.indexOf("async function maintAttestPreview("));
+    // The preview must be at least as informative as the scorer on the same
+    // bytes — results, tiers, and the check set that produced them.
+    expect(body).toContain("checkResults");
+    expect(body).toContain("checkSetId");
+    expect(body).toContain("groundingPassRate");
+    expect(body).toContain("NOT ATTESTABLE");
+    expect(body).toContain("Recording evidence is refused");
+    // Refused, not warned: the plain attest button only appears when clean.
+    expect(body).toContain("Override and record evidence");
+  });
+
+  test("an override without a stated reason is not sent", () => {
+    const start = appSource.indexOf("async function maintAttestPreview(");
+    const body = appSource.slice(start, start + 1200);
+    expect(body).toContain("Attesting is refused without a stated reason");
+    expect(body).toContain("overrideReason");
+    expect(body).toContain("blockingCheckIds");
+  });
+
+  test("the source kind is shown and sent, never inferred", () => {
+    expect(appSource).toContain("previewSourceKind");
+    expect(appSource).toContain("synthetic golden fixture");
+    expect(appSource).toContain("pasted material");
+    // Pasting is offered; the fixture is the explicit fallback.
+    expect(appSource).toContain("leave blank to fall back to the synthetic golden fixture");
+    expect(clientSource).toContain("previewSourceKind,");
+  });
+
   test("executionKind is rendered wherever evidence provenance is shown", () => {
     expect(appSource).toContain("function maintExecutionKindLabel(");
     expect(appSource).toContain("CANDIDATE PREVIEW — not a run any fellow received");

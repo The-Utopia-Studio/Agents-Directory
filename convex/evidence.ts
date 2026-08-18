@@ -9,7 +9,7 @@ import {
 import { requireApprover, requireIdentity, type AuthorityActor } from "./lib/auth";
 import { declaredLoopServiceActor } from "./lib/serviceActor";
 import { claimExecutionProof } from "./executions";
-import { evidenceType, providerCost } from "./lib/validators";
+import { evidenceType, previewSourceKind, providerCost } from "./lib/validators";
 
 type EvidenceSource = "real" | "mock" | "demo" | "imported";
 type SyntheticEvidenceSource = Extract<EvidenceSource, "mock" | "demo">;
@@ -91,6 +91,10 @@ async function insertEvidence(
   writer: EvidenceWriter,
   executedBy?: AuthorityActor,
   executionKind?: "production" | "candidate-preview",
+  extra?: {
+    previewSourceKind?: "golden-fixture" | "pasted-source";
+    checkOverride?: { reason: string; overriddenCheckIds: string[] };
+  },
 ) {
   const runBy = writer.actor;
   const actorKind = writer.kind === "verified-human" ? "human" : "service";
@@ -168,6 +172,8 @@ async function insertEvidence(
     actorKind,
     ...(executedBy ? { executedBy } : {}),
     ...(executionKind ? { executionKind } : {}),
+    ...(extra?.previewSourceKind ? { previewSourceKind: extra.previewSourceKind } : {}),
+    ...(extra?.checkOverride ? { checkOverride: extra.checkOverride } : {}),
     occurredAt: Date.now(),
     cost: args.cost,
     feedbackForEvidenceId: args.feedbackForEvidenceId,
@@ -392,6 +398,12 @@ export const recordCandidatePreviewEvidence = mutation({
     displayId: v.string(),
     artifactDigest: v.string(),
     cost: v.optional(providerCost),
+    previewSourceKind,
+    // Blocking check ids the preview reported, from the same declared set the
+    // scorer uses. Supplying any of these REFUSES unless overridden.
+    blockingCheckIds: v.optional(v.array(v.string())),
+    // The deliberate override. Reason required; absence is a refusal.
+    overrideReason: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     // Approver, not merely authenticated. The preview ROUTE is approver-gated,
@@ -440,6 +452,31 @@ export const recordCandidatePreviewEvidence = mutation({
       });
     }
 
+    // A blocking failure REFUSES the attestation. Not a warning: evidence that
+    // a human saw output a scored or named_hit check failed, with nothing
+    // recording that they knew, is exactly the "looked like it worked" artifact
+    // this system exists to prevent.
+    const blocking = args.blockingCheckIds ?? [];
+    const overrideReason = (args.overrideReason ?? "").trim();
+    if (blocking.length && !overrideReason) {
+      throw new ConvexError({
+        code: "BLOCKING_CHECK_FAILED",
+        status: 409,
+        message:
+          `BLOCKING_CHECK_FAILED: the preview failed ${blocking.join(", ")}. ` +
+          `Attesting is refused. To attest anyway, state why the check is wrong about this draft — ` +
+          `the reason is recorded on the evidence row as an explicit human override.`,
+      });
+    }
+    if (overrideReason && !blocking.length) {
+      throw new ConvexError({
+        code: "OVERRIDE_WITHOUT_FAILURE",
+        status: 400,
+        message:
+          "OVERRIDE_WITHOUT_FAILURE: an override was supplied but no blocking check failed. An override must name what it overrides.",
+      });
+    }
+
     const proof = await claimExecutionProof(ctx, {
       agentVersionId: version._id,
       declaredArtifactDigest: version.artifact!.declaredDigest,
@@ -456,6 +493,17 @@ export const recordCandidatePreviewEvidence = mutation({
       { kind: "verified-human", actor: human },
       declaredLoopServiceActor(),
       "candidate-preview",
+      {
+        previewSourceKind: args.previewSourceKind,
+        ...(overrideReason
+          ? {
+              checkOverride: {
+                reason: overrideReason,
+                overriddenCheckIds: [...blocking],
+              },
+            }
+          : {}),
+      },
     );
     await ctx.db.patch(proof._id, { consumedByEvidenceId: evidenceId });
     return evidenceId;

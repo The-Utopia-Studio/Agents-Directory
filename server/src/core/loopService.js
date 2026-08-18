@@ -724,6 +724,7 @@ export function createLoopService({
       // Tracing it is secondary bookkeeping: if the writer fails, the output
       // still has to reach the caller.
       let trace = null;
+      let traceError = null;
       try {
         trace = await obs.recordTrace(metadataOnlyTrace(agentId, {
           agentId,
@@ -1387,11 +1388,21 @@ export function createLoopService({
       }
       // Unsealed only: a preview is maker-adjacent human material and must not
       // expose a sealed holdout case.
-      const caseId =
-        String(body.caseId || "").trim() ||
-        (listGoldenCases(agentId).find((c) => c.sealed !== true) || {}).id;
+      // Pasted source is preferred; the fixture is an explicit, recorded
+      // fallback. Attesting synthetic pre-annotated material and attesting a
+      // fellow's real paste are different facts, and the evidence row says which.
+      const pastedSource = String(body.sourceMaterial || "").trim();
+      const caseId = pastedSource
+        ? null
+        : String(body.caseId || "").trim() ||
+          (listGoldenCases(agentId).find((c) => c.sealed !== true) || {}).id;
       const golden = caseId ? getGoldenCase(caseId) : null;
-      if (!golden) throw httpError(400, `No golden case available for ${agentId}`);
+      if (!pastedSource && !golden) {
+        throw httpError(
+          400,
+          `Supply sourceMaterial to preview against real material, or a caseId for a fixture run. No golden case is available for ${agentId}.`,
+        );
+      }
       // getGoldenCase is global. Without this an approver could preview A7's
       // candidate against A10's fixture and record evidence claiming the
       // candidate was exercised by input it never saw. runMechanicalScore
@@ -1411,8 +1422,10 @@ export function createLoopService({
         artifactVersion,
         candidateDeclaredDigest,
         golden,
+        sourceText: pastedSource,
         config,
       });
+      const previewSourceKind = pastedSource ? "pasted-source" : "golden-fixture";
 
       // Unconditional. The money was spent whatever the human decides next.
       let trace = null;
@@ -1429,11 +1442,27 @@ export function createLoopService({
           artifactDigest: result.artifactDigest,
           artifactDigestAlgorithm: "sha256",
           metadata: { via: "candidate-preview", mode: "preview" },
-        }));
+        }), { persistRuntime: true });
       } catch (error) {
+        traceError = error?.message || String(error);
+      }
+      // Spend that is not recorded is spend nobody can audit. The money is
+      // already gone by this point, so failing loudly is the only honest
+      // option: the caller learns the run happened and the cost is untracked.
+      if (!trace?.id) {
+        const detail = traceError
+          ? `trace write failed: ${traceError}`
+          : "the observability adapter did not persist the trace";
         console.warn(
-          `[preview] cost trace failed for ${agentId} ${artifactVersion}: ${error?.message || error}. ` +
-            `Spend of ${result.costUsd ?? "(unpriced)"} USD is NOT recorded.`,
+          `[preview] COST NOT RECORDED for ${agentId} ${artifactVersion}: ${detail}. ` +
+            `Spend of ${result.costUsd ?? "(unpriced)"} USD is untracked.`,
+        );
+        throw httpError(
+          502,
+          `Preview executed and cost ${typeof result.costUsd === "number" ? `$${result.costUsd}` : "(unpriced)"}, ` +
+            `but the cost could not be recorded (${detail}). The spend happened and is now untracked — ` +
+            `fix trace persistence before previewing again.`,
+          { code: "PREVIEW_COST_NOT_RECORDED", costUsd: result.costUsd ?? null },
         );
       }
 
@@ -1454,7 +1483,8 @@ export function createLoopService({
 
       return {
         ...result,
-        caseId: golden.id,
+        previewSourceKind,
+        caseId: golden?.id || null,
         traceId: trace?.id || null,
         executionProofRecorded: proof.recorded,
         ...(proof.recorded ? {} : { executionProofReason: proof.reason }),

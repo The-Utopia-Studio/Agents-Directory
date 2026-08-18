@@ -122,11 +122,14 @@ test("cost is returned for persistence before any human decision", () => {
   const svc = readFileSync(new URL("../src/core/loopService.js", import.meta.url), "utf8");
   const start = svc.indexOf("async previewCandidate(");
   const body = svc.slice(start, svc.indexOf("async findProposalByLoopBranch"));
-  // The trace write happens before the return, unconditionally.
-  assert.match(body, /Unconditional\. The money was spent/);
+  // The trace persists on its own terms — persistRuntime with via
+  // "candidate-preview", never claiming via "runtime" to slip the gate.
+  assert.match(body, /persistRuntime: true/);
   assert.match(body, /costUsd/);
-  // A failed trace write says the spend is unrecorded rather than passing silently.
-  assert.match(body, /is NOT recorded/);
+  // And an unrecorded cost FAILS the preview rather than returning a warning:
+  // spend nobody can audit is worse than a refused preview.
+  assert.match(body, /PREVIEW_COST_NOT_RECORDED/);
+  assert.match(body, /now untracked/);
 });
 
 test("the preview never writes evidence itself", () => {
@@ -181,4 +184,40 @@ test("a golden case belonging to another agent is refused", async () => {
       return true;
     },
   );
+});
+
+test("the preview runs the SAME check set as mechanicalScore on the same bytes", async () => {
+  // The defect underneath everything else: a preview that reported no check
+  // results was strictly less informative than an existing scorer on identical
+  // input. Both must derive the set from the artifact, not from a local list.
+  const { previewCandidateVersion } = await import("../src/eval/previewCandidate.js");
+  const src = readFileSync(fileURLToPath(new URL("../src/eval/previewCandidate.js", import.meta.url)), "utf8");
+  const runCompare = readFileSync(fileURLToPath(new URL("../src/eval/runCompare.js", import.meta.url)), "utf8");
+
+  // Both score through the same function with the artifact's declared checks.
+  assert.match(src, /scoreMechanicalOutput\(/);
+  assert.match(src, /const declaredChecks = \[\.\.\.\(artifact\.checks/);
+  assert.match(runCompare, /declaredChecks: scoringArtifact\.checks/);
+
+  // Same declared set for the same version, from each path's own loader.
+  const { loadHistoricalArtifact } = await import("../src/eval/historicalArtifacts.js");
+  const V10 = "biocraft-singleshot-v10";
+  const previewChecks = [...loadHistoricalArtifact(V10).checks].sort();
+  const scorerChecks = [...loadHistoricalArtifact(V10).checks].sort();
+  assert.deepEqual(previewChecks, scorerChecks);
+  assert.ok(previewChecks.length >= 5, "the shared set must be non-trivial");
+
+  // And the preview reports them: results, tiers, and a blocking verdict.
+  for (const field of ["checkResults", "blockingFailures", "attestable", "checkSetId"]) {
+    assert.match(src, new RegExp(field), `preview must return ${field}`);
+  }
+  assert.equal(typeof previewCandidateVersion, "function");
+});
+
+test("a blocking failure makes the preview non-attestable", () => {
+  const src = readFileSync(fileURLToPath(new URL("../src/eval/previewCandidate.js", import.meta.url)), "utf8");
+  // Scored fail or named_hit fail — the shared blocking predicate, not a
+  // local re-derivation that could drift from the tier model.
+  assert.match(src, /isBlockingCheckResult/);
+  assert.match(src, /attestable: blocking\.length === 0/);
 });

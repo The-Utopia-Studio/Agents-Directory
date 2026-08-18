@@ -884,3 +884,6 @@ input[type="date"] { color-scheme: dark; }
 .maint-kind{display:inline-block;padding:2px 6px;font-weight:600;font-size:12px;border:1px solid var(--border,#666)}
 .maint-kind-preview{border-color:#b8472c;color:#b8472c}
 .maint-kind-unknown{opacity:.7}
+.maint-check{font-size:12px;padding:1px 0;opacity:.9}
+.maint-check-fail{color:#b8472c;font-weight:600}
+.maint-check-observation,.maint-check-no_hit{opacity:.65}

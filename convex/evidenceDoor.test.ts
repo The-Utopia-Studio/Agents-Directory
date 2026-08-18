@@ -231,6 +231,7 @@ describe("evidence requires proof that an execution happened", () => {
     await expect(
       t.mutation(authorityApi.evidence.recordCandidatePreviewEvidence, {
         displayId: g.displayId, artifactDigest: DIGEST,
+        previewSourceKind: "golden-fixture",
       }),
     ).rejects.toThrow(/EXECUTION_PROOF_REQUIRED/);
   });
@@ -426,9 +427,86 @@ describe("attesting a preview requires an approver", () => {
     await expect(
       base.withIdentity(HUMAN).mutation(
         authorityApi.evidence.recordCandidatePreviewEvidence,
-        { displayId: g.displayId, artifactDigest: DIGEST },
+        { displayId: g.displayId, artifactDigest: DIGEST, previewSourceKind: "golden-fixture" },
       ),
     ).rejects.toThrow(/approver|FORBIDDEN/i);
+  });
+});
+
+describe("a blocking check failure refuses attestation", () => {
+  async function previewable(t: any, base: any, seed: number) {
+    const g = await governed(t, seed);
+    await t.mutation(authorityApi.proposals.createCandidateProposal, {
+      agentId: g.agentId, candidateVersionId: g.versionId, summary: "blocking",
+    });
+    await t.mutation(authorityInternal.executions.recordExecution, {
+      displayId: g.displayId, artifactDigest: DIGEST, executionKind: "candidate-preview",
+    });
+    return g;
+  }
+
+  test("attesting output a blocking check failed is REFUSED, not warned", async () => {
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await previewable(t, base, 40);
+    await expect(
+      t.mutation(authorityApi.evidence.recordCandidatePreviewEvidence, {
+        displayId: g.displayId,
+        artifactDigest: DIGEST,
+        previewSourceKind: "golden-fixture",
+        blockingCheckIds: ["draft_registered_ai_cliche_lemma"],
+      }),
+    ).rejects.toThrow(/BLOCKING_CHECK_FAILED/);
+    expect(await t.run(async (ctx: any) => (await ctx.db.query("evidence").collect()).length)).toBe(0);
+  });
+
+  test("a deliberate override is recorded with its reason and the ids it covers", async () => {
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await previewable(t, base, 41);
+    const evidenceId = await t.mutation(
+      authorityApi.evidence.recordCandidatePreviewEvidence,
+      {
+        displayId: g.displayId,
+        artifactDigest: DIGEST,
+        previewSourceKind: "pasted-source",
+        blockingCheckIds: ["draft_registered_ai_cliche_lemma"],
+        overrideReason: "the lemma appears inside a quoted client testimonial",
+      },
+    );
+    const row = await t.run(async (ctx: any) => await ctx.db.get(evidenceId));
+    expect(row.checkOverride.reason).toMatch(/quoted client testimonial/);
+    expect(row.checkOverride.overriddenCheckIds).toEqual(["draft_registered_ai_cliche_lemma"]);
+    // Which material was attested is on the row, not inferred.
+    expect(row.previewSourceKind).toBe("pasted-source");
+    expect(row.eligibleForPromotion).toBe(true);
+  });
+
+  test("an override naming nothing is refused", async () => {
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await previewable(t, base, 42);
+    await expect(
+      t.mutation(authorityApi.evidence.recordCandidatePreviewEvidence, {
+        displayId: g.displayId, artifactDigest: DIGEST,
+        previewSourceKind: "golden-fixture",
+        blockingCheckIds: [],
+        overrideReason: "looks fine to me",
+      }),
+    ).rejects.toThrow(/OVERRIDE_WITHOUT_FAILURE/);
+  });
+
+  test("a clean preview records the source kind and no override", async () => {
+    const base = convexTest(schema, modules);
+    const t = base.withIdentity(APPROVER);
+    const g = await previewable(t, base, 43);
+    const evidenceId = await t.mutation(
+      authorityApi.evidence.recordCandidatePreviewEvidence,
+      { displayId: g.displayId, artifactDigest: DIGEST, previewSourceKind: "golden-fixture" },
+    );
+    const row = await t.run(async (ctx: any) => await ctx.db.get(evidenceId));
+    expect(row.previewSourceKind).toBe("golden-fixture");
+    expect(row.checkOverride).toBeUndefined();
   });
 });
 
