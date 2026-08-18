@@ -3,7 +3,7 @@ name: biocraft-single-shot
 description: Stateless text-only Biocraft draft from complete source material supplied in one request.
 user-invocable: true
 artifact-mode: single-shot
-artifact_version: biocraft-singleshot-v9
+artifact_version: biocraft-singleshot-v10
 runtime_provider: openai
 runtime_model: gpt-5.6-terra
 success_criteria:
@@ -29,7 +29,7 @@ checks:
   - about_has_no_delimiter_separated_keyword_run
   - about_closing_has_cta
   - draft_has_no_em_dash
-  - draft_has_no_ai_cliche_phrase
+  - draft_registered_ai_cliche_lemma
 ---
 
 # Biocraft — Single-Shot Fellow Bio Draft
