@@ -32,6 +32,15 @@ const V9_DIGEST =
 const V10_DIGEST =
   "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1";
 
+// A10 gap-fill. Registered so the preview and the scorer resolve the same way
+// for A10 as for A7 — before this, A10 had no registry entry at all and the
+// preview refused with PREVIEW_FIXTURE_UNAVAILABLE while runMechanicalScore
+// worked via its live fallback.
+const GAPFILL_V3_DIGEST =
+  "8ccee5f24ac47dc16643954020309b85602109ca824a34cb54655bfaabd40fb4";
+const GAPFILL_V4_DIGEST =
+  "7a3e5bc0a1531e34d04f33249c2e53c332a1d4f4e3f6fc7f9849242637b0bd11";
+
 const FIXTURES_ROOT = new URL("../eval-artifacts/", import.meta.url);
 
 /**
@@ -88,6 +97,27 @@ export const HISTORICAL_ARTIFACT_REGISTRY = Object.freeze({
     fixtureRelativePath: "biocraft/biocraft-singleshot-v10/SKILL.md",
     gitRev: "0000000000000000000000000000000000000000",
     declaredDigest: V10_DIGEST,
+    declaredDigestAlgorithm: "sha256",
+  }),
+  // gapfill-v3 is the version Convex currently approves; v4 is the candidate.
+  // Both sealed, so whichever is live has an entry and the fixture-integrity
+  // assertions apply to A10 exactly as they do to A7.
+  "biocraft-gapfill-v3": Object.freeze({
+    agentId: "A10",
+    artifactVersion: "biocraft-gapfill-v3",
+    path: "server/src/artifacts/biocraft-gapfill/SKILL.md",
+    fixtureRelativePath: "biocraft-gapfill/biocraft-gapfill-v3/SKILL.md",
+    gitRev: "0000000000000000000000000000000000000000",
+    declaredDigest: GAPFILL_V3_DIGEST,
+    declaredDigestAlgorithm: "sha256",
+  }),
+  "biocraft-gapfill-v4": Object.freeze({
+    agentId: "A10",
+    artifactVersion: "biocraft-gapfill-v4",
+    path: "server/src/artifacts/biocraft-gapfill/SKILL.md",
+    fixtureRelativePath: "biocraft-gapfill/biocraft-gapfill-v4/SKILL.md",
+    gitRev: "0000000000000000000000000000000000000000",
+    declaredDigest: GAPFILL_V4_DIGEST,
     declaredDigestAlgorithm: "sha256",
   }),
 });

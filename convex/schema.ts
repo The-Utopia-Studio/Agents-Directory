@@ -13,7 +13,9 @@ import {
   evidenceContract,
   evidenceSource,
   evidenceType,
+  checkOverride,
   executionKind,
+  previewSourceKind,
   executionContract,
   guardrailDefinition,
   guardrailResult,
@@ -143,6 +145,13 @@ export default defineSchema({
     agentVersionId: v.id("agentVersions"),
     declaredArtifactDigest: v.string(),
     executionKind,
+    // What the SERVICE's own scoring found, and what it actually executed
+    // against. Both were previously caller-supplied on the attestation, so an
+    // approver could omit a failed check to skip the override gate, or mislabel
+    // pasted material as a fixture. A caller's value is a claim; the executor's
+    // is an observation, and the evidence row now takes the observation.
+    blockingCheckIds: v.optional(v.array(v.string())),
+    previewSourceKind: v.optional(previewSourceKind),
     // The service principal that ran it. Never a human — a human cannot
     // testify that their own attestation was preceded by a real execution.
     recordedBy: actorIdentity,
@@ -179,6 +188,10 @@ export default defineSchema({
     // Preview vs production. Absent = production (legacy). A reader must never
     // mistake a candidate preview for a run a fellow received.
     executionKind: v.optional(executionKind),
+    // Preview only: what the run was executed against.
+    previewSourceKind: v.optional(previewSourceKind),
+    // Present only when a human attested past a blocking check failure.
+    checkOverride: v.optional(checkOverride),
     // Set only when a row's eligibility was corrected after the fact by a rule
     // change. Evidence is insert-only, so a correction is recorded, never a
     // silent rewrite of what the row originally claimed.

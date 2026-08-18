@@ -117,13 +117,25 @@ export function createConvexAuthorityClient(config) {
      * human attestation is a claim the caller made about themselves; with it,
      * the service proves the run happened and the human proves they read it.
      */
-    async recordExecution({ displayId, artifactDigest, executionKind, traceId, cost }) {
+    async recordExecution({
+      displayId,
+      artifactDigest,
+      executionKind,
+      traceId,
+      cost,
+      blockingCheckIds,
+      previewSourceKind,
+    }) {
       return mutation("executions:recordExecution", {
         displayId,
         artifactDigest,
         executionKind,
         ...(traceId ? { traceId } : {}),
         ...(cost ? { cost } : {}),
+        // What this service's own scoring observed. The attester cannot supply
+        // these; the evidence mutation reads them back off this record.
+        ...(blockingCheckIds ? { blockingCheckIds } : {}),
+        ...(previewSourceKind ? { previewSourceKind } : {}),
       });
     },
     /**

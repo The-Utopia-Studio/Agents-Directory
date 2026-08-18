@@ -193,6 +193,28 @@ export const actorKind = v.union(v.literal("human"), v.literal("service"));
  *
  * Absent = production (legacy rows, written before the preview path existed).
  */
+/**
+ * What the preview executed against. A synthetic fixture carries its answers
+ * pre-annotated beside its traps; a fellow's real paste does not. Attesting
+ * each is a different fact and a reader must be able to tell them apart.
+ */
+export const previewSourceKind = v.union(
+  v.literal("golden-fixture"),
+  v.literal("pasted-source"),
+);
+
+/**
+ * A human deliberately attesting output that a blocking check failed.
+ *
+ * Never a silent proceed: the reason is required and the failing ids are
+ * recorded, so "the check is wrong about this draft" is a claim someone made
+ * and signed, not an absence of information.
+ */
+export const checkOverride = v.object({
+  reason: v.string(),
+  overriddenCheckIds: v.array(v.string()),
+});
+
 export const executionKind = v.union(
   v.literal("production"),
   v.literal("candidate-preview"),

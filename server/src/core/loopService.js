@@ -330,7 +330,7 @@ export function createLoopService({
    * unconfigured — but a failure is reported, never swallowed: without the
    * record the human simply cannot attest, and they need to know why.
    */
-  async function recordExecutionProof(agentId, { artifactDigest, executionKind, traceId, cost }) {
+  async function recordExecutionProof(agentId, { artifactDigest, executionKind, traceId, cost, blockingCheckIds, previewSourceKind }) {
     if (!convexAuthority.enabled()) {
       return { recorded: false, reason: "Convex authority is not configured on this service" };
     }
@@ -344,6 +344,8 @@ export function createLoopService({
         executionKind,
         traceId,
         cost,
+        blockingCheckIds,
+        previewSourceKind,
       });
       return { recorded: true, executionRecordId };
     } catch (error) {
@@ -1387,11 +1389,21 @@ export function createLoopService({
       }
       // Unsealed only: a preview is maker-adjacent human material and must not
       // expose a sealed holdout case.
-      const caseId =
-        String(body.caseId || "").trim() ||
-        (listGoldenCases(agentId).find((c) => c.sealed !== true) || {}).id;
+      // Pasted source is preferred; the fixture is an explicit, recorded
+      // fallback. Attesting synthetic pre-annotated material and attesting a
+      // fellow's real paste are different facts, and the evidence row says which.
+      const pastedSource = String(body.sourceMaterial || "").trim();
+      const caseId = pastedSource
+        ? null
+        : String(body.caseId || "").trim() ||
+          (listGoldenCases(agentId).find((c) => c.sealed !== true) || {}).id;
       const golden = caseId ? getGoldenCase(caseId) : null;
-      if (!golden) throw httpError(400, `No golden case available for ${agentId}`);
+      if (!pastedSource && !golden) {
+        throw httpError(
+          400,
+          `Supply sourceMaterial to preview against real material, or a caseId for a fixture run. No golden case is available for ${agentId}.`,
+        );
+      }
       // getGoldenCase is global. Without this an approver could preview A7's
       // candidate against A10's fixture and record evidence claiming the
       // candidate was exercised by input it never saw. runMechanicalScore
@@ -1406,16 +1418,30 @@ export function createLoopService({
         throw httpError(422, `Golden case ${caseId} is sealed and cannot be previewed`);
       }
 
+      // Gap-fill agents pause at Call 1 unless answers are supplied. The
+      // golden case declares which gaps its partial source leaves open, so the
+      // preview can answer them and reach a draft. Caller-supplied answers win.
+      const gapAnswers = { ...(body.gapAnswers || {}) };
+      for (const gapId of golden?.expectedGapBankIds || []) {
+        if (!gapAnswers[gapId]) {
+          gapAnswers[gapId] = `Not supplied for this preview (${gapId}).`;
+        }
+      }
+
       const result = await previewCandidateVersion({
         agentId,
         artifactVersion,
         candidateDeclaredDigest,
         golden,
+        sourceText: pastedSource,
+        gapAnswers,
         config,
       });
+      const previewSourceKind = pastedSource ? "pasted-source" : "golden-fixture";
 
       // Unconditional. The money was spent whatever the human decides next.
       let trace = null;
+      let traceError = null;
       try {
         trace = await obs.recordTrace(metadataOnlyTrace(agentId, {
           status: "ok",
@@ -1429,17 +1455,36 @@ export function createLoopService({
           artifactDigest: result.artifactDigest,
           artifactDigestAlgorithm: "sha256",
           metadata: { via: "candidate-preview", mode: "preview" },
-        }));
+        }), { persistRuntime: true });
       } catch (error) {
+        traceError = error?.message || String(error);
+      }
+      // Spend that is not recorded is spend nobody can audit. The money is
+      // already gone by this point, so failing loudly is the only honest
+      // option: the caller learns the run happened and the cost is untracked.
+      if (!trace?.id) {
+        const detail = traceError
+          ? `trace write failed: ${traceError}`
+          : "the observability adapter did not persist the trace";
         console.warn(
-          `[preview] cost trace failed for ${agentId} ${artifactVersion}: ${error?.message || error}. ` +
-            `Spend of ${result.costUsd ?? "(unpriced)"} USD is NOT recorded.`,
+          `[preview] COST NOT RECORDED for ${agentId} ${artifactVersion}: ${detail}. ` +
+            `Spend of ${result.costUsd ?? "(unpriced)"} USD is untracked.`,
+        );
+        throw httpError(
+          502,
+          `Preview executed and cost ${typeof result.costUsd === "number" ? `$${result.costUsd}` : "(unpriced)"}, ` +
+            `but the cost could not be recorded (${detail}). The spend happened and is now untracked — ` +
+            `fix trace persistence before previewing again.`,
+          { code: "PREVIEW_COST_NOT_RECORDED", costUsd: result.costUsd ?? null },
         );
       }
 
       const proof = await recordExecutionProof(agentId, {
         artifactDigest: result.artifactDigest,
         executionKind: "candidate-preview",
+        // Observed by this service's own scoring of its own output.
+        blockingCheckIds: (result.blockingFailures || []).map((b) => b.checkId),
+        previewSourceKind,
         traceId: trace?.id || null,
         cost: typeof result.costUsd === "number"
           ? {
@@ -1454,7 +1499,8 @@ export function createLoopService({
 
       return {
         ...result,
-        caseId: golden.id,
+        previewSourceKind,
+        caseId: golden?.id || null,
         traceId: trace?.id || null,
         executionProofRecorded: proof.recorded,
         ...(proof.recorded ? {} : { executionProofReason: proof.reason }),

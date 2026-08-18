@@ -19,9 +19,11 @@
 // asserting it only in CI would mean the claim is checked everywhere except
 // where it is relied upon.
 
-import { loadHistoricalArtifact } from "./historicalArtifacts.js";
+import { resolveScoringArtifact } from "./scoringArtifact.js";
 import { generateUnderHistoricalArtifact } from "./invokeHistorical.js";
 import { costUsdFromUsage } from "../invoke/llm/pricing.js";
+import { scoreMechanicalOutput } from "./scoreMechanicalOutput.js";
+import { isBlockingCheckResult } from "./checkTiers.js";
 
 export class PreviewRefusal extends Error {
   constructor(code, message, status = 409) {
@@ -82,12 +84,17 @@ export async function previewCandidateVersion({
   artifactVersion,
   candidateDeclaredDigest,
   golden,
+  sourceText = "",
+  gapAnswers = null,
   config = {},
 }) {
   let artifact;
   try {
-    // Verifies the fixture against the REGISTRY's declared digest.
-    artifact = loadHistoricalArtifact(artifactVersion);
+    // The SAME resolver the scorer uses: a registered historical version is
+    // digest-verified against its sealed fixture, otherwise the live runtime
+    // descriptor. Going straight to the registry is what made A10 unpreviewable
+    // while runMechanicalScore worked on the same agent.
+    artifact = resolveScoringArtifact(agentId, artifactVersion);
   } catch (error) {
     throw new PreviewRefusal(
       "PREVIEW_FIXTURE_UNAVAILABLE",
@@ -112,12 +119,32 @@ export async function previewCandidateVersion({
     candidateDeclaredDigest,
   });
 
+  // The check set comes from the CANDIDATE's own declared checks — the same
+  // artifact-declared set runMechanicalScore uses. A preview that reported no
+  // check results was strictly less informative than an existing scorer on the
+  // same bytes, which is the defect underneath everything else here.
+  const declaredChecks = [...(artifact.checks || [])];
+
   const generation = await generateUnderHistoricalArtifact({
     agentId,
     artifactVersion,
     golden,
     config,
+    ...(gapAnswers && Object.keys(gapAnswers).length ? { gapAnswers } : {}),
   });
+
+  // A Call-1 pause renders no draft, so there is nothing to witness — the same
+  // rule the run panel applies to needs_input. Attesting a gap questionnaire
+  // would be attesting that a human read output that was never produced.
+  const draft = String(generation.output || "");
+  if (!draft.trim() || /^\s*\{[\s\S]*"gaps"\s*:/.test(draft)) {
+    throw new PreviewRefusal(
+      "PREVIEW_PAUSED_NO_DRAFT",
+      `PREVIEW_PAUSED_NO_DRAFT: ${artifactVersion} returned a gap-fill pause rather than a draft. ` +
+        `Supply gapAnswers so Call 2 runs; a pause renders nothing a human can witness.`,
+      409,
+    );
+  }
 
   // A preview is a real model call and costs real money. Computed here so the
   // caller can persist it regardless of what the human decides.
@@ -126,8 +153,38 @@ export async function previewCandidateVersion({
     outputTokens: generation.outputTokens,
   });
 
+  const score = scoreMechanicalOutput({
+    output: generation.output,
+    artifactVersion,
+    artifactDigest: verifiedDigest,
+    declaredChecks,
+    sourceGroundingRules: golden?.sourceGroundingRules || [],
+    sourceText: sourceText || golden?.input || "",
+    guardrails: artifact.guardrails || [],
+  });
+  const blocking = score.checkResults.filter(isBlockingCheckResult);
+
   return {
     executionKind: "candidate-preview",
+    declaredChecks,
+    checkSetId: score.checkSetId,
+    groundingPassRate: score.groundingPassRate,
+    stylePassRate: score.stylePassRate,
+    checkResults: score.checkResults.map((row) => ({
+      checkId: row.checkId,
+      tier: row.tier,
+      status: row.status,
+      passed: row.passed,
+      category: row.category,
+      why: row.why || null,
+    })),
+    // Scored fail or named_hit fail. Advisory never blocks.
+    blockingFailures: blocking.map((row) => ({
+      checkId: row.checkId,
+      tier: row.tier,
+      why: row.why || null,
+    })),
+    attestable: blocking.length === 0,
     agentId,
     artifactVersion,
     artifactDigest: verifiedDigest,

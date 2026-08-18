@@ -2841,11 +2841,16 @@ async function maintPreviewCandidate(key){
   maintPendingPreview=null;
   maintOut("maint-preview-out",`<div class="maint-result">Previewing ${escHtml(artifactVersion)}… this is a real model call and costs real money.</div>`);
   try{
-    const r=await DirectoryAPI.previewCandidate(spec.agentId,{artifactVersion,candidateDeclaredDigest});
+    const srcEl=document.getElementById(`maint-preview-source-${key}`);
+    const sourceMaterial=srcEl?srcEl.value.trim():"";
+    const r=await DirectoryAPI.previewCandidate(spec.agentId,{artifactVersion,candidateDeclaredDigest,...(sourceMaterial?{sourceMaterial}:{})});
     maintPendingPreview={
       agentId:spec.agentId,
       artifactDigest:r.artifactDigest,
       artifactVersion:r.artifactVersion,
+      previewSourceKind:r.previewSourceKind,
+      blockingCheckIds:(r.blockingFailures||[]).map(b=>b.checkId),
+      attestable:r.attestable!==false,
       cost:(typeof r.costUsd==="number")?{
         amountUsd:r.costUsd,provider:r.provider,modelId:r.modelId,
         inputTokens:r.inputTokens,outputTokens:r.outputTokens,
@@ -2854,15 +2859,29 @@ async function maintPreviewCandidate(key){
     const spend=r.costRecorded
       ?`Cost $${escHtml(String(r.costUsd))} recorded on trace ${escHtml(String(r.traceId))} before you decide anything.`
       :`COST NOT RECORDED${typeof r.costUsd==="number"?` ($${escHtml(String(r.costUsd))} spent)`:" (model is unpriced)"} — the spend happened but is not on a trace.`;
+    const checkRows=(r.checkResults||[]).map(c=>
+      `<div class="maint-check maint-check-${escHtml(c.status)}">${escHtml(c.tier)} · ${escHtml(c.checkId)} · <strong>${escHtml(c.status)}</strong>${c.why?` — ${escHtml(c.why)}`:""}</div>`).join("");
+    const blocked=(r.blockingFailures||[]);
+    const verdict=blocked.length
+      ? `<div class="maint-result maint-err"><strong>NOT ATTESTABLE — ${blocked.length} blocking check failure(s)</strong>
+         <div>${blocked.map(b=>escHtml(`${b.tier} · ${b.checkId}`)).join("<br>")}</div>
+         <div>Recording evidence is refused. If a check is wrong about this draft, say why and override deliberately — the reason is recorded on the evidence row.</div>
+         <div class="maint-row"><input id="maint-override-reason" size="70" placeholder="why this check is wrong about this draft">
+         <button data-maint="attest-preview">Override and record evidence</button>
+         <button data-maint="discard-preview">Discard</button></div></div>`
+      : `<div class="maint-row"><button data-maint="attest-preview">Record witnessed evidence</button>
+         <button data-maint="discard-preview">Discard — do not attest</button></div>`;
     maintOut("maint-preview-out",
-      `<div class="maint-result maint-ok"><strong>${escHtml(spec.label)} preview — OK</strong>
+      `<div class="maint-result ${blocked.length?"maint-err":"maint-ok"}"><strong>${escHtml(spec.label)} preview — ${blocked.length?"CHECKS FAILED":"OK"}</strong>
        <div>${maintExecutionKindLabel("candidate-preview")}</div>
+       <div>Source: <strong>${escHtml(r.previewSourceKind==="pasted-source"?"pasted material":"synthetic golden fixture")}</strong>${r.caseId?` (${escHtml(r.caseId)})`:""}</div>
+       <div>Checks (${escHtml(String((r.checkResults||[]).length))}, set <code>${escHtml(String(r.checkSetId||"").slice(0,12))}</code>): grounding ${escHtml(String(r.groundingPassRate))} · style ${escHtml(String(r.stylePassRate))}</div>
+       ${checkRows}
        <div>Executed fixture digest <code>${escHtml(String(r.artifactDigest).slice(0,12))}</code>, verified against the candidate's declared digest at run time.</div>
        <div>${spend}</div>
        <div>No evidence has been recorded. Read the output; attest only if it is fit to release.</div>
        <pre>${escHtml(String(r.output||""))}</pre>
-       <button data-maint="attest-preview">Record witnessed evidence</button>
-       <button data-maint="discard-preview">Discard — do not attest</button></div>`);
+       ${verdict}</div>`);
   }catch(e){
     maintOut("maint-preview-out",maintResult(false,`${spec.label} preview — REFUSED`,maintErrText(e)));
   }
@@ -2874,9 +2893,18 @@ async function maintAttestPreview(){
     return;
   }
   const p=maintPendingPreview;
+  const reasonEl=document.getElementById("maint-override-reason");
+  const overrideReason=reasonEl?reasonEl.value.trim():"";
+  if(p.blockingCheckIds&&p.blockingCheckIds.length&&!overrideReason){
+    maintOut("maint-attest-out",maintResult(false,"Record witnessed evidence — NOT SENT",
+      `${p.blockingCheckIds.join(", ")} failed. Attesting is refused without a stated reason. Say why the check is wrong about this draft, or discard.`));
+    return;
+  }
   await maintRun("maint-attest-out","recordCandidatePreviewEvidence",
     ()=>ConvexDirectory.recordCandidatePreviewEvidence({
-      displayId:p.agentId,artifactDigest:p.artifactDigest,...(p.cost?{cost:p.cost}:{}),
+      displayId:p.agentId,artifactDigest:p.artifactDigest,
+      ...(overrideReason?{overrideReason}:{}),
+      ...(p.cost?{cost:p.cost}:{}),
     }));
   maintPendingPreview=null;
 }
@@ -2965,6 +2993,7 @@ function maintainerPanelHtml(){
       <label>${escHtml(r.label)}</label>
       <input id="maint-preview-version-${r.key}" value="${escHtml(r.previewVersion)}" size="28">
       <input id="maint-preview-digest-${r.key}" placeholder="candidate declared artifact digest" size="68">
+      <textarea id="maint-preview-source-${r.key}" rows="3" cols="70" placeholder="paste real source material — leave blank to fall back to the synthetic golden fixture"></textarea>
       <button data-maint-preview="${r.key}">Preview</button>
     </div>`).join("")}
     <div id="maint-preview-out"></div><div id="maint-attest-out"></div></fieldset>

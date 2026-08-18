@@ -29,7 +29,21 @@ export function createLocalObservability({ store, lowScoreThreshold = 70 }) {
         persistRuntime &&
         trace.source === "real" &&
         trace.metadata?.via === "runtime";
-      if (!FILE_TRACE_WRITES_ENABLED && !isTrustedRuntimeTrace) {
+      // A candidate preview is a real model call that costs real money, but it
+      // is NOT a hosted run and must not claim via: "runtime" to slip through.
+      // Lying to the observability layer to obtain a cost row is worse than the
+      // missing row. It is admitted on its own terms: same payload rules as a
+      // runtime trace (metadata-only, closed-vocabulary), different marker, so
+      // spend stays auditable without a preview being counted as a fellow run.
+      const isTrustedPreviewTrace =
+        persistRuntime &&
+        trace.source === "real" &&
+        trace.metadata?.via === "candidate-preview";
+      if (
+        !FILE_TRACE_WRITES_ENABLED &&
+        !isTrustedRuntimeTrace &&
+        !isTrustedPreviewTrace
+      ) {
         console.warn(
           `[observability] file trace write disabled; trace for ${trace.agentId || "(unknown)"} was not persisted`,
         );

@@ -149,6 +149,43 @@ describe("the candidate preview", () => {
     expect(body).toContain("real model call and costs real money");
   });
 
+  test("check results are rendered with tiers, and a blocking failure refuses", () => {
+    const start = appSource.indexOf("async function maintPreviewCandidate(");
+    const body = appSource.slice(start, appSource.indexOf("async function maintAttestPreview("));
+    // The preview must be at least as informative as the scorer on the same
+    // bytes — results, tiers, and the check set that produced them.
+    expect(body).toContain("checkResults");
+    expect(body).toContain("checkSetId");
+    expect(body).toContain("groundingPassRate");
+    expect(body).toContain("NOT ATTESTABLE");
+    expect(body).toContain("Recording evidence is refused");
+    // Refused, not warned: the plain attest button only appears when clean.
+    expect(body).toContain("Override and record evidence");
+  });
+
+  test("an override without a stated reason is not sent", () => {
+    const start = appSource.indexOf("async function maintAttestPreview(");
+    const body = appSource.slice(start, start + 1200);
+    expect(body).toContain("Attesting is refused without a stated reason");
+    expect(body).toContain("overrideReason");
+    expect(body).toContain("blockingCheckIds");
+  });
+
+  test("the source kind is shown to the human but never sent by the browser", () => {
+    // Displayed, so the reader knows what was executed.
+    expect(appSource).toContain("synthetic golden fixture");
+    expect(appSource).toContain("pasted material");
+    expect(appSource).toContain("leave blank to fall back to the synthetic golden fixture");
+    // NOT sent: the mutation reads provenance off the service execution proof.
+    // A browser saying what a run executed against is the attester grading
+    // their own homework, which is how a fixture run could be labelled real.
+    const start = clientSource.indexOf("async recordCandidatePreviewEvidence(");
+    const body = clientSource.slice(start, start + 700);
+    expect(body).not.toMatch(/previewSourceKind\s*[,:]/);
+    expect(body).not.toMatch(/blockingCheckIds\s*[,:]/);
+    expect(body).toContain("overrideReason");
+  });
+
   test("executionKind is rendered wherever evidence provenance is shown", () => {
     expect(appSource).toContain("function maintExecutionKindLabel(");
     expect(appSource).toContain("CANDIDATE PREVIEW — not a run any fellow received");
