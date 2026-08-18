@@ -221,3 +221,311 @@ test("a blocking failure makes the preview non-attestable", () => {
   assert.match(src, /isBlockingCheckResult/);
   assert.match(src, /attestable: blocking\.length === 0/);
 });
+
+// ── Pasted source, executed end to end ────────────────────────────────────────
+//
+// The path had never been RUN by a test, only described: assertions checked that
+// app.js contained a placeholder string and that a Convex row round-tripped
+// "pasted-source". So 303 tests passed against a path that threw
+// `Cannot read properties of null (reading 'agentId')` on its first real use,
+// and that never sent the pasted text to the model at all.
+
+const PASTED = [
+  "Name: Jordan Reyes",
+  "Role material:",
+  "- Intern, Platform Engineering, Northwind Systems (2023)",
+  "- Contract data work for Ridgeline Health",
+  "Achievements: cut onboarding time from 9 days to 3 across 12 teams.",
+].join("\n");
+
+/** A stub standing in for the OpenAI Responses call. Records what it was sent. */
+function stubOpenAi(draft) {
+  const seen = { calls: 0, body: null };
+  const fetchImpl = async (_url, init) => {
+    seen.calls += 1;
+    seen.body = JSON.parse(init.body);
+    return {
+      ok: true,
+      status: 200,
+      async json() {
+        return {
+          model: "gpt-5.6-terra",
+          usage: { input_tokens: 1900, output_tokens: 300 },
+          // Same shape the Responses API returns: extractOpenAiText requires
+          // item.type === "message" before it reads content parts.
+          output: [
+            { type: "message", content: [{ type: "output_text", text: draft }] },
+          ],
+        };
+      },
+      async text() {
+        return "";
+      },
+    };
+  };
+  return { seen, fetchImpl };
+}
+
+const CLEAN_DRAFT = [
+  "### LinkedIn About",
+  "",
+  "I help platform teams cut onboarding time.",
+  "",
+  "At Northwind Systems I worked as an Intern on platform engineering.",
+  "",
+  "One delivery cut onboarding from 9 days to 3 across 12 teams.",
+  "",
+  "Reach out if your team needs a clearer path.",
+  "",
+  "### Spoken event introduction",
+  "",
+  "Jordan Reyes builds platform tooling for engineering teams.",
+  "",
+  "### Suggested headline",
+  "",
+  "Platform engineer",
+].join("\n");
+
+async function previewWithStub(body, draft = CLEAN_DRAFT) {
+  const { previewCandidateVersion } = await import("../src/eval/previewCandidate.js");
+  const { config } = await import("../src/config.js");
+  const { seen, fetchImpl } = stubOpenAi(draft);
+  const result = await previewCandidateVersion({
+    agentId: "A7",
+    artifactVersion: "biocraft-singleshot-v10",
+    candidateDeclaredDigest:
+      "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1",
+    golden: null,
+    config: { ...config, runtime: { ...config.runtime, openai: { ...config.runtime.openai, fetch: fetchImpl } } },
+    ...body,
+  });
+  return { result, seen };
+}
+
+test("pasted source runs end to end with no golden case", async () => {
+  const { result, seen } = await previewWithStub({ sourceText: PASTED, fellowName: "Jordan Reyes" });
+
+  // It reached the model exactly once and did not throw on the null golden.
+  assert.equal(seen.calls, 1);
+  assert.ok(result.output.includes("Northwind"));
+  assert.equal(result.executionKind, "candidate-preview");
+  assert.equal(result.artifactDigest.length, 64);
+});
+
+test("the model receives the PASTED text, not the fixture's", async () => {
+  // The bug behind the crash: sourceText was accepted and silently dropped, so
+  // a "pasted source" preview would have generated from Mira Okonkwo's fixture.
+  const { seen } = await previewWithStub({ sourceText: PASTED, fellowName: "Jordan Reyes" });
+  const sent = JSON.stringify(seen.body);
+  assert.match(sent, /Jordan Reyes/);
+  assert.match(sent, /Northwind Systems/);
+  assert.doesNotMatch(sent, /Mira Okonkwo/, "the fixture must not leak into a pasted-source preview");
+  assert.doesNotMatch(sent, /Helix Labs/);
+});
+
+test("pasted source is still scored by the candidate's declared checks", async () => {
+  const { result } = await previewWithStub({ sourceText: PASTED, fellowName: "Jordan Reyes" });
+  assert.ok(Array.isArray(result.checkResults) && result.checkResults.length >= 5);
+  assert.equal(typeof result.checkSetId, "string");
+  assert.equal(typeof result.attestable, "boolean");
+  // Grounding rules come from a golden case; with none, style still scores.
+  assert.equal(typeof result.stylePassRate, "number");
+});
+
+test("a blocking failure on pasted output makes it non-attestable", async () => {
+  const dirty = CLEAN_DRAFT.replace(
+    "Jordan Reyes builds platform tooling for engineering teams.",
+    "Jordan Reyes sits at the intersection of platform and product.",
+  );
+  const { result } = await previewWithStub(
+    { sourceText: PASTED, fellowName: "Jordan Reyes" },
+    dirty,
+  );
+  assert.equal(result.attestable, false);
+  assert.ok(
+    result.blockingFailures.some((f) => f.checkId.includes("cliche")),
+    `expected a cliche blocking failure, got ${JSON.stringify(result.blockingFailures)}`,
+  );
+});
+
+test("no source at all refuses by name rather than throwing a TypeError", async () => {
+  await assert.rejects(
+    () => previewWithStub({ sourceText: "" }),
+    (error) => {
+      assert.ok(!(error instanceof TypeError), "must not be a raw TypeError");
+      assert.match(error.message, /No source material to generate from/);
+      return true;
+    },
+  );
+});
+
+test("the service path accepts pasted source without touching a golden case", async () => {
+  // The exact crash reported: previewCandidate dereferenced a null golden.
+  const { createLoopService } = await import("../src/core/loopService.js");
+  const { createStore } = await import("../src/core/store.js");
+  const { config } = await import("../src/config.js");
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { seed } = await import("../src/scripts/seed.js");
+  const { fetchImpl } = stubOpenAi(CLEAN_DRAFT);
+
+  const store = createStore(await mkdtemp(join(tmpdir(), "adir-paste-")));
+  await seed(store);
+  const svc = createLoopService({
+    store,
+    obs: { recordTrace: async () => ({ id: "trace_paste_1" }) },
+    optimizer: {},
+    memory: {},
+    verifier: {},
+    config: { ...config, runtime: { ...config.runtime, openai: { ...config.runtime.openai, fetch: fetchImpl } } },
+  });
+
+  const out = await svc.previewCandidate("A7", {
+    artifactVersion: "biocraft-singleshot-v10",
+    candidateDeclaredDigest:
+      "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1",
+    sourceMaterial: PASTED,
+    fellowName: "Jordan Reyes",
+  });
+
+  assert.equal(out.previewSourceKind, "pasted-source");
+  assert.equal(out.caseId, null, "a pasted preview must not attribute a golden case");
+  assert.equal(out.evidenceRecorded, false);
+  assert.ok(out.output.includes("Northwind"));
+});
+
+// ── The two bypasses found in review ─────────────────────────────────────────
+
+test("a paste with no fellowName is refused, never generated under the fixture's fellow", async () => {
+  // The old default was "Mira Okonkwo", so a paste submitted without a name
+  // produced a draft attributed to the fixture's fellow — a materially
+  // misattributed preview that would then be attested as real.
+  await assert.rejects(
+    () => previewWithStub({ sourceText: PASTED, fellowName: "" }),
+    (error) => {
+      assert.match(error.message, /needs a fellowName/);
+      assert.match(error.message, /misattribute/);
+      return true;
+    },
+  );
+});
+
+test("no request is sent when the fellow name is missing", async () => {
+  // Refused before the model call, so a misattributed paste costs nothing.
+  const { seen, fetchImpl } = stubOpenAi(CLEAN_DRAFT);
+  const { previewCandidateVersion } = await import("../src/eval/previewCandidate.js");
+  const { config } = await import("../src/config.js");
+  await assert.rejects(() =>
+    previewCandidateVersion({
+      agentId: "A7",
+      artifactVersion: "biocraft-singleshot-v10",
+      candidateDeclaredDigest:
+        "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1",
+      golden: null,
+      sourceText: PASTED,
+      config: { ...config, runtime: { ...config.runtime, openai: { ...config.runtime.openai, fetch: fetchImpl } } },
+    }),
+  );
+  assert.equal(seen.calls, 0, "no paid call for a refused preview");
+});
+
+test("the service refuses a pasted preview with no fellowName", async () => {
+  const { createLoopService } = await import("../src/core/loopService.js");
+  const { createStore } = await import("../src/core/store.js");
+  const { config } = await import("../src/config.js");
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { seed } = await import("../src/scripts/seed.js");
+
+  const store = createStore(await mkdtemp(join(tmpdir(), "adir-noname-")));
+  await seed(store);
+  const svc = createLoopService({
+    store, obs: { recordTrace: async () => ({ id: "t" }) },
+    optimizer: {}, memory: {}, verifier: {}, config,
+  });
+  await assert.rejects(
+    () =>
+      svc.previewCandidate("A7", {
+        artifactVersion: "biocraft-singleshot-v10",
+        candidateDeclaredDigest:
+          "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1",
+        sourceMaterial: PASTED,
+      }),
+    (error) => {
+      assert.equal(error.status, 400);
+      assert.match(error.message, /fellowName is required/);
+      return true;
+    },
+  );
+});
+
+test("A10 gap answers actually reach the model request", async () => {
+  // resolveRuntimeInputs returns ONLY the agent's declared contract fields, and
+  // A10 declares fellowName/sourceMaterial/exclusions — no gapAnswers. Passing
+  // them through it dropped them silently, so Call 2 never saw the operator's
+  // facts. The live runtime adds them AFTER resolving, with a draft phase.
+  const { buildGoldenUserPayload } = await import("../src/eval/invokeHistorical.js");
+  const payload = buildGoldenUserPayload("A10", null, {
+    fellowName: "Jordan Reyes",
+    sourceMaterial: PASTED,
+    gapAnswers: { "proudest-outcome": "Cut onboarding from 9 days to 3." },
+  });
+  assert.equal(payload.phase, "draft", "a draft phase is what makes Call 2 run");
+  assert.ok(payload.gapAnswers, "gap answers must survive into the payload");
+  assert.match(
+    JSON.stringify(payload.gapAnswers),
+    /Cut onboarding from 9 days to 3/,
+  );
+  assert.equal(payload.fellowName, "Jordan Reyes");
+});
+
+test("no gap answers means no draft phase — Call 1 still asks", async () => {
+  const { buildGoldenUserPayload } = await import("../src/eval/invokeHistorical.js");
+  const payload = buildGoldenUserPayload("A10", null, {
+    fellowName: "Jordan Reyes",
+    sourceMaterial: PASTED,
+  });
+  assert.equal(payload.phase, undefined);
+  assert.equal(payload.gapAnswers, undefined);
+});
+
+test("resolveRuntimeInputs alone would have dropped the answers", async () => {
+  // Guards the reasoning above: if A10 ever declares a gapAnswers field, this
+  // fails and the merge below can be simplified.
+  const { resolveRuntimeInputs } = await import("../src/invoke/runtimeArtifacts.js");
+  const { values } = resolveRuntimeInputs("A10", {
+    fellowName: "X", sourceMaterial: "Y", gapAnswers: { a: "b" },
+  });
+  assert.equal("gapAnswers" in values, false);
+});
+
+test("a fixture run still uses the fixture's own fellow", async () => {
+  // The refusal is scoped to pastes. A fixture run legitimately defaults,
+  // because the fixture IS that fellow's material.
+  const { buildGoldenUserPayload } = await import("../src/eval/invokeHistorical.js");
+  const { getGoldenCase } = await import("../src/eval/goldenCases.js");
+  const payload = buildGoldenUserPayload("A7", getGoldenCase("a7-mira-okonkwo-v1"), {});
+  assert.equal(payload.fellowName, "Mira Okonkwo");
+  assert.match(payload.sourceMaterial, /Mira Okonkwo/);
+});
+
+test("KNOWN GAP: the fixture default misnames non-Mira sealed cases", async () => {
+  // Documented, not fixed. buildGoldenUserPayload defaults every fixture run to
+  // "Mira Okonkwo", so scoring a7-jonas-park-v1 generates under the wrong name.
+  // Preview cannot hit this — sealed cases are refused — but runMechanicalScore
+  // can. Fixing it changes the input to an existing scoring path and would move
+  // recorded scores, so it is surfaced here rather than changed silently.
+  const { buildGoldenUserPayload } = await import("../src/eval/invokeHistorical.js");
+  const { getGoldenCase } = await import("../src/eval/goldenCases.js");
+  const jonas = getGoldenCase("a7-jonas-park-v1");
+  assert.equal(jonas.sealed, true, "still sealed, so preview cannot reach it");
+  const payload = buildGoldenUserPayload("A7", jonas, {});
+  assert.equal(
+    payload.fellowName,
+    "Mira Okonkwo",
+    "if this changes, the gap was fixed and this test should assert the real name",
+  );
+  assert.match(payload.sourceMaterial, /Jonas Park/);
+});

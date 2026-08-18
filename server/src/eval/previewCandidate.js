@@ -85,6 +85,7 @@ export async function previewCandidateVersion({
   candidateDeclaredDigest,
   golden,
   sourceText = "",
+  fellowName = "",
   gapAnswers = null,
   config = {},
 }) {
@@ -129,6 +130,8 @@ export async function previewCandidateVersion({
     agentId,
     artifactVersion,
     golden,
+    sourceMaterial: sourceText,
+    fellowName,
     config,
     ...(gapAnswers && Object.keys(gapAnswers).length ? { gapAnswers } : {}),
   });

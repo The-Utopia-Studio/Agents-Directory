@@ -221,7 +221,35 @@ export function registerRoutes(router, svc, engine, config = {}) {
   // artifact root, and absent from getInvocationCapability.
   router.post("/api/agents/:id/preview-candidate", async ({ params, body, req }) => {
     await requireClerkApprover(req, config.clerk);
-    return reply(201, await svc.previewCandidate(params.id, body || {}));
+    try {
+      return reply(201, await svc.previewCandidate(params.id, body || {}));
+    } catch (error) {
+      // Every DELIBERATE refusal on this path is named — PREVIEW_FIXTURE_
+      // UNAVAILABLE, PREVIEW_COST_NOT_RECORDED, PREVIEW_PAUSED_NO_DRAFT. An
+      // UNANTICIPATED throw had no name by construction, so a null dereference
+      // reached the operator as a raw "Cannot read properties of null". That is
+      // the failure class this system closes everywhere else: a person cannot
+      // act on an error that does not say what refused or why.
+      //
+      // A thrown error that already carries a code is passed through unchanged.
+      // Anything else is labelled PREVIEW_FAILED and reported as unexpected, so
+      // it reads as a defect in the preview rather than a decision about the
+      // candidate. It is never converted into a success.
+      if (error?.code || error?.status) throw error;
+      const message = error?.message || String(error);
+      console.warn(
+        `[preview] UNEXPECTED failure for ${params.id}: ${message}`,
+        error?.stack || "",
+      );
+      throw Object.assign(
+        new Error(
+          `PREVIEW_FAILED: the preview did not complete and no named refusal was raised — ${message}. ` +
+            `This is an unexpected defect in the preview path, not a verdict on the candidate. ` +
+            `No evidence was recorded.`,
+        ),
+        { status: 500, code: "PREVIEW_FAILED", unexpected: true },
+      );
+    }
   });
 
   // ── Merged loop/ PR → Convex release ──
