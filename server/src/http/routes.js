@@ -216,6 +216,14 @@ export function registerRoutes(router, svc, engine, config = {}) {
     );
   });
 
+  // Approver-only: execute a candidate's pinned fixture for human review.
+  // Never reachable from the fellow run contract — different route, different
+  // artifact root, and absent from getInvocationCapability.
+  router.post("/api/agents/:id/preview-candidate", async ({ params, body, req }) => {
+    await requireClerkApprover(req, config.clerk);
+    return reply(201, await svc.previewCandidate(params.id, body || {}));
+  });
+
   // ── Merged loop/ PR → Convex release ──
   //
   // The only route on this service that can move currentApprovedVersionId

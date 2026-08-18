@@ -13,6 +13,7 @@ import {
   evidenceContract,
   evidenceSource,
   evidenceType,
+  executionKind,
   executionContract,
   guardrailDefinition,
   guardrailResult,
@@ -141,6 +142,9 @@ export default defineSchema({
     // recorded here as the loop service principal. Same two-identity shape as
     // reviewEvents actor/onBehalfOf, with each field naming its own role.
     executedBy: v.optional(actorIdentity),
+    // Preview vs production. Absent = production (legacy). A reader must never
+    // mistake a candidate preview for a run a fellow received.
+    executionKind: v.optional(executionKind),
     // Set only when a row's eligibility was corrected after the fact by a rule
     // change. Evidence is insert-only, so a correction is recorded, never a
     // silent rewrite of what the row originally claimed.

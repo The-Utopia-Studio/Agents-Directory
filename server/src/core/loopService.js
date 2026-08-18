@@ -1309,6 +1309,81 @@ export function createLoopService({
      * with no link resolves to null and the webhook refuses loudly — it never
      * guesses a proposal, because guessing wrong releases the wrong version.
      */
+    /**
+     * Execute a candidate's pinned fixture so a human can read it before the
+     * version is approved. Never serves a fellow — the fixture root is not the
+     * artifact root, and the fellow-facing loader cannot reach it.
+     *
+     * Cost is written to the trace BEFORE anything is returned, so declining to
+     * attest cannot make the spend invisible. The evidence row is a separate,
+     * explicit act on the maintainer panel; this method never writes one.
+     */
+    async previewCandidate(agentId, body = {}) {
+      const { previewCandidateVersion } = await import("../eval/previewCandidate.js");
+      const { getGoldenCase, listGoldenCases } = await import("../eval/goldenCases.js");
+      const artifactVersion = String(body.artifactVersion || "").trim();
+      const candidateDeclaredDigest = String(body.candidateDeclaredDigest || "").trim();
+      if (!artifactVersion) throw httpError(400, "artifactVersion is required");
+      if (!candidateDeclaredDigest) {
+        throw httpError(
+          400,
+          "candidateDeclaredDigest is required — without it the fixture cannot be verified against what the candidate declares",
+        );
+      }
+      // Unsealed only: a preview is maker-adjacent human material and must not
+      // expose a sealed holdout case.
+      const caseId =
+        String(body.caseId || "").trim() ||
+        (listGoldenCases(agentId).find((c) => c.sealed !== true) || {}).id;
+      const golden = caseId ? getGoldenCase(caseId) : null;
+      if (!golden) throw httpError(400, `No golden case available for ${agentId}`);
+      if (golden.sealed === true) {
+        throw httpError(422, `Golden case ${caseId} is sealed and cannot be previewed`);
+      }
+
+      const result = await previewCandidateVersion({
+        agentId,
+        artifactVersion,
+        candidateDeclaredDigest,
+        golden,
+        config,
+      });
+
+      // Unconditional. The money was spent whatever the human decides next.
+      let trace = null;
+      try {
+        trace = await obs.recordTrace(metadataOnlyTrace(agentId, {
+          status: "ok",
+          source: "real",
+          provider: result.provider,
+          modelId: result.modelId,
+          inputTokens: result.inputTokens,
+          outputTokens: result.outputTokens,
+          ...(typeof result.costUsd === "number" ? { costUsd: result.costUsd } : {}),
+          artifactVersion: result.artifactVersion,
+          artifactDigest: result.artifactDigest,
+          artifactDigestAlgorithm: "sha256",
+          metadata: { via: "candidate-preview", mode: "preview" },
+        }));
+      } catch (error) {
+        console.warn(
+          `[preview] cost trace failed for ${agentId} ${artifactVersion}: ${error?.message || error}. ` +
+            `Spend of ${result.costUsd ?? "(unpriced)"} USD is NOT recorded.`,
+        );
+      }
+
+      return {
+        ...result,
+        caseId: golden.id,
+        traceId: trace?.id || null,
+        costRecorded: Boolean(trace?.id) && typeof result.costUsd === "number",
+        // The panel writes evidence separately, on an explicit human action.
+        evidenceRecorded: false,
+        nextRequiredAction:
+          "Read the output. If it is fit to release, record witnessed evidence on the maintainer panel; that is a separate deliberate act.",
+      };
+    },
+
     async findProposalByLoopBranch(branch) {
       const wanted = String(branch || "").trim();
       if (!wanted) return null;

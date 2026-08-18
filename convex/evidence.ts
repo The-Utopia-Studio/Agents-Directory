@@ -1,4 +1,4 @@
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import type { Doc, Id } from "./_generated/dataModel";
 import {
   internalMutation,
@@ -89,6 +89,7 @@ async function insertEvidence(
   source: EvidenceSource,
   writer: EvidenceWriter,
   executedBy?: AuthorityActor,
+  executionKind?: "production" | "candidate-preview",
 ) {
   const runBy = writer.actor;
   const actorKind = writer.kind === "verified-human" ? "human" : "service";
@@ -165,6 +166,7 @@ async function insertEvidence(
     runBy,
     actorKind,
     ...(executedBy ? { executedBy } : {}),
+    ...(executionKind ? { executionKind } : {}),
     occurredAt: Date.now(),
     cost: args.cost,
     feedbackForEvidenceId: args.feedbackForEvidenceId,
@@ -341,6 +343,87 @@ export const recordVerifiedHumanRunEvidence = mutation({
       { kind: "verified-human", actor: human },
       // Railway ran it; the human witnessed it. Recorded, not conflated.
       declaredLoopServiceActor(),
+    );
+  },
+});
+
+/**
+ * A human-witnessed PREVIEW of a candidate version.
+ *
+ * Breaks the release deadlock. Witnessing production bytes cannot attest a
+ * candidate: to serve candidate bytes you must put them on main, which makes
+ * the served digest disagree with the approved one, which 409s the run — so
+ * the only run that could produce candidate evidence is the run the digest
+ * gate refuses. The preview executes the candidate's PINNED FIXTURE from
+ * eval-artifacts instead, which fellows never receive.
+ *
+ * Permitted only for a version that is ALL THREE, each refused by name:
+ *   1. state "candidate"          — a draft or released version is not under release
+ *   2. referenced by an OPEN proposal — bounds it to a release actually in progress
+ *   3. not currentApprovedVersionId  — previewing what is already live is production
+ *
+ * Without all three this is "execute arbitrary bytes and call it evidence",
+ * which is the relaxed digest gate we deliberately did not build.
+ *
+ * source stays "real" — the model call and the bytes are real. executionKind
+ * records that the audience was a reviewer, not a fellow.
+ */
+export const recordCandidatePreviewEvidence = mutation({
+  args: {
+    displayId: v.string(),
+    artifactDigest: v.string(),
+    cost: v.optional(providerCost),
+  },
+  handler: async (ctx, args) => {
+    const human = await requireIdentity(ctx);
+    const displayId = args.displayId.trim();
+    const agent = await ctx.db
+      .query("agents")
+      .withIndex("by_displayId", (q) => q.eq("displayId", displayId))
+      .unique();
+    if (!agent) throw new Error(`No agent ${displayId}`);
+
+    const version = await lookupGovernedVersionByDigest(
+      ctx,
+      agent._id,
+      args.artifactDigest,
+    );
+
+    if (version.state !== "candidate") {
+      throw new ConvexError({
+        code: "PREVIEW_VERSION_NOT_CANDIDATE",
+        status: 409,
+        message: `PREVIEW_VERSION_NOT_CANDIDATE: ${version.version} is state "${version.state}", not "candidate". Only a version under release may be previewed.`,
+      });
+    }
+    if (agent.currentApprovedVersionId === version._id) {
+      throw new ConvexError({
+        code: "PREVIEW_VERSION_ALREADY_APPROVED",
+        status: 409,
+        message: `PREVIEW_VERSION_ALREADY_APPROVED: ${version.version} is the current approved version. Running it is production, not a preview.`,
+      });
+    }
+    const proposals = await ctx.db
+      .query("proposals")
+      .withIndex("by_candidateVersionId", (q) =>
+        q.eq("candidateVersionId", version._id),
+      )
+      .collect();
+    if (!proposals.some((proposal) => proposal.status === "open")) {
+      throw new ConvexError({
+        code: "PREVIEW_NO_OPEN_PROPOSAL",
+        status: 409,
+        message: `PREVIEW_NO_OPEN_PROPOSAL: no open proposal references ${version.version}. A preview attests a release in progress; without one there is nothing being decided.`,
+      });
+    }
+
+    return await insertEvidence(
+      ctx,
+      { agentVersionId: version._id, type: "run", cost: args.cost },
+      "real",
+      { kind: "verified-human", actor: human },
+      declaredLoopServiceActor(),
+      "candidate-preview",
     );
   },
 });

@@ -37,20 +37,93 @@ describe("the browser writes the evidence, not Railway", () => {
   });
 });
 
+describe("the gate matches the statuses loopService actually returns", () => {
+  // The original gate admitted "ok" and "fail". loopService never returns
+  // "fail" as a RUN status — "fail" is the TRACE status set on the adjacent
+  // line. The real run statuses are ok / checks_failed / grounding_unavailable
+  // / needs_input, so every run with a failing check silently recorded nothing.
+  // This reads them out of loopService so the two cannot drift again.
+  const loopSource = readFileSync(
+    new URL("../server/src/core/loopService.js", import.meta.url),
+    "utf8",
+  );
+
+  function runStatusesFromLoopService() {
+    const start = loopSource.indexOf('let runStatus = "ok";');
+    expect(start, "runStatus assignment must exist in loopService").toBeGreaterThan(-1);
+    const block = loopSource.slice(start, start + 400);
+    const assigned = [...block.matchAll(/runStatus = "([a-z_]+)"/g)].map((m) => m[1]);
+    // needs_input is returned from the early gap-fill branch, not this block.
+    return [...new Set([...assigned, "needs_input"])].sort();
+  }
+
+  test("loopService's real run statuses are exactly what the gate enumerates", () => {
+    const real = runStatusesFromLoopService();
+    const witnessable = JSON.parse(
+      appSource.match(/const WITNESSABLE_RUN_STATUSES=Object\.freeze\((\[[^\]]*\])\)/)[1].replace(/'/g, '"'),
+    );
+    const excluded = JSON.parse(
+      appSource.match(/const NON_WITNESSABLE_RUN_STATUSES=Object\.freeze\((\[[^\]]*\])\)/)[1].replace(/'/g, '"'),
+    );
+    // Every real status is classified — none silently unhandled.
+    expect([...witnessable, ...excluded].sort()).toEqual(real);
+    // And the gate names no status loopService cannot produce.
+    for (const s of [...witnessable, ...excluded]) expect(real).toContain(s);
+  });
+
+  test("a failed check records evidence — that is when attestation matters most", () => {
+    const witnessable = appSource.match(/const WITNESSABLE_RUN_STATUSES=Object\.freeze\(\[([^\]]*)\]\)/)[1];
+    expect(witnessable).toContain("checks_failed");
+    expect(witnessable).toContain("grounding_unavailable");
+    expect(witnessable).toContain("ok");
+    // "fail" was never a run status; admitting it was the original bug.
+    expect(witnessable).not.toContain('"fail"');
+  });
+
+  test("only needs_input is excluded, because it renders no draft", () => {
+    const excluded = appSource.match(/const NON_WITNESSABLE_RUN_STATUSES=Object\.freeze\(\[([^\]]*)\]\)/)[1];
+    expect(excluded).toContain("needs_input");
+    expect(excluded).not.toContain("checks_failed");
+    expect(excluded).not.toContain("grounding_unavailable");
+  });
+});
+
+describe("no path returns silently", () => {
+  const body = fn("recordWitnessedRun");
+
+  test("recordWitnessedRun never returns null", () => {
+    expect(body).not.toMatch(/return null/);
+    // Every early exit states a reason.
+    const returns = [...body.matchAll(/return\s*\{recorded:false[^}]*\}/g)];
+    expect(returns.length).toBeGreaterThanOrEqual(5);
+    for (const r of returns) expect(r[0]).toContain("reason:");
+  });
+
+  test("an unrecognised status is reported rather than dropped", () => {
+    expect(body).toContain("unrecognised run status");
+  });
+
+  test("the callers cannot skip rendering the notice", () => {
+    for (const name of ["runAgentUI", "continueGapFillUI"]) {
+      const caller = fn(name);
+      expect(caller).toContain("renderWitnessNotice(witness)");
+      // No truthiness guard around the render — the verdict is always an object.
+      expect(caller).not.toMatch(/if\(witness\)\{/);
+    }
+  });
+
+  test("Convex-disabled and stale-bundle are different stated reasons", () => {
+    expect(body).toContain("Convex is not configured in this browser session");
+    expect(body).toContain("does not include recordVerifiedHumanRunEvidence");
+    expect(body).toContain("npm run build:frontend");
+  });
+});
+
 describe("only a run that returned output writes evidence", () => {
   const body = fn("recordWitnessedRun");
 
-  test("empty or missing output writes nothing", () => {
-    expect(body).toMatch(/if\(!output\.trim\(\)\)return null/);
-  });
-
-  test("needs_input writes nothing", () => {
-    expect(body).toMatch(/needs_input/);
-    expect(body).toMatch(/return null/);
-  });
-
-  test("a non-terminal run status writes nothing", () => {
-    expect(body).toMatch(/result\.status!=="ok"&&result\.status!=="fail"/);
+  test("empty output records nothing and says so", () => {
+    expect(body).toContain("no output reached the browser");
   });
 
   test("the call sits inside the try, after renderRunResult", () => {

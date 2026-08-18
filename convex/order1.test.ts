@@ -95,9 +95,13 @@ function findAgentVersionsMutationViolations(): string[] {
 function findApprovedVersionWritersOutsideReviews(): string[] {
   const violations: string[] = [];
   // Object-key writes / assignments only — not property reads such as
-  // `agent.currentApprovedVersionId` copied into priorApprovedVersionId.
+  // `agent.currentApprovedVersionId` copied into priorApprovedVersionId, and
+  // not comparisons: `=(?!=)` so `=== ` and `!==` are reads, not writes. A
+  // guard like `if (agent.currentApprovedVersionId === candidate._id)` is
+  // exactly the kind of check that PROTECTS the invariant, and flagging it
+  // would push authors to stop reading the field they must not write.
   const keyOrAssign =
-    /(?:(?<![\w.])currentApprovedVersionId\s*:|\.currentApprovedVersionId\s*=)/g;
+    /(?:(?<![\w.])currentApprovedVersionId\s*:|\.currentApprovedVersionId\s*=(?!=))/g;
   for (const [path, source] of Object.entries(authoritySources)) {
     if (path === "./reviews.ts" || path.endsWith("/reviews.ts")) continue;
     let match: RegExpExecArray | null;

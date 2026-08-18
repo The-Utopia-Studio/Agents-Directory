@@ -108,6 +108,55 @@ describe("every outcome is rendered with its reason", () => {
   });
 });
 
+describe("the candidate preview", () => {
+  test("preview never writes evidence — attesting is a separate explicit action", () => {
+    const start = appSource.indexOf("async function maintPreviewCandidate(");
+    const body = appSource.slice(start, appSource.indexOf("async function maintAttestPreview("));
+    expect(body).not.toContain("recordCandidatePreviewEvidence");
+    expect(body).toContain("No evidence has been recorded");
+    // The attest button exists, so the human must choose.
+    expect(body).toContain('data-maint="attest-preview"');
+    expect(body).toContain('data-maint="discard-preview"');
+  });
+
+  test("attesting refuses when no preview was read", () => {
+    const start = appSource.indexOf("async function maintAttestPreview(");
+    const body = appSource.slice(start, start + 700);
+    expect(body).toMatch(/No preview is awaiting a decision/);
+    expect(body).toContain("evidence must attest output you actually read");
+  });
+
+  test("discarding leaves no half-state and says the cost still stands", () => {
+    const start = appSource.indexOf("function maintDiscardPreview(");
+    const body = appSource.slice(start, start + 700);
+    expect(body).toContain("No evidence was recorded");
+    expect(body).toContain("the pointer has not moved");
+    expect(body).toContain("the money was spent");
+  });
+
+  test("the candidate digest is required before a preview is sent", () => {
+    const start = appSource.indexOf("async function maintPreviewCandidate(");
+    const body = appSource.slice(start, start + 900);
+    expect(body).toContain("NOT SENT");
+    expect(body).toMatch(/verified against that digest at run time/);
+  });
+
+  test("cost is reported, and an unrecorded spend says so", () => {
+    const start = appSource.indexOf("async function maintPreviewCandidate(");
+    const body = appSource.slice(start, appSource.indexOf("async function maintAttestPreview("));
+    expect(body).toContain("costRecorded");
+    expect(body).toContain("COST NOT RECORDED");
+    expect(body).toContain("real model call and costs real money");
+  });
+
+  test("executionKind is rendered wherever evidence provenance is shown", () => {
+    expect(appSource).toContain("function maintExecutionKindLabel(");
+    expect(appSource).toContain("CANDIDATE PREVIEW — not a run any fellow received");
+    // An absent kind must read as legacy/production, never as blank.
+    expect(appSource).toContain("execution kind not recorded");
+  });
+});
+
 describe("the client exposes exactly the confirmed scope", () => {
   test("all six approver-only functions are wired", () => {
     for (const ref of [
@@ -119,6 +168,7 @@ describe("the client exposes exactly the confirmed scope", () => {
       "evalSets:createEvalCase",
       "evalResults:recordEvalResult",
       "reviews:approve",
+      "evidence:recordCandidatePreviewEvidence",
     ]) {
       expect(clientSource).toContain(ref);
     }
