@@ -29,6 +29,7 @@ import {
   validateRuntimeArtifactOutput,
 } from "./runtimeArtifacts.js";
 import { postProcessDraft } from "./postProcessDraft.js";
+import { TIER_SCORED, tierForCheck } from "../eval/checkTiers.js";
 import {
   LLM_GROUNDING_STATUS,
   runLlmGroundingCheck,
@@ -94,7 +95,15 @@ async function finalizeRuntimeOutput(agentId, rawOutput, sourceText, config) {
     }));
   return {
     output,
-    checkResults: [...mechanical, ...safeFindings],
+    checkResults: [
+      ...mechanical,
+      ...safeFindings.map((row) => ({
+        ...row,
+        tier: row.tier || tierForCheck(row.checkId) || TIER_SCORED,
+        status: row.status || "fail",
+        passed: row.passed === undefined ? false : row.passed,
+      })),
+    ],
     postProcessed: applied,
     llmGroundingStatus: groundingResult.status,
     ...(evidenceFindings.length

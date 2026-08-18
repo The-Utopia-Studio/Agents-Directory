@@ -8,6 +8,18 @@ import {
 import { relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { liveMarkedNonEmployerFrameFailures } from "../eval/sourceGrounding.js";
+import {
+  TIER_ADVISORY,
+  TIER_NAMED_HIT,
+  isClicheCheckId,
+  tierForCheck,
+} from "../eval/checkTiers.js";
+import {
+  ctaSignals,
+  findAllAiCliches,
+  findDelimiterKeywordRun,
+  hasClauseBreakDash,
+} from "../eval/styleDetectors.js";
 
 const ARTIFACTS_ROOT = new URL("../artifacts/", import.meta.url);
 // Declarable in artifact frontmatter. Must stay in step with KNOWN_CHECK_IDS
@@ -21,6 +33,7 @@ const RUNTIME_CHECKS = new Set([
   "about_closing_has_cta",
   "draft_has_no_em_dash",
   "draft_has_no_ai_cliche_phrase",
+  "draft_registered_ai_cliche_lemma",
 ]);
 // Length gates match success_criteria already declared on the artifact.
 // about_max_2600 / headline_max_220 mirror about_hook_max_200 (visible-text
@@ -372,39 +385,11 @@ export const HEADLINE_CHARACTER_LIMIT = 220;
 // whose CTA sits mid-text, which is the opposite of what the check is for.
 const CTA_WINDOW_PARAGRAPHS = 2;
 
-// A contact channel. Pattern-only, so no phrase needs enumerating.
-const CONTACT_CHANNEL =
-  /(?:[\w.+-]+@[\w-]+\.[\w.]{2,}|https?:\/\/\S+|\b(?:www|linkedin|calendly|substack|github)\.[\w./-]+)/i;
-
-// An imperative CTA is identified by sentence-initial POSITION of a contact
-// verb, not by matching a whole phrase. "Book a call", "Book a slot" and
-// "Book time with me" all fire on the same rule.
-const IMPERATIVE_OPENER =
-  /^(?:book|email|message|call|reach|contact|connect|send|visit|schedule|join|drop|ping|write|follow|apply|subscribe|hire|explore|start|get|say|tell)\b|^(?:let'?s\b|feel free\b)/i;
-
-// The remaining branch is lexical, bounded by the artifact's own wording:
-// "state what the fellow is open to, or how to reach out."
-const INVITATION_FRAME =
-  /\b(?:available (?:for|to)|open (?:to|for)|currently taking on|taking on new|now booking|accepting|happy to|looking to|reach out|get in touch|contact me|connect with me|(?:i )?would like to connect|email me|message me|send me|dm me|drop me|write to me|say hello|let'?s (?:connect|talk|chat)|work with me|hear from you|find me at|book a|schedule a)\b/i;
-
-const KEYWORD_RUN = /(?:([·|•])[^·|•\n]*){2,}/;
 const GENERATED_SECTIONS = Object.freeze([
   "LinkedIn About",
   "Spoken event introduction",
   "Suggested headline",
 ]);
-const EM_DASH_OR_DOUBLE_HYPHEN = /—|--/;
-const AI_CLICHE_SINGLE_TERMS = Object.freeze([
-  "utilize", "leverage", "facilitate", "innovative", "robust", "seamless",
-  "cutting-edge", "unlock", "elevate", "passionate", "synergy", "game-changer",
-  "revolutionize", "revolutionary",
-]);
-const AI_CLICHE_PHRASES = Object.freeze(["sits at the intersection of"]);
-
-function hasCompletePhrase(content, phrase) {
-  const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return new RegExp(`(?:^|[^a-z0-9])${escaped}(?=$|[^a-z0-9])`, "i").test(content);
-}
 
 /** The closing: at most the trailing two paragraphs, never more. */
 function trailingWindow(paragraphs) {
@@ -412,15 +397,25 @@ function trailingWindow(paragraphs) {
   return { text: visibleText(picked.join("\n\n")), paragraphs: picked.length };
 }
 
-function ctaSignals(windowText) {
-  const sentences = windowText
-    .split(/(?<=[.!?])\s+/)
-    .map((part) => part.trim())
-    .filter(Boolean);
+function stampLiveResult(row) {
+  const checkId = row.checkId;
+  const tier = row.tier || tierForCheck(checkId);
+  if (tier === TIER_ADVISORY) {
+    return {
+      ...row,
+      tier: TIER_ADVISORY,
+      status: "observation",
+      passed: null,
+    };
+  }
+  if (row.status === "no_hit") {
+    return { ...row, tier: TIER_NAMED_HIT, status: "no_hit", passed: null };
+  }
   return {
-    hasContactChannel: CONTACT_CHANNEL.test(windowText),
-    hasImperativeOpener: sentences.some((s) => IMPERATIVE_OPENER.test(s)),
-    hasInvitationFrame: INVITATION_FRAME.test(windowText),
+    ...row,
+    tier,
+    status: row.status || "fail",
+    passed: false,
   };
 }
 
@@ -461,10 +456,9 @@ function pushHeadlineLengthFailure(failures, checks, output) {
  * entity list). require-near relationship rules stay eval-only — they need
  * declared anchors and would fail every non-Mira live run.
  *
- * Returns one structured result per FAILED check: a closed-vocabulary id, a
- * human-readable message for the caller, and numeric/boolean facts about the
- * structure inspected. Facts exist so a parsing miss can be told apart from a
- * genuine omission; they never include matched text.
+ * Returns structured results: scored/named_hit failures, plus advisory
+ * observations (never pass/fail). Facts exist so a parsing miss can be told
+ * apart from a genuine omission; they never include matched text.
  */
 export function validateRuntimeArtifactOutput(agentId, output, options = {}) {
   const artifact = RUNTIME_ARTIFACTS[agentId];
@@ -490,7 +484,7 @@ export function validateRuntimeArtifactOutput(agentId, output, options = {}) {
     if (sourceText) {
       failures.push(...liveMarkedNonEmployerFrameFailures(output, sourceText));
     }
-    return failures;
+    return failures.map(stampLiveResult);
   }
 
   const paragraphs = about.split(/\n\s*\n/).map((part) => part.trim()).filter(Boolean);
@@ -526,70 +520,87 @@ export function validateRuntimeArtifactOutput(agentId, output, options = {}) {
   pushHeadlineLengthFailure(failures, checks, output);
 
   if (checks.includes("about_has_no_delimiter_separated_keyword_run")) {
-    const match = about.match(KEYWORD_RUN);
+    const match = findDelimiterKeywordRun(about);
     if (match) failures.push({
       checkId: "about_has_no_delimiter_separated_keyword_run",
       message: "LinkedIn About contains a delimiter-separated keyword run",
       section: "LinkedIn About",
       sectionFound: true,
       paragraphCount: paragraphs.length,
-      delimiter: match[1],
-      segmentCount: match[0].split(match[1]).filter(Boolean).length,
+      delimiter: match.delimiter,
+      segmentCount: match.segmentCount,
     });
   }
 
   if (checks.includes("about_closing_has_cta")) {
     const window = trailingWindow(paragraphs);
     const signals = ctaSignals(window.text);
-    if (!signals.hasContactChannel && !signals.hasImperativeOpener && !signals.hasInvitationFrame) {
-      failures.push({
-        checkId: "about_closing_has_cta",
-        // Detector language, not a verdict on the draft. No detector firing is
-        // evidence to look, not proof the model omitted a CTA.
-        message:
-          "No CTA detected in the closing of the LinkedIn About (trailing two paragraphs)",
-        sectionFound: true,
-        paragraphCount: paragraphs.length,
-        windowParagraphs: window.paragraphs,
-        windowChars: window.text.length,
-        ...signals,
-      });
-    }
+    const fired =
+      signals.hasContactChannel ||
+      signals.hasImperativeOpener ||
+      signals.hasInvitationFrame;
+    failures.push({
+      checkId: "about_closing_has_cta",
+      tier: TIER_ADVISORY,
+      status: "observation",
+      passed: null,
+      message: fired
+        ? "Advisory CTA heuristic fired in the closing. This is not a scored pass."
+        : "Advisory: no CTA heuristic fired in the LinkedIn About closing (trailing two paragraphs). This is not a scored fail.",
+      sectionFound: true,
+      paragraphCount: paragraphs.length,
+      windowParagraphs: window.paragraphs,
+      windowChars: window.text.length,
+      ...signals,
+    });
   }
 
   if (checks.includes("draft_has_no_em_dash")) {
     for (const section of GENERATED_SECTIONS) {
       const content = section === "LinkedIn About" ? about : markdownSection(output, section);
-      if (content && EM_DASH_OR_DOUBLE_HYPHEN.test(content)) failures.push({
+      if (content && hasClauseBreakDash(content)) failures.push({
         checkId: "draft_has_no_em_dash",
-        message: `${section} contains an em dash or double-hyphen substitute`,
+        message: `${section} contains a dash used as a clause break (em dash, en dash, horizontal bar, double hyphen, or spaced hyphen)`,
         section,
         sectionFound: true,
       });
     }
   }
 
-  if (checks.includes("draft_has_no_ai_cliche_phrase")) {
+  for (const checkId of checks.filter(isClicheCheckId)) {
+    // Every hit across every section, not the first. The count is the signal
+    // the maker prioritises on; stopping early made four cliches look like one.
+    const hits = [];
     for (const section of GENERATED_SECTIONS) {
       const content = section === "LinkedIn About" ? about : markdownSection(output, section);
-      const containsRegisteredCliche = content && [
-        ...AI_CLICHE_SINGLE_TERMS,
-        ...AI_CLICHE_PHRASES,
-      ].some((phrase) => hasCompletePhrase(content, phrase));
-      if (containsRegisteredCliche) failures.push({
-        checkId: "draft_has_no_ai_cliche_phrase",
-        message: `${section} contains a registered AI cliche term or phrase`,
-        section,
-        sectionFound: true,
-      });
+      if (!content) continue;
+      for (const hit of findAllAiCliches(content)) {
+        hits.push({ section, registeredPhrase: hit.registeredPhrase });
+      }
     }
+    if (!hits.length) continue;
+    const lemmas = [...new Set(hits.map((h) => h.registeredPhrase))];
+    failures.push({
+      checkId,
+      tier: TIER_NAMED_HIT,
+      status: "fail",
+      passed: false,
+      message:
+        `${hits.length} registered AI cliche hit${hits.length === 1 ? "" : "s"} ` +
+        `across ${new Set(hits.map((h) => h.section)).size} section(s): ${lemmas.join(", ")}`,
+      section: hits[0].section,
+      sectionFound: true,
+      registeredPhrase: hits[0].registeredPhrase,
+      hitCount: hits.length,
+      registeredPhrases: lemmas,
+    });
   }
 
   if (sourceText) {
     failures.push(...liveMarkedNonEmployerFrameFailures(output, sourceText));
   }
 
-  return failures;
+  return failures.map(stampLiveResult);
 }
 
 /** Public contract: stable keys, labels, and the inputs this mode cannot read. */

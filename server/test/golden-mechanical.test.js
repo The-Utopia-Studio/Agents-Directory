@@ -40,7 +40,8 @@ test("v5-vs-v6 mechanical delta on Mira canned output (no paid run)", () => {
   // v5 declared set cannot see em dash / cliché — those ids are absent.
   assert.equal(v5.failed.includes("draft_has_no_em_dash"), false);
   assert.equal(v5.failed.includes("draft_has_no_ai_cliche_phrase"), false);
-  assert.ok(v5.failed.includes("about_closing_has_cta"));
+  assert.ok(v5.observations?.includes("about_closing_has_cta"));
+  assert.equal(v5.failed.includes("about_closing_has_cta"), false);
   // Historical keyword-run runner is registered and scoreable (option a).
   assert.ok(
     v5.checkResults.some(
@@ -70,7 +71,12 @@ test("v5-vs-v6 mechanical delta on Mira canned output (no paid run)", () => {
   // v6 surfaces the style traps v5's declared set missed.
   assert.ok(v6.failed.includes("draft_has_no_em_dash"));
   assert.ok(v6.failed.includes("draft_has_no_ai_cliche_phrase"));
-  assert.ok(v6.failed.includes("about_closing_has_cta"));
+  assert.equal(v6.failed.includes("about_closing_has_cta"), false);
+  assert.ok(v6.observations?.includes("about_closing_has_cta"));
+  const cta = v6.checkResults.find((c) => c.checkId === "about_closing_has_cta");
+  assert.equal(cta.status, "observation");
+  assert.equal(cta.passed, null);
+  assert.equal(cta.tier, "advisory");
 
   const em = compare.changed.find((c) => c.checkId === "draft_has_no_em_dash");
   const cliche = compare.changed.find(

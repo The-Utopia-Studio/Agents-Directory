@@ -26,7 +26,7 @@ test("postProcessDraft strips em dashes and banned terms", () => {
   assert.equal(output.includes("utilize"), false);
   assert.equal(output.includes("!"), false);
   assert.ok(applied.includes("draft_has_no_em_dash"));
-  assert.ok(applied.includes("draft_has_no_ai_cliche_phrase"));
+  assert.ok(applied.includes("draft_registered_ai_cliche_lemma"));
 });
 
 test("maker collectDefects ignores post-processed check ids", () => {

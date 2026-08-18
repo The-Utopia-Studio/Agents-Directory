@@ -1,0 +1,14 @@
+{
+  "id": "04-clean-designer",
+  "class": "clean",
+  "notes": "Clean designer bio. Closing is an explicit message-me plus email.",
+  "expected": {
+    "about_hook_max_200_characters": "PASS",
+    "about_max_2600_characters": "PASS",
+    "headline_max_220_characters": "PASS",
+    "about_has_no_delimiter_separated_keyword_run": "PASS",
+    "about_closing_has_cta": "OBSERVATION",
+    "draft_has_no_em_dash": "PASS",
+    "draft_registered_ai_cliche_lemma": "NO_HIT"
+  }
+}

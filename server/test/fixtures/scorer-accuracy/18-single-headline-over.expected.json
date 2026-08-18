@@ -1,0 +1,14 @@
+{
+  "id": "18-single-headline-over",
+  "class": "single-defect",
+  "notes": "Suggested headline is 221 visible characters, one over the 220 limit. Other checks remain clean.",
+  "expected": {
+    "about_hook_max_200_characters": "PASS",
+    "about_max_2600_characters": "PASS",
+    "headline_max_220_characters": "FAIL",
+    "about_has_no_delimiter_separated_keyword_run": "PASS",
+    "about_closing_has_cta": "OBSERVATION",
+    "draft_has_no_em_dash": "PASS",
+    "draft_registered_ai_cliche_lemma": "NO_HIT"
+  }
+}

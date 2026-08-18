@@ -1368,25 +1368,11 @@ function slug(s){return String(s).toLowerCase().replace(/[^a-z0-9]+/g,"-").repla
 // view. The run form is built from this, never from the editable inputs[]
 // labels on the record — renaming a label must not break the run.
 const runCapabilities={};
-const GOVERNED_RUNTIME_MISMATCH="Runtime version does not match the governed version. Deployment or approval is incomplete.";
-function capabilityIdentityMatches(a,capability){
-  const governance=a&&a.convexGovernance;
-  if(!governance)return false;
-  if(hasUsabilityMode(a,"hosted-run")||canInstall(a)){
-    const expected=governance.artifact;
-    const actual=capability&&capability.installArtifact;
-    if(!governance.isCurrentApproved||!expected||!actual||actual.available!==true)return false;
-    if(actual.artifactVersion!==a.version)return false;
-    if(actual.artifactDigestAlgorithm!==expected.algorithm)return false;
-    if(actual.artifactDigest!==expected.digest)return false;
-  }
-  if(canHandoff(a)){
-    const expected=governance.sourcePin;
-    const actual=capability&&capability.handoff;
-    if(!expected||!actual||actual.available!==true)return false;
-    if(actual.commitSha!==expected.commitSha||actual.repoUrl!==expected.repoUrl)return false;
-  }
-  return true;
+function governedRuntimeRefused(capability){
+  return Boolean(capability&&capability.governedRuntime&&capability.governedRuntime.matched===false);
+}
+function governedRuntimeReason(capability){
+  return (capability&&capability.governedRuntime&&capability.governedRuntime.reason)||"GOVERNED_RUNTIME_MISMATCH";
 }
 async function loadRunCapability(id){
   const a=agents.find(x=>x.id===id),slot=document.getElementById("run-action"),installSlot=document.getElementById("install-actions"),handoffSlot=document.getElementById("handoff-actions");
@@ -1405,12 +1391,11 @@ async function loadRunCapability(id){
   }
   try{
     const capability=await DirectoryAPI.invocationCapability(id);
-    if(!capabilityIdentityMatches(a,capability)){
+    if(governedRuntimeRefused(capability)){
       delete runCapabilities[id];
-      showCapabilityFailure(a,{slot,installSlot,handoffSlot},GOVERNED_RUNTIME_MISMATCH);
+      showCapabilityFailure(a,{slot,installSlot,handoffSlot},governedRuntimeReason(capability));
       return;
     }
-    capability.governedIdentityMatched=true;
     runCapabilities[id]=capability;
     if(slot&&hasUsabilityMode(a,"hosted-run")){
       if(capability.serverRun&&capability.artifactAvailable&&capability.configured&&capability.runnable)slot.innerHTML=`<button class="btn btn-sm btn-primary" onclick="toggleRun('${id}')">&#9654; ${capability.mode==="single-shot"?"Run single-shot draft":capability.mode==="gap-fill"?"Run gap-fill draft":"Run here"}</button>`;
@@ -1471,14 +1456,14 @@ function buildAgentPrompt(a){
 function copyText(text,msg){(navigator.clipboard&&navigator.clipboard.writeText?navigator.clipboard.writeText(text):Promise.reject()).then(()=>toast(msg)).catch(()=>{const ta=document.createElement("textarea");ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand("copy");toast(msg)}catch(e){toast("Copy failed")}ta.remove()})}
 function copyAgentPrompt(id){const a=agents.find(x=>x.id===id);if(a)copyText(buildAgentPrompt(a),"Summary copied — a description of this record, not the agent")}
 async function copyHandoffBriefing(id){
-  if(runCapabilities[id]?.governedIdentityMatched!==true){toast(GOVERNED_RUNTIME_MISMATCH);return}
+  if(governedRuntimeRefused(runCapabilities[id])){toast(governedRuntimeReason(runCapabilities[id]));return}
   try{
     const brief=await DirectoryAPI.handoffBriefing(id);
     copyText(brief.content,`Engagement brief copied · ${brief.briefVersion} · commit ${String(brief.commitSha).slice(0,7)}`);
   }catch(e){toast(`Briefing unavailable: ${String(e.message||e)}`)}
 }
 async function copyInstallSkill(id){
-  if(runCapabilities[id]?.governedIdentityMatched!==true){toast(GOVERNED_RUNTIME_MISMATCH);return}
+  if(governedRuntimeRefused(runCapabilities[id])){toast(governedRuntimeReason(runCapabilities[id]));return}
   try{
     const artifact=await DirectoryAPI.installSkill(id);
     const modeWord=runtimeModeLabel(runCapabilities[id]?.mode||artifact.mode);
@@ -1486,7 +1471,7 @@ async function copyInstallSkill(id){
   }catch(e){toast(`Install export failed: ${String(e.message||e)}`)}
 }
 async function downloadInstallArtifact(id){
-  if(runCapabilities[id]?.governedIdentityMatched!==true){toast(GOVERNED_RUNTIME_MISMATCH);return}
+  if(governedRuntimeRefused(runCapabilities[id])){toast(governedRuntimeReason(runCapabilities[id]));return}
   try{
     const artifact=await DirectoryAPI.downloadInstallArtifact(id);
     const url=URL.createObjectURL(artifact.blob),a=document.createElement("a");
@@ -1518,12 +1503,17 @@ function renderRunResult(id,r){
   const banner=failed?`<div class="run-checks-failed"><div class="run-checks-title">&#9888; ${r.checkFailures.length} check${r.checkFailures.length===1?"":"s"} did not pass — review before shipping</div><ul>${r.checkFailures.map(c=>{
     const msg=c.message||c.why||"";
     const kind=c.claimKind?` · ${escHtml(c.claimKind)}`:"";
-    return`<li><code>${escHtml(c.checkId)}</code>${kind}${msg?` — ${escHtml(msg)}`:""}</li>`;
+    const tier=c.tier?` <span class="mech-tier">${escHtml(c.tier)}</span>`:"";
+    return`<li><code>${escHtml(c.checkId)}</code>${tier}${kind}${msg?` — ${escHtml(msg)}`:""}</li>`;
   }).join("")}</ul><div class="run-checks-note">The output below was still generated and billed. A check can be wrong about a correct draft — if that is what happened, say so in the notes.</div></div>`:"";
+  const observations=(r.observations||[]).length?`<div class="run-observations"><div class="run-checks-title">Observations (advisory — not pass/fail)</div><ul>${r.observations.map(c=>{
+    const msg=c.message||c.why||"";
+    return`<li><code>${escHtml(c.checkId)}</code> <span class="mech-tier">advisory</span>${msg?` — ${escHtml(msg)}`:""}</li>`;
+  }).join("")}</ul></div>`:"";
   const groundingBanner=groundingUnavailable?`<div class="run-grounding-unavailable"><div class="run-checks-title">&#9888; Grounding check unavailable for this run</div><div class="run-checks-note">${escHtml(r.groundingNotice||"Truthfulness was not verified for this draft. Do not treat this run as grounded.")}</div></div>`:"";
   const callMeta=typeof r.callCount==="number"?` · ${r.callCount} call${r.callCount===1?"":"s"}`:"";
   const headLabel=failed?"Output (failed checks)":groundingUnavailable?"Output (grounding not verified)":"Output";
-  box.innerHTML=`<div class="run-result${failed||groundingUnavailable?" run-result-failed":""}">${banner}${groundingBanner}<div class="run-result-head">${headLabel} <span class="run-via">via ${escHtml(runModeLabel(r.mode)||r.via)}${callMeta}</span> ${r.tracePersisted&&r.traceId?`<span class="run-trace">&#10003; metadata trace ${escHtml(r.traceId)} recorded</span>`:`<span class="run-via">trace not persisted</span>`}</div><pre>${escHtml(r.output)}</pre>${feedback}</div>`;
+  box.innerHTML=`<div class="run-result${failed||groundingUnavailable?" run-result-failed":""}">${banner}${observations}${groundingBanner}<div class="run-result-head">${headLabel} <span class="run-via">via ${escHtml(runModeLabel(r.mode)||r.via)}${callMeta}</span> ${r.tracePersisted&&r.traceId?`<span class="run-trace">&#10003; metadata trace ${escHtml(r.traceId)} recorded</span>`:`<span class="run-via">trace not persisted</span>`}</div><pre>${escHtml(r.output)}</pre>${feedback}</div>`;
 }
 function renderGapFillForm(id,state){
   const panel=document.getElementById("run-panel");
@@ -1548,9 +1538,58 @@ function toggleRun(id){
   }
   box.innerHTML=`<div class="run-form">${unsupported}${fields}<button class="btn btn-sm btn-primary" onclick="runAgentUI('${id}')">Run &#9654;</button></div><div id="run-out" class="run-out"></div>`;
 }
+/**
+ * Record that this human witnessed a hosted run.
+ *
+ * Written ONLY when output actually reached the browser. A failed run, a 409
+ * from the digest gate, a needs_input pause, or a thrown request writes
+ * nothing — the row asserts a human saw output, and with no output there is
+ * nothing to assert.
+ *
+ * The digest recorded is the one the run REPORTS HAVING SERVED
+ * (result.artifactDigest), never runCapabilities' expected pin. If those two
+ * ever disagree the served one is the truth, and attesting to the other would
+ * be attesting to bytes that did not run.
+ *
+ * Failure to record is surfaced, never swallowed: the run still succeeded, but
+ * the human must know no evidence was captured or they will believe the
+ * promotion gate has something it does not.
+ */
+async function recordWitnessedRun(id, result){
+  if(!result||typeof result!=="object")return null;
+  // Output must have reached the browser.
+  const output=typeof result.output==="string"?result.output:"";
+  if(!output.trim())return null;
+  if(result.status!=="ok"&&result.status!=="fail")return null;
+  if(result.status==="needs_input")return null;
+  // The served digest, from the run itself.
+  const servedDigest=String(result.artifactDigest||"").trim();
+  if(!/^[a-f0-9]{64}$/i.test(servedDigest))return{recorded:false,reason:"the run reported no served artifact digest"};
+  if(!ConvexDirectory||!ConvexDirectory.enabled||!ConvexDirectory.recordVerifiedHumanRunEvidence){
+    return{recorded:false,reason:"Convex directory is not configured in this browser session"};
+  }
+  try{
+    const evidenceId=await ConvexDirectory.recordVerifiedHumanRunEvidence({
+      displayId:id,
+      artifactDigest:servedDigest,
+    });
+    return{recorded:true,evidenceId,servedDigest};
+  }catch(e){
+    return{recorded:false,reason:String(e&&e.message?e.message:e)};
+  }
+}
+
+function renderWitnessNotice(witness){
+  if(!witness)return"";
+  if(witness.recorded){
+    return`<div class="run-witness">Run evidence recorded against served digest <code>${escHtml(String(witness.servedDigest).slice(0,12))}</code>. This is not an eval result — promotion additionally requires one, recorded separately.</div>`;
+  }
+  return`<div class="run-witness run-witness-err">Run succeeded but no evidence was recorded: ${escHtml(witness.reason||"unknown reason")}. The promotion gate has nothing from this run.</div>`;
+}
+
 async function runAgentUI(id){
   const box=document.getElementById("run-out");if(!box)return;
-  if(runCapabilities[id]?.governedIdentityMatched!==true){box.innerHTML=`<div class="run-status run-err">${escHtml(GOVERNED_RUNTIME_MISMATCH)}</div>`;return}
+  if(governedRuntimeRefused(runCapabilities[id])){box.innerHTML=`<div class="run-status run-err">${escHtml(governedRuntimeReason(runCapabilities[id]))}</div>`;return}
   const inputs={};document.querySelectorAll("#run-panel [data-k]").forEach(el=>{if(el.value.trim())inputs[el.getAttribute("data-k")]=el.value.trim()});
   box.innerHTML='<div class="run-status">Running…</div>';
   try{
@@ -1567,12 +1606,16 @@ async function runAgentUI(id){
     }
     gapFillState=null;
     renderRunResult(id,r);
+    // Only after output reached the browser. A throw above (including the
+    // digest gate's 409) never reaches this line.
+    const witness=await recordWitnessedRun(id,r);
+    if(witness){const el=document.getElementById("run-out");if(el)el.insertAdjacentHTML("beforeend",renderWitnessNotice(witness));}
   }catch(e){box.innerHTML=`<div class="run-status run-err">Run failed: ${escHtml(String(e.message||e))}${e.tracePersisted&&e.traceId?`<div>Error trace ${escHtml(e.traceId)} recorded.</div>`:`<div>Error trace persistence is disabled.</div>`}</div>`}
 }
 async function continueGapFillUI(id){
   if(!gapFillState)return;
   const box=document.getElementById("run-out");if(!box)return;
-  if(runCapabilities[id]?.governedIdentityMatched!==true){box.innerHTML=`<div class="run-status run-err">${escHtml(GOVERNED_RUNTIME_MISMATCH)}</div>`;return}
+  if(governedRuntimeRefused(runCapabilities[id])){box.innerHTML=`<div class="run-status run-err">${escHtml(governedRuntimeReason(runCapabilities[id]))}</div>`;return}
   const gapAnswers={};
   document.querySelectorAll("#run-panel [data-gap-id]").forEach(el=>{
     const v=el.value.trim();
@@ -1595,6 +1638,10 @@ async function continueGapFillUI(id){
     }
     gapFillState=null;
     renderRunResult(id,r);
+    // The gap-fill completion is the other way output reaches the browser.
+    // Same rule, same served digest — a human saw a draft either way.
+    const witness=await recordWitnessedRun(id,r);
+    if(witness){const el=document.getElementById("run-out");if(el)el.insertAdjacentHTML("beforeend",renderWitnessNotice(witness));}
   }catch(e){box.innerHTML=`<div class="run-status run-err">Run failed: ${escHtml(String(e.message||e))}${e.tracePersisted&&e.traceId?`<div>Error trace ${escHtml(e.traceId)} recorded.</div>`:`<div>Error trace persistence is disabled.</div>`}</div>`}
 }
 
@@ -1738,10 +1785,12 @@ function mechSideFromStoredRecord(rec,outputSource){
     checkSetId:rec.checkSetId||null,
     checkSetVersion:rec.checkSetVersion||null,
     rulerVersion:rec.rulerVersion||null,
-    mechanicalCheckScore:rec.mechanicalCheckScore,
-    scoreableCount:rec.scoreableCount,
+    groundingPassRate:mechGroundingPassRate(rec),
+    groundingScoreableCount:mechGroundingScoreableCount(rec),
+    groundingBasisCheckIds:rec.groundingBasisCheckIds||rec.byCategory?.grounding?.basisCheckIds||null,
     stylePassRate:rec.stylePassRate,
     styleScoreableCount:rec.styleScoreableCount,
+    styleBasisCheckIds:rec.styleBasisCheckIds||rec.byCategory?.style?.basisCheckIds||null,
     byCategory:rec.byCategory
       ?{
           grounding:rec.byCategory.grounding?{...rec.byCategory.grounding}:null,
@@ -1794,8 +1843,30 @@ function mechGroundingMeasured(side){
 }
 
 /**
+ * Grounding pass rate off a score row. `mechanicalCheckScore` is the historical
+ * key for this number — nothing writes it any more, but rows persisted before
+ * the rename still carry it, so a read falls back rather than rendering real
+ * history as "not measured". There is deliberately no combined quality number:
+ * grounding and style are separate rates and must be shown as such.
+ */
+function mechGroundingPassRate(row){
+  if(!row||typeof row!=="object")return null;
+  if(typeof row.groundingPassRate==="number")return row.groundingPassRate;
+  if(typeof row.byCategory?.grounding?.passRate==="number")return row.byCategory.grounding.passRate;
+  if(typeof row.mechanicalCheckScore==="number")return row.mechanicalCheckScore;
+  return null;
+}
+function mechGroundingScoreableCount(row){
+  if(!row||typeof row!=="object")return null;
+  if(typeof row.groundingScoreableCount==="number")return row.groundingScoreableCount;
+  if(typeof row.byCategory?.grounding?.scoreableCount==="number")return row.byCategory.grounding.scoreableCount;
+  if(typeof row.scoreableCount==="number")return row.scoreableCount;
+  return null;
+}
+
+/**
  * Grounding Δ only when both sides have a real grounding measurement.
- * Never invent a delta from mechanicalCheckScore when the UI would say
+ * Never invent a delta from a grounding pass rate when the UI would say
  * "not yet checked".
  */
 function mechGroundingDeltaFromSides(left,right){
@@ -1964,7 +2035,7 @@ function reconstructMechPayloadFromStored(rows){
             :{}),
           outputQualityComparable:false,
           scoreDelta,
-          mechanicalCheckScoreDelta:scoreDelta,
+          groundingPassRateDelta:scoreDelta,
           left,
           right,
           changed:left.legacyIncomplete||right.legacyIncomplete?[]:mechChangedFromSides(left,right),
@@ -2004,7 +2075,7 @@ function reconstructMechPayloadFromStored(rows){
         answersDidImprovementHelp:outputSource==="live",
         findingKind:outputSource==="live"?"prompt_comparison":"plumbing_verification",
         scoreDelta,
-        mechanicalCheckScoreDelta:scoreDelta,
+        groundingPassRateDelta:scoreDelta,
         promotionEligible:outputSource==="live"&&scoreDelta.comparable===true,
         promotionEligibility:outputSource==="live"
           ?(scoreDelta.comparable
@@ -2059,10 +2130,12 @@ function reconstructMechPayloadFromStored(rows){
       artifactVersion:singleSide.artifactVersion,
       artifactDigest:singleSide.artifactDigest,
       checkSetVersion:singleSide.checkSetVersion,
-      mechanicalCheckScore:singleSide.mechanicalCheckScore,
-      scoreableCount:singleSide.scoreableCount,
+      groundingPassRate:mechGroundingPassRate(singleSide),
+      groundingScoreableCount:mechGroundingScoreableCount(singleSide),
+      groundingBasisCheckIds:singleSide.groundingBasisCheckIds||singleSide.byCategory?.grounding?.basisCheckIds||null,
       stylePassRate:singleSide.stylePassRate,
       styleScoreableCount:singleSide.styleScoreableCount,
+      styleBasisCheckIds:singleSide.styleBasisCheckIds||singleSide.byCategory?.style?.basisCheckIds||null,
       byCategory:singleSide.byCategory,
       passed:singleSide.passed,
       failed:singleSide.failed,
@@ -2089,7 +2162,7 @@ function showMechResult(agentId,payload,{persist=false,markRestored=false}={}){
   if(payload.kind==="compare"&&payload.result){
     const safe=mechGroundingDeltaFromSides(payload.result.left,payload.result.right);
     const claimed=mechNormalizeScoreDelta(
-      payload.result.scoreDelta||payload.result.mechanicalCheckScoreDelta
+      payload.result.scoreDelta||payload.result.groundingPassRateDelta||payload.result.mechanicalCheckScoreDelta
     );
     // Never keep a numeric Δ when grounding wasn't measured on both sides.
     if(!safe.comparable&&claimed.comparable){
@@ -2098,7 +2171,7 @@ function showMechResult(agentId,payload,{persist=false,markRestored=false}={}){
         result:{
           ...payload.result,
           scoreDelta:safe,
-          mechanicalCheckScoreDelta:safe,
+          groundingPassRateDelta:safe,
           promotionEligible:false,
           promotionEligibility:{eligible:false,reason:safe.reason},
         },
@@ -2324,7 +2397,7 @@ function renderPromotionEligibilityNote(r){
   if(elig.eligible){
     return`<div class="mech-promotion-elig mech-promotion-elig-ok"><strong>Promotion evidence:</strong> live comparable delta — may support a promotion decision (human approval still required).</div>`;
   }
-  const delta=mechNormalizeScoreDelta(r.scoreDelta||r.mechanicalCheckScoreDelta);
+  const delta=mechNormalizeScoreDelta(r.scoreDelta||r.groundingPassRateDelta||r.mechanicalCheckScoreDelta);
   const comparable=delta.comparable===true;
   if(comparable&&r.outputSource==="canned"){
     return`<div class="mech-promotion-elig mech-promotion-elig-block"><strong>Comparable, not promotable.</strong> ${escHtml(elig.reason||'Delta is real; outputSource is "canned" so it cannot support promotion.')}</div>`;
@@ -2355,7 +2428,7 @@ function renderMechQualityDeltaChip(delta,{allowDirection=true}={}){
 }
 
 function renderMechQualityRefusedTile(r){
-  const d=mechNormalizeScoreDelta(r.scoreDelta||r.mechanicalCheckScoreDelta);
+  const d=mechNormalizeScoreDelta(r.scoreDelta||r.groundingPassRateDelta||r.mechanicalCheckScoreDelta);
   const reason=d.reason||r.checkSetNote||"not comparable";
   return`<div class="mech-quality-tile" title="${escAttr(r.checkSetNote||r.interpretation||"Coverage experiment — no output-quality delta.")}">
     <div class="mech-quality-tile-label">Quality delta</div>
@@ -2382,15 +2455,18 @@ function renderMechCheckTable(left,right,leftLabel,rightLabel){
   if(!ids.length)return"";
   const statusOf=(side,id)=>{
     const row=(side?.checkResults||[]).find(r=>(r.id||r.checkId)===id);
-    if(!row)return{text:"absent",passFail:null,historical:false,category:null,why:null};
+    if(!row)return{text:"absent",passFail:null,historical:false,category:null,why:null,tier:null};
     const hist=row.historicalImplementation;
     const cat=row.category||null;
+    const tier=row.tier||null;
+    const status=row.status||(row.passed===true?"pass":row.passed===false?"fail":null);
     return{
-      text:hist?`${row.status} · historical`:row.status,
-      passFail:row.status,
+      text:[status,tier?`tier:${tier}`:null,hist?"historical":null].filter(Boolean).join(" · "),
+      passFail:status,
       historical:!!hist,
       category:cat,
       why:row.why||null,
+      tier,
     };
   };
   const cell=(side,id)=>{
@@ -2400,7 +2476,9 @@ function renderMechCheckTable(left,right,leftLabel,rightLabel){
     if(s.why)tips.push(s.why);
     const tip=tips.length?` title="${escAttr(tips.join(" "))}"`:"";
     let cls="";
-    if(s.passFail==="pass")cls="mech-status-pass";
+    if(s.passFail==="observation"||s.tier==="advisory")cls="mech-status-observation";
+    else if(s.passFail==="no_hit"||s.tier==="named_hit"&&s.passFail!=="fail")cls="mech-status-named-hit";
+    else if(s.passFail==="pass")cls="mech-status-pass";
     else if(s.passFail==="fail"&&s.category==="grounding")cls="mech-status-fail-grounding";
     else if(s.passFail==="fail")cls="mech-status-fail-style";
     return`<td class="${cls}"${tip}>${escHtml(s.text)}${s.category?` <span class="mech-cat-tag mech-cat-${escHtml(s.category)}">${escHtml(s.category)}</span>`:""}</td>`;
@@ -2467,10 +2545,13 @@ function renderMechanicalScoreResult(r){
     const histLabel=hist?" · historical":"";
     const cat=row.category||"";
     let cls="";
-    if(row.status==="pass"||row.passed===true)cls="mech-status-pass";
+    if(row.status==="observation"||row.tier==="advisory")cls="mech-status-observation";
+    else if(row.status==="no_hit")cls="mech-status-named-hit";
+    else if(row.status==="pass"||row.passed===true)cls="mech-status-pass";
     else if((row.status==="fail"||row.passed===false)&&cat==="grounding")cls="mech-status-fail-grounding";
     else if(row.status==="fail"||row.passed===false)cls="mech-status-fail-style";
-    return `<tr><td><code>${escHtml(row.id||row.checkId)}</code>${cat?` <span class="mech-cat-tag mech-cat-${escHtml(cat)}">${escHtml(cat)}</span>`:""}${row.family?` <span class="mech-fam">${escHtml(row.family)}</span>`:""}</td><td class="${cls}"${tip}>${escHtml(row.status||"")}${escHtml(histLabel)}${row.why?`<div class="mech-why">${escHtml(row.why)}</div>`:""}</td></tr>`;
+    const tier=row.tier?` <span class="mech-tier">${escHtml(row.tier)}</span>`:"";
+    return `<tr><td><code>${escHtml(row.id||row.checkId)}</code>${tier}${cat?` <span class="mech-cat-tag mech-cat-${escHtml(cat)}">${escHtml(cat)}</span>`:""}${row.family?` <span class="mech-fam">${escHtml(row.family)}</span>`:""}</td><td class="${cls}"${tip}>${escHtml(row.status||"")}${escHtml(histLabel)}${row.why?`<div class="mech-why">${escHtml(row.why)}</div>`:""}</td></tr>`;
   }).join("");
   return `${renderMechHeadlineCard(r,src)}
     <div class="mech-caption">Single-version score · ${escHtml(src==="unknown"?"output source not yet checked":src+" outputs")} · grounding headline · style separate</div>
@@ -2485,7 +2566,7 @@ function renderMechanicalCompareResult(r){
   if(r.experiment==="check_coverage"){
     const left={...r.left,outputSource:r.outputSource};
     const right={...r.right,outputSource:r.outputSource};
-    const delta=mechNormalizeScoreDelta(r.scoreDelta||r.mechanicalCheckScoreDelta);
+    const delta=mechNormalizeScoreDelta(r.scoreDelta||r.groundingPassRateDelta||r.mechanicalCheckScoreDelta);
     const tooltip=[
       r.interpretation,
       delta.comparable===false?delta.reason:r.checkSetNote,
@@ -2502,7 +2583,7 @@ function renderMechanicalCompareResult(r){
       ${renderMechChecksDisclosure(left,right,left.artifactVersion,right.artifactVersion)}`;
   }
   if(r.experiment==="output_quality"){
-    const delta=r.scoreDelta||r.mechanicalCheckScoreDelta;
+    const delta=r.scoreDelta||r.groundingPassRateDelta||r.mechanicalCheckScoreDelta;
     const isFinding=r.answersDidImprovementHelp===true&&r.findingKind==="prompt_comparison";
     const tooltip=isFinding
       ?`Experiment B live · ruler ${r.rulerVersion||""}. Same check set scores two prompt runs. Higher grounding rate is better. May answer whether the prompt change helped.`

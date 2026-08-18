@@ -51,7 +51,7 @@ test("clear mechanical results requires approver + reason and reports deletions"
   await store.append("mechanicalResults", {
     agentId: "A7",
     ts: "2026-08-01T00:00:00.000Z",
-    artifactVersion: "biocraft-singleshot-v9",
+    artifactVersion: "biocraft-singleshot-v10",
     checkSetId: "cs1",
     outputSource: "live",
     provider: "openai",
