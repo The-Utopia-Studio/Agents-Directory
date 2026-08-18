@@ -4,7 +4,6 @@
 // the maker refused with 422 on an agent that had genuinely failed runs.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { getRuntimeArtifactDescriptor } from "../src/invoke/runtimeArtifacts.js";
 import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -60,9 +59,6 @@ test("a check failure is status fail, not error, and keeps the check id", async 
       agentId: "A7",
       status: "fail",
       source: "real",
-      artifactVersion: getRuntimeArtifactDescriptor("A7").artifactVersion,
-      artifactDigest: getRuntimeArtifactDescriptor("A7").artifactDigest,
-      outputSource: "live",
       failureReason: "about_closing_has_cta",
       checkResults: [FAILED_CHECK],
       inputTokens: 900,
@@ -104,9 +100,6 @@ test("a check failure reaches the maker, which refuses an ambiguous edit", async
       agentId: "A7",
       status: "fail",
       source: "real",
-      artifactVersion: getRuntimeArtifactDescriptor("A7").artifactVersion,
-      artifactDigest: getRuntimeArtifactDescriptor("A7").artifactDigest,
-      outputSource: "live",
       failureReason: "about_closing_has_cta",
       checkResults: [FAILED_CHECK],
       metadata: { via: "runtime", mode: "single-shot" },
@@ -123,16 +116,12 @@ test("a check failure reaches the maker, which refuses an ambiguous edit", async
 
   // Check-id failureReasons are first-class defects. The maker proposes a
   // prompt strengthening change keyed by the same id the scorer emitted.
-  // The check id still reaches the maker as a signal (asserted above), but an
-  // advisory observation is not a defect and the gate refuses to propose on it.
-  await assert.rejects(
-    () => svc.runImprovement("A7"),
-    (error) => {
-      assert.equal(error.status, 422);
-      assert.equal(error.code, "MAKER_ADVISORY_ONLY");
-      return true;
-    },
-  );
+  const proposals = await svc.runImprovement("A7");
+  assert.equal(proposals.length, 1);
+  assert.equal(proposals[0].defectKey, "about_closing_has_cta");
+  assert.equal(proposals[0].defectCategory, "style");
+  assert.match(proposals[0].defectDescription, /call to action/i);
+  assert.equal(proposals[0].changes[0].surface, "prompt");
 });
 
 test("the trace boundary is a closed vocabulary, not a shape check", () => {
@@ -142,8 +131,8 @@ test("the trace boundary is a closed vocabulary, not a shape check", () => {
     "about_closing_has_cta",
   );
   assert.equal(
-    sanitizeFailureReason("about_closing_has_cta, empty_output"),
-    "about_closing_has_cta, empty_output",
+    sanitizeFailureReason("about_hook_max_200_characters, empty_output"),
+    "about_hook_max_200_characters, empty_output",
   );
 
   // Anything that could carry model output or a fellow's details does not.
@@ -198,9 +187,9 @@ test("a fail without surviving check ids records uncategorized_failure", async (
     { failureReason: null, checkResults: [] },
   );
   assert.equal(
-    ensureFailureCause("fail", null, [{ checkId: "about_closing_has_cta" }])
+    ensureFailureCause("fail", null, [{ checkId: "draft_has_no_em_dash" }])
       .failureReason,
-    "about_closing_has_cta",
+    "draft_has_no_em_dash",
   );
 });
 

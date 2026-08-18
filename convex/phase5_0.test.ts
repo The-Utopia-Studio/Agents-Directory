@@ -3,7 +3,6 @@ import { convexTest } from "convex-test";
 import { describe, expect, test } from "vitest";
 import { api } from "./_generated/api";
 import { APPROVED_IMPORT_MANIFEST_DIGEST } from "./importSpec";
-import { approveWithPromotionEval } from "./lib/seedPromotionEval";
 import schema from "./schema";
 import { modules } from "./test.setup";
 
@@ -130,7 +129,10 @@ describe("Phase 5.0 authority contracts", () => {
   test("unassigned imported agents are approver-editable only and an artifact-backed contract cannot drift", async () => {
     const base = convexTest(schema, modules);
     const imported = await importedA7A8(base.withIdentity(approver));
-    await approveWithPromotionEval(base.withIdentity(approver), imported.A7.proposalId);
+    await base.withIdentity(approver).mutation(authorityApi.reviews.approve, {
+      proposalId: imported.A7.proposalId,
+      editCategory: "no-edit",
+    });
     const a7 = await base.withIdentity(approver).query(authorityApi.agents.getAgent, {
       id: imported.A7.agentId,
     });

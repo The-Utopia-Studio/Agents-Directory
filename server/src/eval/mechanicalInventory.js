@@ -18,8 +18,6 @@ export function getMechanicalInventory(agentId) {
     id: c.id,
     label: c.label,
     source: c.source,
-    sealed: c.sealed === true,
-    holdout: c.sealed === true ? "sealed" : "unsealed",
     synthetic: String(c.source || "").startsWith("synthetic"),
     sourceGroundingCheckCount: (c.sourceGroundingRules || []).length,
   }));

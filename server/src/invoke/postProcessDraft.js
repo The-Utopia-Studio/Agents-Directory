@@ -5,9 +5,8 @@
 // Maker must not propose prompt changes for POST_PROCESSED_CHECK_IDS — the
 // host enforces them in code.
 
-const EM_DASH_CLASS = /[\u2013\u2014\u2015]/g;
+const EM_DASH = /\u2014/g;
 const DOUBLE_HYPHEN = /(?<![A-Za-z0-9])--(?![A-Za-z0-9])/g;
-const SPACED_CLAUSE_HYPHEN = /(?<=\S) - (?=\S)/g;
 const EMOJI =
   /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{FE00}-\u{FE0F}\u{200D}]/gu;
 const EXCLAMATION = /!+/g;
@@ -37,7 +36,6 @@ export const BANNED_TERM_REPLACEMENTS = Object.freeze({
 export const POST_PROCESSED_CHECK_IDS = Object.freeze([
   "draft_has_no_em_dash",
   "draft_has_no_ai_cliche_phrase",
-  "draft_registered_ai_cliche_lemma",
   "about_hook_max_200_characters",
   "about_max_2600_characters",
   "headline_max_220_characters",
@@ -67,13 +65,12 @@ function replaceBannedTerms(text) {
   return out.replace(/[ \t]{2,}/g, " ").replace(/ \n/g, "\n");
 }
 
-/** Clause-break dashes → comma, which the dash check still allows. */
+/** Em dash / double-hyphen → spaced hyphen (readable substitute, not deletion). */
 function replaceEmDashes(text) {
   return String(text || "")
-    .replace(EM_DASH_CLASS, ", ")
-    .replace(DOUBLE_HYPHEN, ", ")
-    .replace(SPACED_CLAUSE_HYPHEN, ", ")
-    .replace(/ +, +/g, ", ")
+    .replace(EM_DASH, " - ")
+    .replace(DOUBLE_HYPHEN, " - ")
+    .replace(/ +\- +/g, " - ")
     .replace(/[ \t]{2,}/g, " ");
 }
 
@@ -151,7 +148,7 @@ export function postProcessDraft(output) {
 
   const withTerms = replaceBannedTerms(text);
   if (withTerms !== text) {
-    applied.push("draft_registered_ai_cliche_lemma");
+    applied.push("draft_has_no_ai_cliche_phrase");
     text = withTerms;
   }
 

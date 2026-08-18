@@ -22,15 +22,10 @@ const V6_DIGEST =
   "a8c08f4e98cd88f018764754eda760a20113e6fcf8a3362a192254b6bca81a10";
 const V7_DIGEST =
   "751912f479d4ca65144e927bb18fe6e6c66c34ab63be557cab24ad28bc77fa26";
-// v9 as it was RELEASED — the bytes Convex approved. Its fixture copy is the
-// committed artifact at that release, not the working tree, so editing the
-// live file can never silently redefine what v9 was.
-const V9_DIGEST =
-  "e229c64f44bcf3b6e8f57ea7dc74c868b7987ddfc7f92379ad4723761fa4314e";
 // Snapshot of live server/src/artifacts/biocraft/SKILL.md at registration —
 // digest must match getRuntimeArtifactDescriptor("A7").artifactDigest.
-const V10_DIGEST =
-  "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1";
+const V9_DIGEST =
+  "e229c64f44bcf3b6e8f57ea7dc74c868b7987ddfc7f92379ad4723761fa4314e";
 
 const FIXTURES_ROOT = new URL("../eval-artifacts/", import.meta.url);
 
@@ -77,17 +72,6 @@ export const HISTORICAL_ARTIFACT_REGISTRY = Object.freeze({
     fixtureRelativePath: "biocraft/biocraft-singleshot-v9/SKILL.md",
     gitRev: "0000000000000000000000000000000000000000",
     declaredDigest: V9_DIGEST,
-    declaredDigestAlgorithm: "sha256",
-  }),
-  // Live incumbent pin: the 2026-08-16 tiering + widened-detector edits, with
-  // artifact_version bumped to v10 so the bytes name the version they are.
-  "biocraft-singleshot-v10": Object.freeze({
-    agentId: "A7",
-    artifactVersion: "biocraft-singleshot-v10",
-    path: "server/src/artifacts/biocraft/SKILL.md",
-    fixtureRelativePath: "biocraft/biocraft-singleshot-v10/SKILL.md",
-    gitRev: "0000000000000000000000000000000000000000",
-    declaredDigest: V10_DIGEST,
     declaredDigestAlgorithm: "sha256",
   }),
 });

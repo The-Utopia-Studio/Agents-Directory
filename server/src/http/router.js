@@ -1,14 +1,6 @@
 // Minimal dependency-free router: method + path patterns with :params,
 // JSON body parsing, CORS, optional bearer auth, and uniform error handling.
 // Enough for a clean REST surface without pulling in a framework.
-/**
- * Routes that carry their own, stronger authentication and therefore cannot
- * use the shared API_TOKEN gate. Only the GitHub webhook qualifies: GitHub
- * cannot send our bearer token, and the route verifies an HMAC over the raw
- * body instead. Nothing is added here without an equivalent gate of its own.
- */
-const SELF_AUTHENTICATED_PATHS = new Set(["/api/github/webhook"]);
-
 export function createRouter({ corsOrigin = "*", apiToken = "" } = {}) {
   const routes = [];
 
@@ -43,7 +35,7 @@ export function createRouter({ corsOrigin = "*", apiToken = "" } = {}) {
         // Health stays public so Railway / Docker probes work without a token.
         if (apiToken) {
           const isPublicHealth = req.method === "GET" && path === "/api/health";
-          if (!isPublicHealth && !SELF_AUTHENTICATED_PATHS.has(path)) {
+          if (!isPublicHealth) {
             const auth = req.headers.authorization || "";
             if (auth !== `Bearer ${apiToken}`) {
               send(res, 401, { error: "Unauthorized" }, cors);
@@ -76,9 +68,6 @@ export function createRouter({ corsOrigin = "*", apiToken = "" } = {}) {
             }
             if (e.promotionGate) body.promotionGate = e.promotionGate;
             if (e.proposal) body.proposal = e.proposal;
-            if (e.code) body.code = e.code;
-            if (e.expectedDigest !== undefined) body.expectedDigest = e.expectedDigest;
-            if (e.actualDigest !== undefined) body.actualDigest = e.actualDigest;
             send(res, e.status || 500, body, cors);
           }
           return;
@@ -90,23 +79,14 @@ export function createRouter({ corsOrigin = "*", apiToken = "" } = {}) {
   return api;
 }
 
-/**
- * Parse the JSON body and keep the exact bytes on req.rawBody.
- *
- * The raw buffer is what HMAC-signed webhooks must be verified against —
- * re-serialising the parsed object reorders keys and drops whitespace, so a
- * valid signature would fail. Handlers that do not verify signatures ignore it.
- */
 function readJson(req) {
   if (req.method === "GET" || req.method === "DELETE") return Promise.resolve(null);
   return new Promise((resolve, reject) => {
-    const chunks = [];
-    req.on("data", (c) => chunks.push(Buffer.isBuffer(c) ? c : Buffer.from(c)));
+    let data = "";
+    req.on("data", (c) => (data += c));
     req.on("end", () => {
-      const raw = Buffer.concat(chunks);
-      req.rawBody = raw;
-      if (!raw.length) return resolve(null);
-      try { resolve(JSON.parse(raw.toString("utf8"))); } catch { reject(Object.assign(new Error("Invalid JSON body"), { status: 400 })); }
+      if (!data) return resolve(null);
+      try { resolve(JSON.parse(data)); } catch { reject(Object.assign(new Error("Invalid JSON body"), { status: 400 })); }
     });
     req.on("error", reject);
   });

@@ -8,7 +8,6 @@ import {
 } from "./importSpec";
 import schema from "./schema";
 import { modules } from "./test.setup";
-import { approveWithPromotionEval } from "./lib/seedPromotionEval";
 
 const authorityApi = api as any;
 const authorityInternal = internal as any;
@@ -25,7 +24,10 @@ async function importA7AndA8() {
     authorityApi.imports.executeApprovedCanonicalImport,
     { manifestDigest: APPROVED_IMPORT_MANIFEST_DIGEST },
   );
-  await approveWithPromotionEval(t, imported.A7.proposalId);
+  await t.mutation(authorityApi.reviews.approve, {
+    proposalId: imported.A7.proposalId,
+    editCategory: "no-edit",
+  });
   return { t, imported };
 }
 
@@ -75,11 +77,8 @@ describe("Phase 3 demo evidence isolation", () => {
     const rows = await t.query(authorityApi.evidence.listForVersion, {
       agentVersionId: imported.A7.versionId,
     });
-    const synthetic = rows.filter(
-      (row: any) => row.source === "demo" || row.source === "mock",
-    );
-    expect(synthetic.map((row: any) => row._id)).toEqual([demoId, mockId]);
-    for (const row of synthetic) {
+    expect(rows.map((row: any) => row._id)).toEqual([demoId, mockId]);
+    for (const row of rows) {
       expect(row).toMatchObject({
         agentId: imported.A7.agentId,
         agentVersionId: imported.A7.versionId,
@@ -104,26 +103,22 @@ describe("Phase 3 demo evidence isolation", () => {
         expect(row).not.toHaveProperty(forbidden);
       }
     }
-    expect(synthetic.map((row: any) => row.source)).toEqual(["demo", "mock"]);
-    const evaluationEligible = await t.query(
-      authorityApi.evidence.listEligibleForEvaluation,
-      { agentVersionId: imported.A7.versionId },
-    );
+    expect(rows.map((row: any) => row.source)).toEqual(["demo", "mock"]);
     expect(
-      evaluationEligible.every((row: any) => row.source === "real"),
-    ).toBe(true);
-    const promotionEligible = await t.query(
-      authorityApi.evidence.listEligibleForPromotion,
-      { agentVersionId: imported.A7.versionId },
-    );
+      await t.query(authorityApi.evidence.listEligibleForEvaluation, {
+        agentVersionId: imported.A7.versionId,
+      }),
+    ).toEqual([]);
     expect(
-      promotionEligible.every((row: any) => row.eligibleForPromotion === true),
-    ).toBe(true);
+      await t.query(authorityApi.evidence.listEligibleForPromotion, {
+        agentVersionId: imported.A7.versionId,
+      }),
+    ).toEqual([]);
     expect(
       await t.query(authorityApi.evalResults.listEligibleForPromotion, {
         agentVersionId: imported.A7.versionId,
       }),
-    ).not.toEqual([]);
+    ).toEqual([]);
   });
 
   test("recordEvalResult rejects both demo and mock evidence", async () => {
@@ -157,12 +152,11 @@ describe("Phase 3 demo evidence isolation", () => {
         }),
       ).rejects.toThrow("Evidence is not eligible for evaluation");
     }
-    const recorded = await t.query(authorityApi.evalResults.listForVersion, {
-      agentVersionId: imported.A7.versionId,
-    });
     expect(
-      recorded.every((row: any) => !syntheticIds.includes(row.evidenceId)),
-    ).toBe(true);
+      await t.query(authorityApi.evalResults.listForVersion, {
+        agentVersionId: imported.A7.versionId,
+      }),
+    ).toEqual([]);
   });
 
   test("synthetic writers reject caller-supplied eligibility overrides", async () => {
@@ -180,10 +174,11 @@ describe("Phase 3 demo evidence isolation", () => {
         }),
       ).rejects.toThrow();
     }
-    const remaining = await t.query(authorityApi.evidence.listForVersion, {
-      agentVersionId: imported.A7.versionId,
-    });
-    expect(remaining.every((row: any) => row.source === "real")).toBe(true);
+    expect(
+      await t.query(authorityApi.evidence.listForVersion, {
+        agentVersionId: imported.A7.versionId,
+      }),
+    ).toEqual([]);
   });
 
   test("A8 cannot treat its Git commit source pin as evidence identity", async () => {

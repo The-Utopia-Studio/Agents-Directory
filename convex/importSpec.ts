@@ -293,12 +293,5 @@ export function stableStringify(value: unknown): string {
 // quietly. The machine argument/field keeps the name `manifestDigest` for
 // schema and import-behaviour stability; the human-facing name is
 // "Approved import-spec digest".
-// Re-sealed after 0c9a7d9 corrected A7's catalog metadata (Claude/Anthropic →
-// OpenAI/gpt-5.6-terra, matching the runtime it actually calls). That commit
-// changed the spec without re-blessing this constant, so the binding test has
-// been red since — the guard working, not a false alarm. The spec is right;
-// this value was stale. Re-sealing is deliberate: rows imported under
-// 505707a1… carry that digest in importProvenance and will read as a different
-// provenance, which is the truth — they were imported under a different spec.
 export const APPROVED_IMPORT_MANIFEST_DIGEST =
-  "e5e873be6cb01d62cd4fb374c6fc2a00f0a1826dd7ad56093d058eb214f823e1";
+  "505707a187d66447aef28a435c28103ce3594b9e76010473032ab022c3bcfd02";

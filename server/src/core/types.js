@@ -131,7 +131,7 @@
  * @property {string} input       trigger / input
  * @property {string} expected    expected output
  * @property {string} rule        pass/fail rule
- * @property {boolean} [sealed]   true = holdout; maker must never see this case
+ * @property {string} [source]    source artefact (path / url)
  */
 
 /**

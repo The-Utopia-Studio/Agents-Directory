@@ -41,34 +41,22 @@ const CHECK_RESULT_FACT_KEYS = Object.freeze([
   "employerFramed",
   "markedNonEmployerCount",
   "framedNonEmployerCount",
-  "registeredPhrase",
-  "tier",
 ]);
 
 function cleanCheckResult(row) {
   const id = row.id || row.checkId;
   if (!id) return null;
-  const status =
-    row.status ||
-    (row.passed === true
-      ? "pass"
-      : row.passed === false
-        ? "fail"
-        : "not_scoreable");
-  const passed =
-    status === "observation" || status === "no_hit" || status === "not_scoreable"
-      ? null
-      : typeof row.passed === "boolean"
-        ? row.passed
-        : status === "pass"
-          ? true
-          : status === "fail"
-            ? false
-            : null;
   const clean = {
     id,
     checkId: id,
-    passed,
+    passed:
+      typeof row.passed === "boolean"
+        ? row.passed
+        : row.status === "pass"
+          ? true
+          : row.status === "fail"
+            ? false
+            : null,
     why: row.why == null ? null : String(row.why),
     severity: row.severity == null ? null : String(row.severity),
     category:
@@ -77,11 +65,13 @@ function cleanCheckResult(row) {
         : row.family === "source-grounding"
           ? "grounding"
           : "style",
-    status,
-    tier:
-      row.tier === "scored" || row.tier === "named_hit" || row.tier === "advisory"
-        ? row.tier
-        : undefined,
+    status:
+      row.status ||
+      (row.passed === true
+        ? "pass"
+        : row.passed === false
+          ? "fail"
+          : "not_scoreable"),
     family: row.family || undefined,
   };
   for (const key of CHECK_RESULT_FACT_KEYS) {
@@ -118,7 +108,6 @@ export function buildMechanicalResultRecord({
   experiment = null,
   comparedTo = null,
   generation = null,
-  sealed = false,
 }) {
   if (!score?.artifactVersion || !score?.artifactDigest) {
     throw Object.assign(
@@ -169,7 +158,6 @@ export function buildMechanicalResultRecord({
   return {
     agentId,
     goldenCaseId: goldenCaseId || null,
-    sealed: sealed === true,
     artifactVersion: score.artifactVersion,
     artifactDigest: score.artifactDigest,
     artifactDigestAlgorithm: "sha256",
@@ -185,7 +173,6 @@ export function buildMechanicalResultRecord({
     passed: [...(score.passed || [])],
     failed: [...(score.failed || [])],
     notScoreable: [...(score.notScoreable || [])],
-    observations: [...(score.observations || [])],
     byCategory: {
       grounding: cloneCategorySummary(score.byCategory?.grounding),
       style: cloneCategorySummary(score.byCategory?.style),
@@ -204,14 +191,11 @@ export function buildMechanicalResultRecord({
             : null,
         }
       : null,
-    // Two named rates, each with its denominator and the ids behind it.
-    // No combined number is stored; `mechanicalCheckScore` is no longer written.
-    groundingPassRate: score.groundingPassRate,
-    groundingScoreableCount: score.groundingScoreableCount,
-    groundingBasisCheckIds: score.groundingBasisCheckIds,
+    // Headline = grounding pass rate only.
+    mechanicalCheckScore: score.mechanicalCheckScore,
+    scoreableCount: score.scoreableCount,
     stylePassRate: score.stylePassRate,
     styleScoreableCount: score.styleScoreableCount,
-    styleBasisCheckIds: score.styleBasisCheckIds,
     checkResults,
     ...(comparedTo ? { comparedTo } : {}),
     label: "mechanical_check_score",
@@ -242,12 +226,7 @@ export async function listMechanicalResults(store, { agentId, goldenCaseId } = {
  */
 export function mechanicalFailuresAsDefectSignals(score) {
   return (score.checkResults || [])
-    .filter(
-      (row) =>
-        row.status !== "observation" &&
-        row.tier !== "advisory" &&
-        (row.passed === false || row.status === "fail"),
-    )
+    .filter((row) => row.passed === false || row.status === "fail")
     .map((row) => {
       const family = row.family || row.category || "style";
       const id = row.id || row.checkId;

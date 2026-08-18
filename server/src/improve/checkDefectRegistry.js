@@ -28,13 +28,11 @@ const CHECK_DESCRIPTIONS = Object.freeze({
   about_has_no_delimiter_separated_keyword_run:
     "LinkedIn About contains a delimiter-separated keyword run.",
   about_closing_has_cta:
-    "Advisory CTA heuristic on the LinkedIn About closing. Not a scored pass or fail.",
+    "LinkedIn About closing has no clear call to action.",
   draft_has_no_em_dash:
     "A generated section contains an em dash or double-hyphen substitute.",
   draft_has_no_ai_cliche_phrase:
-    "A generated section contains a registered AI cliche lemma from a closed list. A miss is not a clean-draft certificate.",
-  draft_registered_ai_cliche_lemma:
-    "A generated section contains a registered AI cliche lemma from a closed list. A miss is not a clean-draft certificate.",
+    "A generated section contains a registered AI cliche term or phrase.",
   source_no_employer_frame_for_marked_non_employer:
     "A source-marked non-employer entity was framed as a workplace or employer.",
   source_claim_tenure_years:

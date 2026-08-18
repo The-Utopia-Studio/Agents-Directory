@@ -88,22 +88,10 @@ async function insertEvidence(
   },
   source: EvidenceSource,
   writer: EvidenceWriter,
-  executedBy?: AuthorityActor,
 ) {
   const runBy = writer.actor;
   const actorKind = writer.kind === "verified-human" ? "human" : "service";
   const eligibility = eligibilityFor(source, writer);
-  // Structural invariant, not a re-derivation: no row may be both
-  // service-written and promotion-eligible. eligibilityFor already guarantees
-  // it, so this can only fire if that function is later edited — which is
-  // exactly when it should. One fossil row exists from before the rule; this
-  // makes a second one impossible rather than merely unlikely.
-  if (actorKind === "service" && eligibility.eligibleForPromotion === true) {
-    throw new Error(
-      "Refusing to insert service-written evidence marked eligibleForPromotion: " +
-        "a release case needs a human somewhere, or the loop builds its own promotion dossier",
-    );
-  }
   const version = await ctx.db.get(args.agentVersionId);
   if (!version) throw new Error(`Version ${args.agentVersionId} not found`);
   if (!version.artifact?.declaredDigest) {
@@ -164,7 +152,6 @@ async function insertEvidence(
     ...eligibility,
     runBy,
     actorKind,
-    ...(executedBy ? { executedBy } : {}),
     occurredAt: Date.now(),
     cost: args.cost,
     feedbackForEvidenceId: args.feedbackForEvidenceId,
@@ -283,64 +270,6 @@ export const recordHostedRunEvidence = internalMutation({
       },
       "real",
       declaredServiceWriter(),
-    );
-  },
-});
-
-/**
- * A human-witnessed hosted run — the only public path to promotion-eligible
- * evidence, and the reason the promotion gate is reachable at all.
- *
- * Called by the BROWSER as the signed-in human, never by Railway. That is the
- * whole distinction: recordHostedRunEvidence is an internalMutation invoked
- * with the deploy key, so it can only ever produce actorKind "service". Here
- * requireIdentity runs against the caller's own Clerk session.
- *
- * Two identities, neither overloaded:
- *   runBy      = the signed-in human who chose to run it and saw the output
- *   actorKind  = "human" — WHO WROTE THE ROW, nothing more
- *   executedBy = the loop service principal, which performed the actual call
- *
- * What stops this becoming a hand-written promotion dossier:
- *   1. declaredArtifactDigest must resolve to exactly one governed version.
- *      Convex looks up; it never creates. You cannot attest to a version that
- *      does not exist, or to bytes nothing approved.
- *   2. Eligibility is derived in eligibilityFor, never taken from arguments,
- *      so no caller can promote by supplying a flag.
- *   3. No input and no output are recorded. This says a human ran it, never
- *      what came back — the row cannot carry fellow material.
- *   4. It is not a release. assertReleasableCandidate additionally requires an
- *      evalResult naming what was checked, which is a separate deliberate act.
- */
-export const recordVerifiedHumanRunEvidence = mutation({
-  args: {
-    displayId: v.string(),
-    artifactDigest: v.string(),
-    cost: v.optional(providerCost),
-  },
-  handler: async (ctx, args) => {
-    // requireIdentity, not requireApprover: witnessing a run is not approving
-    // one. The approver gate stays where the pointer moves.
-    const human = await requireIdentity(ctx);
-    const displayId = args.displayId.trim();
-    const agent = await ctx.db
-      .query("agents")
-      .withIndex("by_displayId", (q) => q.eq("displayId", displayId))
-      .unique();
-    if (!agent) throw new Error(`No agent ${displayId}`);
-    // Constraint 1: the digest must resolve to exactly one governed version.
-    const version = await lookupGovernedVersionByDigest(
-      ctx,
-      agent._id,
-      args.artifactDigest,
-    );
-    return await insertEvidence(
-      ctx,
-      { agentVersionId: version._id, type: "run", cost: args.cost },
-      "real",
-      { kind: "verified-human", actor: human },
-      // Railway ran it; the human witnessed it. Recorded, not conflated.
-      declaredLoopServiceActor(),
     );
   },
 });
