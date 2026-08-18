@@ -1417,12 +1417,23 @@ export function createLoopService({
         throw httpError(422, `Golden case ${caseId} is sealed and cannot be previewed`);
       }
 
+      // Gap-fill agents pause at Call 1 unless answers are supplied. The
+      // golden case declares which gaps its partial source leaves open, so the
+      // preview can answer them and reach a draft. Caller-supplied answers win.
+      const gapAnswers = { ...(body.gapAnswers || {}) };
+      for (const gapId of golden?.expectedGapBankIds || []) {
+        if (!gapAnswers[gapId]) {
+          gapAnswers[gapId] = `Not supplied for this preview (${gapId}).`;
+        }
+      }
+
       const result = await previewCandidateVersion({
         agentId,
         artifactVersion,
         candidateDeclaredDigest,
         golden,
         sourceText: pastedSource,
+        gapAnswers,
         config,
       });
       const previewSourceKind = pastedSource ? "pasted-source" : "golden-fixture";

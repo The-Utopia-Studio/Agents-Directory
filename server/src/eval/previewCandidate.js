@@ -19,7 +19,7 @@
 // asserting it only in CI would mean the claim is checked everywhere except
 // where it is relied upon.
 
-import { loadHistoricalArtifact } from "./historicalArtifacts.js";
+import { resolveScoringArtifact } from "./scoringArtifact.js";
 import { generateUnderHistoricalArtifact } from "./invokeHistorical.js";
 import { costUsdFromUsage } from "../invoke/llm/pricing.js";
 import { scoreMechanicalOutput } from "./scoreMechanicalOutput.js";
@@ -85,12 +85,16 @@ export async function previewCandidateVersion({
   candidateDeclaredDigest,
   golden,
   sourceText = "",
+  gapAnswers = null,
   config = {},
 }) {
   let artifact;
   try {
-    // Verifies the fixture against the REGISTRY's declared digest.
-    artifact = loadHistoricalArtifact(artifactVersion);
+    // The SAME resolver the scorer uses: a registered historical version is
+    // digest-verified against its sealed fixture, otherwise the live runtime
+    // descriptor. Going straight to the registry is what made A10 unpreviewable
+    // while runMechanicalScore worked on the same agent.
+    artifact = resolveScoringArtifact(agentId, artifactVersion);
   } catch (error) {
     throw new PreviewRefusal(
       "PREVIEW_FIXTURE_UNAVAILABLE",
@@ -126,7 +130,21 @@ export async function previewCandidateVersion({
     artifactVersion,
     golden,
     config,
+    ...(gapAnswers && Object.keys(gapAnswers).length ? { gapAnswers } : {}),
   });
+
+  // A Call-1 pause renders no draft, so there is nothing to witness — the same
+  // rule the run panel applies to needs_input. Attesting a gap questionnaire
+  // would be attesting that a human read output that was never produced.
+  const draft = String(generation.output || "");
+  if (!draft.trim() || /^\s*\{[\s\S]*"gaps"\s*:/.test(draft)) {
+    throw new PreviewRefusal(
+      "PREVIEW_PAUSED_NO_DRAFT",
+      `PREVIEW_PAUSED_NO_DRAFT: ${artifactVersion} returned a gap-fill pause rather than a draft. ` +
+        `Supply gapAnswers so Call 2 runs; a pause renders nothing a human can witness.`,
+      409,
+    );
+  }
 
   // A preview is a real model call and costs real money. Computed here so the
   // caller can persist it regardless of what the human decides.

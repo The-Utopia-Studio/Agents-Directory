@@ -80,7 +80,13 @@ test("the live artifact matches the fixture of the version it claims to be", () 
     const live = getRuntimeArtifactDescriptor(agentId);
     assert.ok(live, `${agentId} must have a runtime artifact`);
     const entry = HISTORICAL_ARTIFACT_REGISTRY[live.artifactVersion];
-    if (!entry) continue; // gapfill has no registry entry; covered below.
+    // No escape. Every agent with a runtime artifact must have its live version
+    // sealed — the escape previously covered A10 entirely, so gap-fill bytes
+    // could drift with nothing failing.
+    assert.ok(
+      entry,
+      `${agentId} live version ${live.artifactVersion} has no registry entry sealing it`,
+    );
     assert.equal(
       live.artifactDigest,
       entry.declaredDigest,
@@ -98,7 +104,10 @@ test("the live artifact's frontmatter names its own digest's version", () => {
   for (const agentId of ["A7", "A10"]) {
     const live = getRuntimeArtifactDescriptor(agentId);
     const entry = HISTORICAL_ARTIFACT_REGISTRY[live.artifactVersion];
-    if (!entry) continue; // gapfill has no registry entry.
+    assert.ok(
+      entry,
+      `${agentId} live version ${live.artifactVersion} has no registry entry sealing it`,
+    );
     assert.equal(
       live.artifactDigest,
       entry.declaredDigest,
@@ -115,10 +124,18 @@ test("no fixture directory exists without a registry entry sealing it", () => {
   const sealed = new Set(
     Object.values(HISTORICAL_ARTIFACT_REGISTRY).map((e) => e.fixtureRelativePath),
   );
-  const agentRoot = new URL("biocraft/", FIXTURES_ROOT);
-  for (const dir of readdirSync(fileURLToPath(agentRoot), { withFileTypes: true })) {
-    if (!dir.isDirectory()) continue;
-    const rel = `biocraft/${dir.name}/SKILL.md`;
+  // Every agent directory, not just biocraft/ — scanning one agent is how an
+  // unsealed gapfill fixture would have gone unnoticed.
+  const agentDirs = readdirSync(fileURLToPath(FIXTURES_ROOT), { withFileTypes: true })
+    .filter((d) => d.isDirectory() && d.name !== "golden")
+    .map((d) => d.name);
+  const versionDirs = agentDirs.flatMap((agent) =>
+    readdirSync(fileURLToPath(new URL(`${agent}/`, FIXTURES_ROOT)), { withFileTypes: true })
+      .filter((d) => d.isDirectory())
+      .map((d) => ({ agent, name: d.name })),
+  );
+  for (const dir of versionDirs) {
+    const rel = `${dir.agent}/${dir.name}/SKILL.md`;
     if (!existsSync(fileURLToPath(new URL(rel, FIXTURES_ROOT)))) continue;
     if (!sealed.has(rel)) orphans.push(rel);
   }

@@ -19,39 +19,16 @@ import {
   recordMechanicalResult,
 } from "./mechanicalResults.js";
 
+import { resolveScoringArtifact } from "./scoringArtifact.js";
+
 function refuse(message, status = 400) {
   throw Object.assign(new Error(message), { status });
 }
 
+// Delegates to the one shared resolver. Kept as a named local so the call
+// sites read the same, but there is only one implementation now.
 function loadScoringArtifact(agentId, artifactVersion) {
-  if (artifactVersion && HISTORICAL_ARTIFACT_REGISTRY[artifactVersion]) {
-    return loadHistoricalArtifact(artifactVersion);
-  }
-  const live = getRuntimeArtifactDescriptor(agentId);
-  if (live?.checks?.length) {
-    if (
-      !artifactVersion ||
-      artifactVersion === "live" ||
-      artifactVersion === live.artifactVersion
-    ) {
-      return {
-        agentId,
-        artifactVersion: live.artifactVersion,
-        artifactDigest: live.artifactDigest,
-        artifactDigestAlgorithm: live.artifactDigestAlgorithm || "sha256",
-        checks: [...live.checks],
-        guardrails: [...(live.guardrails || [])],
-        source: "live-runtime",
-      };
-    }
-  }
-  refuse(
-    `No scoring artifact for ${agentId} version ${artifactVersion || "live"}. ` +
-      (live
-        ? `Live artifact is ${live.artifactVersion}.`
-        : "No runtime artifact with a checks: block."),
-    400,
-  );
+  return resolveScoringArtifact(agentId, artifactVersion);
 }
 
 function scoreWith({
