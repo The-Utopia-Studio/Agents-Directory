@@ -1381,6 +1381,23 @@ function governedRuntimeRefused(capability){
 function governedRuntimeReason(capability){
   return (capability&&capability.governedRuntime&&capability.governedRuntime.reason)||"GOVERNED_RUNTIME_MISMATCH";
 }
+// Three states, not two. "The authority verified this digest" and "no authority
+// was consulted" used to render identically, because the server stripped the
+// verdict on skip and `undefined.matched===false` is false. An unverified gate
+// is not a passed gate and must not look like one.
+function governedRuntimeState(capability){
+  const verdict=capability&&capability.governedRuntime;
+  if(!verdict)return"absent";
+  if(verdict.matched===false)return"refused";
+  return verdict.skipped===true?"unverified":"verified";
+}
+function governedRuntimeNotice(capability){
+  const state=governedRuntimeState(capability);
+  if(state==="verified")return"";
+  if(state==="unverified")return`<div class="run-unverified"><strong>Runtime not verified.</strong> This service could not consult the governing authority, so the bytes below are served WITHOUT a digest check against the approved version. They may not be the approved bytes.</div>`;
+  if(state==="absent")return`<div class="run-unverified"><strong>Runtime verification not reported.</strong> The server returned no governed-runtime verdict, so whether these bytes match the approved version is unknown.</div>`;
+  return"";
+}
 async function loadRunCapability(id){
   const a=agents.find(x=>x.id===id),slot=document.getElementById("run-action"),installSlot=document.getElementById("install-actions"),handoffSlot=document.getElementById("handoff-actions");
   if(!a)return;
@@ -1404,9 +1421,15 @@ async function loadRunCapability(id){
       return;
     }
     runCapabilities[id]=capability;
+    // Prepended, never substituted: the notice states that the gate did not
+    // run, which is orthogonal to whether the agent is runnable.
+    const notice=governedRuntimeNotice(capability);
     if(slot&&hasUsabilityMode(a,"hosted-run")){
-      if(capability.serverRun&&capability.artifactAvailable&&capability.configured&&capability.runnable)slot.innerHTML=`<button class="btn btn-sm btn-primary" onclick="toggleRun('${id}')">&#9654; ${capability.mode==="single-shot"?"Run single-shot draft":capability.mode==="gap-fill"?"Run gap-fill draft":"Run here"}</button>`;
-      else if(!capability.configured)slot.innerHTML=`<span class="run-unavailable">${escHtml(capability.unavailableReason||"Runtime unavailable")}</span>`;
+      if(capability.serverRun&&capability.artifactAvailable&&capability.configured&&capability.runnable)slot.innerHTML=notice+`<button class="btn btn-sm btn-primary" onclick="toggleRun('${id}')">&#9654; ${capability.mode==="single-shot"?"Run single-shot draft":capability.mode==="gap-fill"?"Run gap-fill draft":"Run here"}</button>`;
+      else if(!capability.configured)slot.innerHTML=notice+`<span class="run-unavailable">${escHtml(capability.unavailableReason||"Runtime unavailable")}</span>`;
+      else if(notice)slot.innerHTML=notice;
+    }else if(slot&&notice){
+      slot.innerHTML=notice;
     }
     // download-install: only a pinned server-owned artifact is installable.
     // With none registered there is no client-side substitute to fall back to.
@@ -2862,6 +2885,15 @@ async function maintPreviewCandidate(key){
         inputTokens:r.inputTokens,outputTokens:r.outputTokens,
       }:null,
     };
+    // The service reports whether it managed to record the execution proof that
+    // the attestation must consume. This was returned and DISCARDED by the
+    // panel, so a preview whose proof never reached Convex looked identical to
+    // one whose did — and the failure surfaced an hour later as an unexplained
+    // 409 on the attest click. Predict the refusal here, where it is cheap.
+    const proof=r.executionProofRecorded===true
+      ?`<div class="maint-proof maint-proof-ok">Execution proof recorded. The attestation below has something to consume.</div>`
+      :`<div class="maint-proof maint-proof-bad"><strong>EXECUTION PROOF NOT RECORDED</strong> — ${escHtml(String(r.executionProofReason||"the service gave no reason"))}.
+         <div>Recording evidence will be REFUSED with <code>EXECUTION_PROOF_REQUIRED</code> (409). The preview itself ran and the spend is real; only the proof is missing.</div></div>`;
     const spend=r.costRecorded
       ?`Cost $${escHtml(String(r.costUsd))} recorded on trace ${escHtml(String(r.traceId))} before you decide anything.`
       :`COST NOT RECORDED${typeof r.costUsd==="number"?` ($${escHtml(String(r.costUsd))} spent)`:" (model is unpriced)"} — the spend happened but is not on a trace.`;
@@ -2885,7 +2917,8 @@ async function maintPreviewCandidate(key){
        ${checkRows}
        <div>Executed fixture digest <code>${escHtml(String(r.artifactDigest).slice(0,12))}</code>, verified against the candidate's declared digest at run time.</div>
        <div>${spend}</div>
-       <div>No evidence has been recorded. Read the output; attest only if it is fit to release.</div>
+       ${proof}
+       <div>Evidence recorded: <strong>${r.evidenceRecorded===true?"yes":"no"}</strong>. ${escHtml(String(r.nextRequiredAction||"Read the output; attest only if it is fit to release."))}</div>
        <pre>${escHtml(String(r.output||""))}</pre>
        ${verdict}</div>`);
   }catch(e){

@@ -529,3 +529,177 @@ test("KNOWN GAP: the fixture default misnames non-Mira sealed cases", async () =
   );
   assert.match(payload.sourceMaterial, /Jonas Park/);
 });
+
+// ── the preview may refuse; it may never invent the input it previews ──
+
+/** Service harness with a counting fetch, so "did it spend?" is observable. */
+async function previewService(draft = CLEAN_DRAFT) {
+  const { createLoopService } = await import("../src/core/loopService.js");
+  const { createStore } = await import("../src/core/store.js");
+  const { config } = await import("../src/config.js");
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { seed } = await import("../src/scripts/seed.js");
+
+  const store = createStore(await mkdtemp(join(tmpdir(), "adir-gapfill-")));
+  await seed(store);
+  const { seen, fetchImpl } = stubOpenAi(draft);
+  const svc = createLoopService({
+    store,
+    obs: { recordTrace: async () => ({ id: "t1" }) },
+    optimizer: {},
+    memory: {},
+    verifier: {},
+    config: {
+      ...config,
+      runtime: { ...config.runtime, openai: { ...config.runtime.openai, fetch: fetchImpl } },
+    },
+  });
+  return { svc, seen };
+}
+
+const A10_V4 = "biocraft-gapfill-v4";
+const A10_V4_DIGEST = HISTORICAL_ARTIFACT_REGISTRY[A10_V4].declaredDigest;
+
+test("a gap-fill preview with no answers REFUSES rather than inventing them", async () => {
+  // It used to write `Not supplied for this preview (<id>).` into gapAnswers so
+  // the preview could reach a draft. Those strings are handed to a bio
+  // generator as the fellow's own answers; the draft is written around them,
+  // and a human then attests that draft as witnessed output.
+  const { svc, seen } = await previewService();
+  await assert.rejects(
+    () =>
+      svc.previewCandidate("A10", {
+        artifactVersion: A10_V4,
+        candidateDeclaredDigest: A10_V4_DIGEST,
+        caseId: "a10-mira-okonkwo-v1",
+      }),
+    (error) => {
+      assert.equal(error.status, 400);
+      assert.equal(error.code, "PREVIEW_GAP_ANSWERS_REQUIRED");
+      // It names the gaps the FIXTURE declares, and hands back the questions,
+      // so the refusal is actionable rather than merely correct.
+      assert.deepEqual(error.missingGapIds, [
+        "proudest-outcome",
+        "mission",
+        "skills",
+        "contact",
+      ]);
+      assert.equal(error.gapBank.length, 4);
+      assert.ok(error.gapBank.every((gap) => gap.question));
+      return true;
+    },
+  );
+  // And it refuses BEFORE spending: a preview that cannot run costs nothing.
+  assert.equal(seen.calls, 0, "the refusal must precede the model call");
+});
+
+test("a pasted gap-fill preview must answer the whole bank — it knows of no fixture", async () => {
+  const { svc, seen } = await previewService();
+  await assert.rejects(
+    () =>
+      svc.previewCandidate("A10", {
+        artifactVersion: A10_V4,
+        candidateDeclaredDigest: A10_V4_DIGEST,
+        sourceMaterial: "Name: Jordan Reyes\nWorks on platform tooling.",
+        fellowName: "Jordan Reyes",
+      }),
+    (error) => {
+      assert.equal(error.code, "PREVIEW_GAP_ANSWERS_REQUIRED");
+      // No golden case declares which gaps this paste leaves open, and the
+      // preview does not run Call 1 to find out, so the answerable set is the
+      // whole fixed bank.
+      assert.deepEqual(error.missingGapIds, [
+        "proudest-outcome",
+        "role-and-why",
+        "mission",
+        "skills",
+        "contact",
+      ]);
+      return true;
+    },
+  );
+  assert.equal(seen.calls, 0);
+});
+
+test("a partially answered gap-fill preview refuses on the REMAINING gaps only", async () => {
+  const { svc } = await previewService();
+  await assert.rejects(
+    () =>
+      svc.previewCandidate("A10", {
+        artifactVersion: A10_V4,
+        candidateDeclaredDigest: A10_V4_DIGEST,
+        caseId: "a10-mira-okonkwo-v1",
+        gapAnswers: { "proudest-outcome": "Cut onboarding from 9 days to 3.", mission: "  " },
+      }),
+    (error) => {
+      assert.equal(error.code, "PREVIEW_GAP_ANSWERS_REQUIRED");
+      // A whitespace answer is not an answer. normalizeGapAnswers drops it, so
+      // it must still appear as missing rather than passing the gate blank.
+      assert.deepEqual(error.missingGapIds, ["mission", "skills", "contact"]);
+      return true;
+    },
+  );
+});
+
+test("the placeholder answer string exists nowhere in the service", async () => {
+  // The strongest form of this assertion: the fabricated text cannot reach a
+  // draft because it is not in the codebase to be sent.
+  const svc = readFileSync(new URL("../src/core/loopService.js", import.meta.url), "utf8");
+  assert.doesNotMatch(svc, /Not supplied for this preview/);
+});
+
+test("a single-shot agent is not subjected to the gap gate", async () => {
+  // The gate keys off the ARTIFACT's declared mode, not an agent id literal.
+  const { svc, seen } = await previewService();
+  const result = await svc.previewCandidate("A7", {
+    artifactVersion: "biocraft-singleshot-v10",
+    candidateDeclaredDigest:
+      "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1",
+    sourceMaterial: PASTED,
+    fellowName: "Jordan Reyes",
+  });
+  assert.equal(seen.calls, 1);
+  assert.ok(result.output.includes("Northwind"));
+});
+
+test("the capability response always carries the governed-runtime verdict", async () => {
+  // It used to be stripped when skipped, which made "the authority verified
+  // this digest" and "no authority was consulted" byte-identical to the
+  // client. A client cannot report a gate it cannot see.
+  const { createLoopService } = await import("../src/core/loopService.js");
+  const { createStore } = await import("../src/core/store.js");
+  const { config } = await import("../src/config.js");
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { seed } = await import("../src/scripts/seed.js");
+
+  const store = createStore(await mkdtemp(join(tmpdir(), "adir-verdict-")));
+  await seed(store);
+  const base = { store, obs: {}, optimizer: {}, memory: {}, verifier: {}, config };
+
+  // No authority reachable: the verdict is present and says so.
+  const unpinned = createLoopService({ ...base, getGovernedRuntimePin: async () => null });
+  const skipped = await unpinned.getInvocationCapability("A7");
+  assert.ok(
+    Object.prototype.hasOwnProperty.call(skipped, "governedRuntime"),
+    "the verdict must be present even when the gate did not run",
+  );
+  assert.equal(skipped.governedRuntime.skipped, true);
+
+  // Authority reachable and agreeing: same field, skipped false.
+  const served = skipped.governedRuntime.actualDigest;
+  assert.equal(typeof served, "string");
+  const pinned = createLoopService({
+    ...base,
+    getGovernedRuntimePin: async () => ({ digest: served, algorithm: "sha256", isCurrentApproved: true }),
+  });
+  const verified = await pinned.getInvocationCapability("A7");
+  assert.equal(verified.governedRuntime.skipped, false);
+  assert.equal(verified.governedRuntime.matched, true);
+
+  // The two are now distinguishable, which is the whole point.
+  assert.notDeepEqual(skipped.governedRuntime, verified.governedRuntime);
+});

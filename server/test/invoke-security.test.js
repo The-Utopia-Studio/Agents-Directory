@@ -734,6 +734,14 @@ test("missing OpenAI key is a visible non-2xx failure without a key leak", async
     await capability.json();
   assert.deepEqual(handoff, { available: false });
   assert.deepEqual(capabilityFlags, {
+    // Present even though the gate did not run. Stripping it on skip made an
+    // unverified runtime indistinguishable from a verified one to the client.
+    governedRuntime: {
+      matched: true,
+      skipped: true,
+      expectedDigest: null,
+      actualDigest: "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1",
+    },
     invocationType: "runtime",
     mode: "single-shot",
     serverRun: true,
@@ -840,6 +848,14 @@ test("single-shot runtime uses the server artifact, persists metadata, and links
   // must not be offered a briefing.
   assert.deepEqual(handoff, { available: false });
   assert.deepEqual(capabilityFlags, {
+    // Present even though the gate did not run. Stripping it on skip made an
+    // unverified runtime indistinguishable from a verified one to the client.
+    governedRuntime: {
+      matched: true,
+      skipped: true,
+      expectedDigest: null,
+      actualDigest: "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1",
+    },
     invocationType: "runtime",
     mode: "single-shot",
     serverRun: true,
@@ -1146,6 +1162,14 @@ test("serverRun false stays hidden by capability and rejects run with 400", asyn
   );
   assert.equal(capability.status, 200);
   assert.deepEqual(await capability.json(), {
+    // No live digest to compare, so the gate cannot run — but it still says so
+    // rather than omitting the verdict.
+    governedRuntime: {
+      matched: true,
+      skipped: true,
+      expectedDigest: null,
+      actualDigest: null,
+    },
     invocationType: "link",
     mode: null,
     serverRun: false,

@@ -11,8 +11,10 @@ import {
 } from "../artifacts/installArtifacts.js";
 import {
   getRuntimeArtifactDescriptor,
+  getRuntimeArtifactMode,
   loadRuntimeArtifact,
 } from "../invoke/runtimeArtifacts.js";
+import { BIOCRAFT_GAP_BANK, normalizeGapAnswers } from "../invoke/gapFill.js";
 import {
   getHandoffCapability,
   loadHandoffBriefing,
@@ -453,7 +455,13 @@ export function createLoopService({
           : !artifactAvailable
             ? "Server-owned runtime artifact is unavailable"
             : null,
-        ...(governedRuntime.skipped ? {} : { governedRuntime }),
+        // ALWAYS present, including when skipped. It used to be stripped on
+        // skip, which made "the authority verified this digest" and "no
+        // authority was consulted" byte-identical to the client: the panel
+        // reads matched === false, undefined is not false, so an unverified
+        // agent rendered exactly like a verified one. A client cannot report a
+        // gate it cannot see.
+        governedRuntime,
       };
     },
     async getInstallSkill(agentId) {
@@ -1427,13 +1435,41 @@ export function createLoopService({
         throw httpError(422, `Golden case ${caseId} is sealed and cannot be previewed`);
       }
 
-      // Gap-fill agents pause at Call 1 unless answers are supplied. The
-      // golden case declares which gaps its partial source leaves open, so the
-      // preview can answer them and reach a draft. Caller-supplied answers win.
-      const gapAnswers = { ...(body.gapAnswers || {}) };
-      for (const gapId of golden?.expectedGapBankIds || []) {
-        if (!gapAnswers[gapId]) {
-          gapAnswers[gapId] = `Not supplied for this preview (${gapId}).`;
+      // Gap-fill agents pause at Call 1 unless answers are supplied. This used
+      // to auto-fill every unanswered gap with a placeholder sentence so the
+      // preview could reach a draft. That is FABRICATED SOURCE MATERIAL: the
+      // placeholder is handed to a bio generator as the fellow's own answer,
+      // the draft is written around it, and a human then attests that draft as
+      // witnessed output. A preview may refuse; it may never invent the input
+      // it previews. A test asserts the placeholder text is absent from this
+      // file entirely, so quoting it here — even to explain it — would fail.
+      const gapAnswers = normalizeGapAnswers(body.gapAnswers);
+      if (getRuntimeArtifactMode(agentId) === "gap-fill") {
+        // A fixture declares which gaps its partial source leaves open. A paste
+        // declares nothing, so the whole fixed bank is the answerable set — the
+        // preview cannot know which gaps this source closes without running
+        // Call 1, which it does not do.
+        const declared = golden?.expectedGapBankIds || [];
+        const answerable = declared.length
+          ? declared
+          : BIOCRAFT_GAP_BANK.map((gap) => gap.id);
+        const missing = answerable.filter((gapId) => !gapAnswers[gapId]);
+        if (missing.length) {
+          throw httpError(
+            400,
+            `PREVIEW_GAP_ANSWERS_REQUIRED: ${agentId} is a gap-fill agent and reaches a draft only on Call 2, ` +
+              `which needs answers for ${missing.join(", ")}. Supply them in gapAnswers. ` +
+              `The preview will not invent them: an invented answer becomes source material for the draft, ` +
+              `and the draft is what a human attests.`,
+            {
+              code: "PREVIEW_GAP_ANSWERS_REQUIRED",
+              missingGapIds: missing,
+              gapBank: (declared.length
+                ? BIOCRAFT_GAP_BANK.filter((gap) => declared.includes(gap.id))
+                : BIOCRAFT_GAP_BANK
+              ).map((gap) => ({ id: gap.id, question: gap.question })),
+            },
+          );
         }
       }
 
