@@ -7,6 +7,7 @@
 
 import { loadHistoricalArtifact } from "./historicalArtifacts.js";
 import { RUNTIME_TIMEOUT_MS } from "../invoke/index.js";
+import { normalizeGapAnswers } from "../invoke/gapFill.js";
 import { getRuntimeInputContract, resolveRuntimeInputs } from "../invoke/runtimeArtifacts.js";
 
 /** Default scoring model when the historical fixture has no runtime_model pin. */
@@ -25,6 +26,11 @@ function runtimeModelFromArtifactContent(content) {
 /**
  * Build the same user payload the live single-shot runtime sends.
  */
+// Historical default for fixture runs. Only correct because the unsealed A7/A10
+// fixtures are both Mira Okonkwo; see the note in preview-candidate.test.js
+// about sealed cases, which this misnames on the SCORING path.
+const FIXTURE_DEFAULT_FELLOW = "Mira Okonkwo";
+
 export function buildGoldenUserPayload(agentId, golden, overrides = {}) {
   // Pasted material wins over the fixture. `golden` is null on the pasted path,
   // so every read of it is optional — previously `golden.input` threw a raw
@@ -38,9 +44,24 @@ export function buildGoldenUserPayload(agentId, golden, overrides = {}) {
       400,
     );
   }
+  // NEVER substitute a fixture identity onto pasted material. The old default
+  // was "Mira Okonkwo", so a paste submitted without a name generated a bio
+  // attributed to the fixture's fellow — a materially misattributed draft that
+  // would then be attested as a real preview. A fixture run may default to its
+  // own fellow because that IS whose material it is; a paste may not.
+  // A fixture run may fall back to the fixture's own fellow — that IS whose
+  // material it is. A PASTE may not: the old default was "Mira Okonkwo", so a
+  // paste submitted without a name produced a draft attributed to the fixture's
+  // fellow, which is a materially misattributed preview.
   const fellowName = String(
-    overrides.fellowName || golden?.fellowName || "Mira Okonkwo",
+    overrides.fellowName || golden?.fellowName || (golden ? FIXTURE_DEFAULT_FELLOW : ""),
   ).trim();
+  if (!fellowName) {
+    refuse(
+      "Pasted source needs a fellowName: generating under the fixture's fellow would misattribute the draft.",
+      400,
+    );
+  }
   const contract = getRuntimeInputContract(agentId);
   if (!contract) {
     return { fellowName, sourceMaterial };
@@ -49,13 +70,21 @@ export function buildGoldenUserPayload(agentId, golden, overrides = {}) {
     fellowName,
     sourceMaterial,
     interviewAnswers: "",
-    ...(overrides.gapAnswers ? { gapAnswers: overrides.gapAnswers } : {}),
   });
   if (missing.length) {
     refuse(
       `Golden case cannot satisfy runtime input contract: missing ${missing.join(", ")}`,
       400,
     );
+  }
+  // resolveRuntimeInputs returns ONLY the agent's declared contract fields, so
+  // gapAnswers passed through it were silently dropped — A10 declares
+  // fellowName/sourceMaterial/exclusions and no gapAnswers. The live runtime
+  // adds them to the payload AFTER resolving inputs (invoke/index.js), with a
+  // "draft" phase so Call 2 runs instead of Call 1 asking again. Mirror that.
+  const gapAnswers = normalizeGapAnswers(overrides.gapAnswers);
+  if (gapAnswers && Object.keys(gapAnswers).length) {
+    return { phase: "draft", ...values, gapAnswers };
   }
   return values;
 }

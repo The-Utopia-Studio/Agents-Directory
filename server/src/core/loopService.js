@@ -1393,6 +1393,15 @@ export function createLoopService({
       // fallback. Attesting synthetic pre-annotated material and attesting a
       // fellow's real paste are different facts, and the evidence row says which.
       const pastedSource = String(body.sourceMaterial || "").trim();
+      const pastedFellowName = String(body.fellowName || "").trim();
+      // Refused here as well as in buildGoldenUserPayload: a paste with no name
+      // would otherwise generate under the fixture's fellow.
+      if (pastedSource && !pastedFellowName) {
+        throw httpError(
+          400,
+          "fellowName is required when previewing pasted source — generating under the fixture's fellow would misattribute the draft.",
+        );
+      }
       const caseId = pastedSource
         ? null
         : String(body.caseId || "").trim() ||
@@ -1434,7 +1443,7 @@ export function createLoopService({
         candidateDeclaredDigest,
         golden,
         sourceText: pastedSource,
-        fellowName: String(body.fellowName || "").trim(),
+        fellowName: pastedFellowName,
         gapAnswers,
         config,
       });

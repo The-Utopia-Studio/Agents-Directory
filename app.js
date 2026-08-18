@@ -2843,7 +2843,13 @@ async function maintPreviewCandidate(key){
   try{
     const srcEl=document.getElementById(`maint-preview-source-${key}`);
     const sourceMaterial=srcEl?srcEl.value.trim():"";
-    const r=await DirectoryAPI.previewCandidate(spec.agentId,{artifactVersion,candidateDeclaredDigest,...(sourceMaterial?{sourceMaterial}:{})});
+    const fellowEl=document.getElementById(`maint-preview-fellow-${key}`);
+    const fellowName=fellowEl?fellowEl.value.trim():"";
+    if(sourceMaterial&&!fellowName){
+      maintOut("maint-preview-out",maintResult(false,`${spec.label} preview — NOT SENT`,"Pasting source needs a fellow name. Without one the draft would be generated under the fixture's fellow, which is a misattributed preview."));
+      return;
+    }
+    const r=await DirectoryAPI.previewCandidate(spec.agentId,{artifactVersion,candidateDeclaredDigest,...(sourceMaterial?{sourceMaterial,fellowName}:{})});
     maintPendingPreview={
       agentId:spec.agentId,
       artifactDigest:r.artifactDigest,
@@ -2993,6 +2999,7 @@ function maintainerPanelHtml(){
       <label>${escHtml(r.label)}</label>
       <input id="maint-preview-version-${r.key}" value="${escHtml(r.previewVersion)}" size="28">
       <input id="maint-preview-digest-${r.key}" placeholder="candidate declared artifact digest" size="68">
+      <input id="maint-preview-fellow-${r.key}" size="28" placeholder="fellow name (required when pasting)">
       <textarea id="maint-preview-source-${r.key}" rows="3" cols="70" placeholder="paste real source material — leave blank to fall back to the synthetic golden fixture"></textarea>
       <button data-maint-preview="${r.key}">Preview</button>
     </div>`).join("")}

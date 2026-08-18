@@ -394,3 +394,138 @@ test("the service path accepts pasted source without touching a golden case", as
   assert.equal(out.evidenceRecorded, false);
   assert.ok(out.output.includes("Northwind"));
 });
+
+// ── The two bypasses found in review ─────────────────────────────────────────
+
+test("a paste with no fellowName is refused, never generated under the fixture's fellow", async () => {
+  // The old default was "Mira Okonkwo", so a paste submitted without a name
+  // produced a draft attributed to the fixture's fellow — a materially
+  // misattributed preview that would then be attested as real.
+  await assert.rejects(
+    () => previewWithStub({ sourceText: PASTED, fellowName: "" }),
+    (error) => {
+      assert.match(error.message, /needs a fellowName/);
+      assert.match(error.message, /misattribute/);
+      return true;
+    },
+  );
+});
+
+test("no request is sent when the fellow name is missing", async () => {
+  // Refused before the model call, so a misattributed paste costs nothing.
+  const { seen, fetchImpl } = stubOpenAi(CLEAN_DRAFT);
+  const { previewCandidateVersion } = await import("../src/eval/previewCandidate.js");
+  const { config } = await import("../src/config.js");
+  await assert.rejects(() =>
+    previewCandidateVersion({
+      agentId: "A7",
+      artifactVersion: "biocraft-singleshot-v10",
+      candidateDeclaredDigest:
+        "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1",
+      golden: null,
+      sourceText: PASTED,
+      config: { ...config, runtime: { ...config.runtime, openai: { ...config.runtime.openai, fetch: fetchImpl } } },
+    }),
+  );
+  assert.equal(seen.calls, 0, "no paid call for a refused preview");
+});
+
+test("the service refuses a pasted preview with no fellowName", async () => {
+  const { createLoopService } = await import("../src/core/loopService.js");
+  const { createStore } = await import("../src/core/store.js");
+  const { config } = await import("../src/config.js");
+  const { mkdtemp } = await import("node:fs/promises");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { seed } = await import("../src/scripts/seed.js");
+
+  const store = createStore(await mkdtemp(join(tmpdir(), "adir-noname-")));
+  await seed(store);
+  const svc = createLoopService({
+    store, obs: { recordTrace: async () => ({ id: "t" }) },
+    optimizer: {}, memory: {}, verifier: {}, config,
+  });
+  await assert.rejects(
+    () =>
+      svc.previewCandidate("A7", {
+        artifactVersion: "biocraft-singleshot-v10",
+        candidateDeclaredDigest:
+          "c1028caa64ef7965ff2ee052f3ac300509ea47e19346ab6c42aa9075aaacd7c1",
+        sourceMaterial: PASTED,
+      }),
+    (error) => {
+      assert.equal(error.status, 400);
+      assert.match(error.message, /fellowName is required/);
+      return true;
+    },
+  );
+});
+
+test("A10 gap answers actually reach the model request", async () => {
+  // resolveRuntimeInputs returns ONLY the agent's declared contract fields, and
+  // A10 declares fellowName/sourceMaterial/exclusions — no gapAnswers. Passing
+  // them through it dropped them silently, so Call 2 never saw the operator's
+  // facts. The live runtime adds them AFTER resolving, with a draft phase.
+  const { buildGoldenUserPayload } = await import("../src/eval/invokeHistorical.js");
+  const payload = buildGoldenUserPayload("A10", null, {
+    fellowName: "Jordan Reyes",
+    sourceMaterial: PASTED,
+    gapAnswers: { "proudest-outcome": "Cut onboarding from 9 days to 3." },
+  });
+  assert.equal(payload.phase, "draft", "a draft phase is what makes Call 2 run");
+  assert.ok(payload.gapAnswers, "gap answers must survive into the payload");
+  assert.match(
+    JSON.stringify(payload.gapAnswers),
+    /Cut onboarding from 9 days to 3/,
+  );
+  assert.equal(payload.fellowName, "Jordan Reyes");
+});
+
+test("no gap answers means no draft phase — Call 1 still asks", async () => {
+  const { buildGoldenUserPayload } = await import("../src/eval/invokeHistorical.js");
+  const payload = buildGoldenUserPayload("A10", null, {
+    fellowName: "Jordan Reyes",
+    sourceMaterial: PASTED,
+  });
+  assert.equal(payload.phase, undefined);
+  assert.equal(payload.gapAnswers, undefined);
+});
+
+test("resolveRuntimeInputs alone would have dropped the answers", async () => {
+  // Guards the reasoning above: if A10 ever declares a gapAnswers field, this
+  // fails and the merge below can be simplified.
+  const { resolveRuntimeInputs } = await import("../src/invoke/runtimeArtifacts.js");
+  const { values } = resolveRuntimeInputs("A10", {
+    fellowName: "X", sourceMaterial: "Y", gapAnswers: { a: "b" },
+  });
+  assert.equal("gapAnswers" in values, false);
+});
+
+test("a fixture run still uses the fixture's own fellow", async () => {
+  // The refusal is scoped to pastes. A fixture run legitimately defaults,
+  // because the fixture IS that fellow's material.
+  const { buildGoldenUserPayload } = await import("../src/eval/invokeHistorical.js");
+  const { getGoldenCase } = await import("../src/eval/goldenCases.js");
+  const payload = buildGoldenUserPayload("A7", getGoldenCase("a7-mira-okonkwo-v1"), {});
+  assert.equal(payload.fellowName, "Mira Okonkwo");
+  assert.match(payload.sourceMaterial, /Mira Okonkwo/);
+});
+
+test("KNOWN GAP: the fixture default misnames non-Mira sealed cases", async () => {
+  // Documented, not fixed. buildGoldenUserPayload defaults every fixture run to
+  // "Mira Okonkwo", so scoring a7-jonas-park-v1 generates under the wrong name.
+  // Preview cannot hit this — sealed cases are refused — but runMechanicalScore
+  // can. Fixing it changes the input to an existing scoring path and would move
+  // recorded scores, so it is surfaced here rather than changed silently.
+  const { buildGoldenUserPayload } = await import("../src/eval/invokeHistorical.js");
+  const { getGoldenCase } = await import("../src/eval/goldenCases.js");
+  const jonas = getGoldenCase("a7-jonas-park-v1");
+  assert.equal(jonas.sealed, true, "still sealed, so preview cannot reach it");
+  const payload = buildGoldenUserPayload("A7", jonas, {});
+  assert.equal(
+    payload.fellowName,
+    "Mira Okonkwo",
+    "if this changes, the gap was fixed and this test should assert the real name",
+  );
+  assert.match(payload.sourceMaterial, /Jonas Park/);
+});
