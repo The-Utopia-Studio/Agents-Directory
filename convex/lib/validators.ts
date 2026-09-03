@@ -13,13 +13,38 @@ export const platform = v.union(
   v.literal("Other"),
 );
 
-export const agentStatus = v.union(
+/**
+ * Where a listing sits in the DIRECTORY, not how a run went and not whether
+ * the agent is healthy. Three different things in the Studio are called
+ * "status" and all three carry `failed`/`Deprecated`-style terminal values:
+ *
+ *   listingStatus            (here)  Experimental | Active | Under Review | Deprecated
+ *   AgentRunStatus  (product-fw)     queued | running | succeeded | failed | cancelled
+ *   operations.health_statuses       ok | degraded | offline | failed
+ *     (AgentManifest, studio-agent-framework)
+ *
+ * The vocabulary is owned by studio-agent-framework/schemas/agent-manifest.schema.json.
+ * Do not redefine a manifest-declared field here — see AGENTS.md.
+ *
+ * NOTE: the table column is still `status`. Renaming the column needs a Convex
+ * field migration and is deliberately not bundled with this symbol rename.
+ */
+export const listingStatus = v.union(
   v.literal("Experimental"),
   v.literal("Active"),
   v.literal("Under Review"),
   v.literal("Deprecated"),
 );
 
+/**
+ * How much the agent may DO without a human: L0 assist only · L1 suggest and
+ * confirm · L2 act narrow with audit · L3 act broad · L4 autonomous.
+ *
+ * This is NOT the manifest's `lifecycle.rung`, which is a different axis: rung
+ * is what KIND of thing was built (1 skill · 2 project · 3 managed surface ·
+ * 4 coded agent). The two are orthogonal — a rung-1 skill can be L3, and a
+ * rung-4 coded agent can be L1. Both are recorded; neither replaces the other.
+ */
 export const autonomyLevel = v.union(
   v.literal("L0"),
   v.literal("L1"),
@@ -38,11 +63,48 @@ export const category = v.union(
   v.literal("Other"),
 );
 
-export const runner = v.union(
+/**
+ * How the DIRECTORY reaches the agent to run it. Not the loop framework the
+ * agent is built on — that is the manifest's `runtime.harness`
+ * (mastra-convex | alternative-with-waiver | managed-surface | none), which is
+ * a separate field and is mirrored below as `harness`.
+ *
+ * NOTE: the table column is still `runner`. Renaming the column needs a Convex
+ * field migration and is deliberately not bundled with this symbol rename.
+ */
+export const invocationPath = v.union(
   v.literal("native"),
   v.literal("api"),
   v.literal("foreign-runtime-handoff"),
   v.literal("scheduled-worker"),
+  v.literal("none"),
+);
+
+/**
+ * `lifecycle.rung` from the AgentManifest: what kind of thing was built.
+ * 1 skill · 2 project · 3 managed agent surface · 4 coded agent.
+ *
+ * Carried verbatim from the manifest rather than re-derived, because the
+ * conformance runner gates on it — a fellow-facing agent must prove tenant
+ * isolation, a privileged one must prove elevated access. Optional until the
+ * projection in TUS-2749 backfills it; a missing rung means "not yet declared",
+ * never "rung 1".
+ */
+export const rung = v.union(
+  v.literal(1),
+  v.literal(2),
+  v.literal(3),
+  v.literal(4),
+);
+
+/**
+ * `runtime.harness` from the AgentManifest: the loop framework, as distinct
+ * from `invocationPath` above. Optional for the same reason as `rung`.
+ */
+export const harness = v.union(
+  v.literal("mastra-convex"),
+  v.literal("alternative-with-waiver"),
+  v.literal("managed-surface"),
   v.literal("none"),
 );
 

@@ -6,6 +6,40 @@ Context for humans **and** builder agents working in this repo. Read this before
 
 The studio's **control plane** for its fleet of agents. Every agent is defined by the four things it's only ever as good as — **goals · skills · tools · context** — and improves over time through an **eval → propose → verify → approve loop with a human in the gate**.
 
+## Where the vocabulary lives (read before adding a field)
+
+The words for what an agent *is* are owned by one file, not by this repo:
+
+> **`schemas/agent-manifest.schema.json`** in
+> [studio-agent-framework](https://github.com/The-Utopia-Studio/studio-agent-framework)
+> — the AgentManifest. That framework is planned to move into SPF, so treat the
+> manifest as the vocabulary's permanent home and expect only its path to change.
+
+**Do not define a field here that the manifest already declares.** Carry it
+through verbatim instead. Three repos independently invented this vocabulary and
+the collisions are load-bearing — the word "status" currently means three
+unrelated things across them, and all three spellings include a terminal
+`failed`-style value:
+
+| Concept | Field | Owner |
+|---|---|---|
+| Where a listing sits in this directory | `agents.status` (validator `listingStatus`) | here |
+| How one run went | `AgentRunStatus` | SPF runtime |
+| Whether the agent is healthy | `operations.health_statuses` | AgentManifest |
+
+Two more pairs read as the same thing and are not:
+
+- **`runner` (validator `invocationPath`)** is how this directory *reaches* an
+  agent. **`harness`** is the loop framework it is *built on*, from
+  `runtime.harness`. Both are recorded; neither implies the other.
+- **`autonomyLevel`** (L0–L4) is how much the agent may *do* unattended.
+  **`rung`** (1–4) is what *kind* of thing was built — skill, project, managed
+  surface, coded agent. Orthogonal axes: a rung-1 skill can be L3, and a rung-4
+  coded agent can be L1.
+
+`rung` and `harness` are optional until the projection in TUS-2749 backfills
+them. **An absent `rung` means "not yet declared", never "rung 1".**
+
 ## Two kinds of agents (do not conflate)
 
 | Kind | Where | Job |
@@ -17,7 +51,7 @@ The studio's **control plane** for its fleet of agents. Every agent is defined b
 
 ## The four pillars (the schema is the product)
 
-- **Goals** — `objective`, `successCriteria[]`, `guardrails[]`, `goldenCases[]` (the scorable eval set), `failureClasses[]`, `costPerOutcome`, `autonomyLevel`
+- **Goals** — `objective`, `successCriteria[]`, `guardrails[]`, `goldenCases[]` (the scorable eval set), `failureClasses[]`, `costPerOutcome`, `autonomyLevel` (action scope — not `rung`, see above)
 - **Skills** — `skills[]` (references into a shared SKILL.md library)
 - **Tools** — `tools[]` (MCPs / integrations / APIs)
 - **Context** — `context[]`, backed by a live memory provider

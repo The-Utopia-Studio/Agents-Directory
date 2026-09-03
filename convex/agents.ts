@@ -12,7 +12,7 @@ import {
 } from "./lib/capabilities";
 import { initialsFrom, nextDisplayId } from "./lib/helpers";
 import {
-  agentStatus,
+  listingStatus,
   artifactReference,
   autonomyLevel,
   category,
@@ -24,7 +24,9 @@ import {
   optimisableUnit,
   outcomeContract,
   platform,
-  runner,
+  invocationPath,
+  rung,
+  harness,
   toolItem,
   usabilityMode,
 } from "./lib/validators";
@@ -34,7 +36,7 @@ const registrationFields = {
   tagline: v.string(),
   description: v.optional(v.string()),
   platform,
-  status: agentStatus,
+  status: listingStatus,
   category,
   owner: v.string(),
   model: v.optional(v.string()),
@@ -42,7 +44,9 @@ const registrationFields = {
   whenToUse: v.optional(v.string()),
   sop: v.optional(v.string()),
   outputs: v.optional(v.array(v.string())),
-  runner,
+  runner: invocationPath,
+  rung: v.optional(rung),
+  harness: v.optional(harness),
   usabilityModes: v.array(usabilityMode),
   invocation: v.optional(invocation),
   autonomyLevel: v.optional(autonomyLevel),
@@ -67,7 +71,7 @@ const editableAgentFields = {
   tagline: v.optional(v.string()),
   description: v.optional(v.string()),
   platform: v.optional(platform),
-  status: v.optional(agentStatus),
+  status: v.optional(listingStatus),
   category: v.optional(category),
   owner: v.optional(v.string()),
   model: v.optional(v.string()),
@@ -75,7 +79,9 @@ const editableAgentFields = {
   whenToUse: v.optional(v.string()),
   sop: v.optional(v.string()),
   outputs: v.optional(v.array(v.string())),
-  runner: v.optional(runner),
+  runner: v.optional(invocationPath),
+  rung: v.optional(rung),
+  harness: v.optional(harness),
   usabilityModes: v.optional(v.array(usabilityMode)),
   invocation: v.optional(invocation),
   autonomyLevel: v.optional(autonomyLevel),
@@ -119,7 +125,7 @@ function sameIdentity(
 export const listAgents = query({
   args: {
     category: v.optional(category),
-    status: v.optional(agentStatus),
+    status: v.optional(listingStatus),
   },
   handler: async (ctx, args) => {
     let agents;
@@ -242,6 +248,8 @@ export const registerAgent = mutation({
       sop: args.sop,
       outputs: args.outputs,
       runner: args.runner,
+      rung: args.rung,
+      harness: args.harness,
       usabilityModes: args.usabilityModes,
       invocation: args.invocation,
       autonomyLevel: args.autonomyLevel,
